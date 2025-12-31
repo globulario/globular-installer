@@ -25,6 +25,7 @@ type Context struct {
 	NonInteractive bool
 	DryRun         bool
 	Logger         Logger
+	StagingDir     string
 	Platform       platform.Platform
 	Manifest       *manifest.Manifest
 	ManifestPath   string
@@ -71,6 +72,9 @@ func NewContext(opts Options) (*Context, error) {
 			return nil, fmt.Errorf("%s %q must be absolute", name, value)
 		}
 	}
+	if opts.StagingDir != "" && !filepath.IsAbs(opts.StagingDir) {
+		return nil, fmt.Errorf("stagingDir %q must be absolute", opts.StagingDir)
+	}
 
 	logger := NewStdLogger(opts.Verbose)
 	features := ParseFeatures(opts.FeaturesCSV)
@@ -95,6 +99,7 @@ func NewContext(opts Options) (*Context, error) {
 		Prefix:         prefix,
 		StateDir:       stateDir,
 		ConfigDir:      configDir,
+		StagingDir:     opts.StagingDir,
 		Features:       features,
 		NonInteractive: opts.NonInteractive,
 		DryRun:         opts.DryRun,

@@ -10,6 +10,7 @@ func Install(ctx *Context) (*RunReport, error) {
 	plan := NewPlan("install",
 		NewEnsureUserGroup("", ""),
 		NewEnsureDirs(),
+		NewInstallBinariesStep(),
 		NewInstallFilesStep(),
 		NewInstallServicesStep(),
 		NewStartServicesStep(),

@@ -3,6 +3,7 @@ package installer
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/globulario/globular-installer/internal/platform"
@@ -64,13 +65,26 @@ func (s *InstallServicesStep) Apply(ctx *Context) error {
 }
 
 func buildUnitFiles(ctx *Context) []platform.FileSpec {
-	out := make([]platform.FileSpec, 0)
+	out := make([]platform.FileSpec, 0, len(enabledServices(ctx)))
 	for _, unit := range enabledServices(ctx) {
 		desc := unitDescription(unit)
 		unitPath := filepath.Join("/etc/systemd/system", unit)
+		data := []byte(unitTemplatePlaceholder(desc))
+		switch unit {
+		case "globular-gateway.service":
+			path := binaryPath(ctx, "gateway")
+			if fileExists(path) {
+				data = []byte(unitTemplateReal(desc, path, ctx.StateDir))
+			}
+		case "globular-xds.service":
+			path := binaryPath(ctx, "xds")
+			if fileExists(path) {
+				data = []byte(unitTemplateReal(desc, path, ctx.StateDir))
+			}
+		}
 		out = append(out, platform.FileSpec{
 			Path:   unitPath,
-			Data:   []byte(unitTemplate(unit, desc)),
+			Data:   data,
 			Owner:  "root",
 			Group:  "root",
 			Mode:   0o644,
@@ -80,7 +94,7 @@ func buildUnitFiles(ctx *Context) []platform.FileSpec {
 	return out
 }
 
-func unitTemplate(unitName, description string) string {
+func unitTemplatePlaceholder(description string) string {
 	return fmt.Sprintf(`[Unit]
 Description=%s
 After=network-online.target
@@ -95,6 +109,38 @@ RestartSec=2
 [Install]
 WantedBy=multi-user.target
 `, description)
+}
+
+func unitTemplateReal(description, execStart, workDir string) string {
+	return fmt.Sprintf(`[Unit]
+Description=%s
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=globular
+Group=globular
+WorkingDirectory=%s
+ExecStart=%s
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+`, description, workDir, execStart)
+}
+
+func binaryPath(ctx *Context, name string) string {
+	return filepath.Join(ctx.Prefix, "bin", name)
+}
+
+func fileExists(path string) bool {
+	st, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return st.Mode().IsRegular()
 }
 
 func unitDescription(unit string) string {

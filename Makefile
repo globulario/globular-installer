@@ -5,7 +5,11 @@ BINDIR ?= $(CURDIR)/bin
 BIN ?= $(BINDIR)/globular-installer
 CMD_PKG := ./cmd/globular-installer
 
-.PHONY: all build test fmt tidy clean ensure-cache bin
+ASSET_BIN_DIR ?= $(CURDIR)/internal/assets/bin
+BUNDLE_SRC_BIN ?= $(CURDIR)/../globular/bin
+BUNDLE_BINS ?= gateway xds
+
+.PHONY: all build test fmt tidy clean ensure-cache bin bundle bundle-stage
 
 all: build
 
@@ -35,3 +39,15 @@ tidy:
 clean:
 	go clean -cache
 	rm -rf $(CACHE_DIR) $(BINDIR)
+
+bundle-stage:
+	mkdir -p $(ASSET_BIN_DIR)
+	@for b in $(BUNDLE_BINS); do \
+		if [ ! -f "$(BUNDLE_SRC_BIN)/$$b" ]; then \
+			echo "missing binary: $(BUNDLE_SRC_BIN)/$$b" >&2; exit 1; \
+		fi; \
+		cp -f "$(BUNDLE_SRC_BIN)/$$b" "$(ASSET_BIN_DIR)/$$b"; \
+		chmod 0755 "$(ASSET_BIN_DIR)/$$b"; \
+	done
+
+bundle: bundle-stage build
