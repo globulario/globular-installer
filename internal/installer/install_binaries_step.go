@@ -149,8 +149,25 @@ func (s *InstallBinariesStep) deploySpecs(ctx *Context, specs []platform.FileSpe
 		}
 		return nil
 	}
-	if err := ctx.Platform.InstallFiles(context.Background(), specs); err != nil {
-		return fmt.Errorf("install binaries: %w", err)
+	changed := make([]string, 0, len(specs))
+	if installer, ok := ctx.Platform.(platform.FileInstallerWithResult); ok {
+		result, err := installer.InstallFilesWithResult(context.Background(), specs)
+		if err != nil {
+			return fmt.Errorf("install binaries: %w", err)
+		}
+		changed = append(changed, result.Changed...)
+	} else {
+		if err := ctx.Platform.InstallFiles(context.Background(), specs); err != nil {
+			return fmt.Errorf("install binaries: %w", err)
+		}
+		for _, spec := range specs {
+			changed = append(changed, spec.Path)
+		}
+	}
+	if ctx.Runtime != nil {
+		for _, path := range changed {
+			ctx.Runtime.ChangedBinaries[path] = true
+		}
 	}
 	return nil
 }

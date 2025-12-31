@@ -16,6 +16,11 @@ const (
 	DefaultConfigDir = "/etc/globular"
 )
 
+type RuntimeState struct {
+	ChangedBinaries map[string]bool
+	ChangedUnits    map[string]bool
+}
+
 type Context struct {
 	Version        string
 	Prefix         string
@@ -26,6 +31,7 @@ type Context struct {
 	DryRun         bool
 	Logger         Logger
 	StagingDir     string
+	Runtime        *RuntimeState
 	Platform       platform.Platform
 	Manifest       *manifest.Manifest
 	ManifestPath   string
@@ -104,9 +110,13 @@ func NewContext(opts Options) (*Context, error) {
 		NonInteractive: opts.NonInteractive,
 		DryRun:         opts.DryRun,
 		Logger:         logger,
-		Platform:       plat,
-		Manifest:       m,
-		ManifestPath:   mpath,
+		Runtime: &RuntimeState{
+			ChangedBinaries: make(map[string]bool),
+			ChangedUnits:    make(map[string]bool),
+		},
+		Platform:     plat,
+		Manifest:     m,
+		ManifestPath: mpath,
 	}
 
 	if logger != nil {

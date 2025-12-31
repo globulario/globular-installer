@@ -49,16 +49,40 @@ func (s *InstallServicesStep) Apply(ctx *Context) error {
 		return nil
 	}
 
-	if err := ctx.Platform.InstallFiles(context.Background(), files); err != nil {
-		return fmt.Errorf("install services: %w", err)
+	changedCount := 0
+	if installer, ok := ctx.Platform.(platform.FileInstallerWithResult); ok {
+		result, err := installer.InstallFilesWithResult(context.Background(), files)
+		if err != nil {
+			return fmt.Errorf("install services: %w", err)
+		}
+		for _, path := range result.Changed {
+			if ctx.Runtime != nil {
+				ctx.Runtime.ChangedUnits[path] = true
+			}
+		}
+		changedCount = len(result.Changed)
+	} else {
+		if err := ctx.Platform.InstallFiles(context.Background(), files); err != nil {
+			return fmt.Errorf("install services: %w", err)
+		}
+		changedCount = len(files)
+		if ctx.Runtime != nil {
+			for _, file := range files {
+				ctx.Runtime.ChangedUnits[file.Path] = true
+			}
+		}
 	}
 
 	sm := ctx.Platform.ServiceManager()
 	if sm == nil {
 		return fmt.Errorf("service manager unavailable")
 	}
-	if err := sm.DaemonReload(context.Background()); err != nil {
-		return fmt.Errorf("daemon-reload: %w", err)
+	if changedCount > 0 {
+		if err := sm.DaemonReload(context.Background()); err != nil {
+			return fmt.Errorf("daemon-reload: %w", err)
+		}
+	} else if ctx.Logger != nil {
+		ctx.Logger.Infof("install-services: no unit changes; skipping daemon-reload")
 	}
 
 	return nil
@@ -72,12 +96,12 @@ func buildUnitFiles(ctx *Context) []platform.FileSpec {
 		data := []byte(unitTemplatePlaceholder(desc))
 		switch unit {
 		case "globular-gateway.service":
-			path := binaryPath(ctx, "gateway")
+			path := prefixedBinaryPath(ctx, "gateway")
 			if fileExists(path) {
 				data = []byte(unitTemplateReal(desc, path, ctx.StateDir))
 			}
 		case "globular-xds.service":
-			path := binaryPath(ctx, "xds")
+			path := prefixedBinaryPath(ctx, "xds")
 			if fileExists(path) {
 				data = []byte(unitTemplateReal(desc, path, ctx.StateDir))
 			}
@@ -131,7 +155,7 @@ WantedBy=multi-user.target
 `, description, workDir, execStart)
 }
 
-func binaryPath(ctx *Context, name string) string {
+func prefixedBinaryPath(ctx *Context, name string) string {
 	return filepath.Join(ctx.Prefix, "bin", name)
 }
 

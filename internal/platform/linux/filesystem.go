@@ -56,45 +56,64 @@ func EnsureDirs(ctx context.Context, dirs []platform.DirSpec) error {
 
 func InstallFiles(ctx context.Context, files []platform.FileSpec) error {
 	for _, file := range files {
-		if err := validateAbsPath(file.Path); err != nil {
+		if _, err := installOneFile(ctx, file); err != nil {
 			return err
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		dir := filepath.Dir(file.Path)
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			if !errors.Is(err, fs.ErrExist) {
-				return err
-			}
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		equal, err := fileContentEquals(file.Path, file.Data)
-		if err != nil {
-			return err
-		}
-		if equal {
-			if err := maybeApplyOwnershipMode(file.Path, file.Owner, file.Group, file.Mode); err != nil {
-				return err
-			}
-			continue
-		}
-		if file.Atomic {
-			if err := writeAtomic(ctx, file, dir); err != nil {
-				return err
-			}
-		} else {
-			if err := os.WriteFile(file.Path, file.Data, defaultFileMode(file.Mode)); err != nil {
-				return err
-			}
-			if err := maybeApplyOwnershipMode(file.Path, file.Owner, file.Group, file.Mode); err != nil {
-				return err
-			}
 		}
 	}
 	return nil
+}
+
+func InstallFilesWithResult(ctx context.Context, files []platform.FileSpec) (platform.InstallFilesResult, error) {
+	var result platform.InstallFilesResult
+	for _, file := range files {
+		if changed, err := installOneFile(ctx, file); err != nil {
+			return platform.InstallFilesResult{}, err
+		} else if changed {
+			result.Changed = append(result.Changed, file.Path)
+		}
+	}
+	return result, nil
+}
+
+func installOneFile(ctx context.Context, file platform.FileSpec) (bool, error) {
+	if err := validateAbsPath(file.Path); err != nil {
+		return false, err
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	dir := filepath.Dir(file.Path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		if !errors.Is(err, fs.ErrExist) {
+			return false, err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	equal, err := fileContentEquals(file.Path, file.Data)
+	if err != nil {
+		return false, err
+	}
+	if equal {
+		if err := maybeApplyOwnershipMode(file.Path, file.Owner, file.Group, file.Mode); err != nil {
+			return false, err
+		}
+		return false, nil
+	}
+	if file.Atomic {
+		if err := writeAtomic(ctx, file, dir); err != nil {
+			return false, err
+		}
+	} else {
+		if err := os.WriteFile(file.Path, file.Data, defaultFileMode(file.Mode)); err != nil {
+			return false, err
+		}
+		if err := maybeApplyOwnershipMode(file.Path, file.Owner, file.Group, file.Mode); err != nil {
+			return false, err
+		}
+	}
+	return true, nil
 }
 
 func writeAtomic(ctx context.Context, file platform.FileSpec, dir string) error {

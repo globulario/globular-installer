@@ -36,6 +36,10 @@ func (p *Platform) InstallFiles(ctx context.Context, files []platform.FileSpec) 
 	return InstallFiles(ctx, files)
 }
 
+func (p *Platform) InstallFilesWithResult(ctx context.Context, files []platform.FileSpec) (platform.InstallFilesResult, error) {
+	return InstallFilesWithResult(ctx, files)
+}
+
 func (p *Platform) ServiceManager() platform.ServiceManager {
 	if p.sm == nil {
 		p.sm = NewSystemdManager()

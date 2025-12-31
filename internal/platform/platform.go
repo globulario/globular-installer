@@ -41,6 +41,14 @@ type FileSpec struct {
 	Atomic bool
 }
 
+type InstallFilesResult struct {
+	Changed []string
+}
+
+type FileInstallerWithResult interface {
+	InstallFilesWithResult(ctx context.Context, files []FileSpec) (InstallFilesResult, error)
+}
+
 type Platform interface {
 	Name() string
 	EnsureUserGroup(ctx context.Context, user UserSpec, group GroupSpec) error
