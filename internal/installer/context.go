@@ -30,6 +30,22 @@ type Context struct {
 	ManifestPath   string
 }
 
+func (c *Context) PlatformBackend() platform.Platform {
+	return c.Platform
+}
+
+func (c *Context) InstallPrefix() string {
+	return c.Prefix
+}
+
+func (c *Context) StateDirPath() string {
+	return c.StateDir
+}
+
+func (c *Context) ConfigDirPath() string {
+	return c.ConfigDir
+}
+
 func NewContext(opts Options) (*Context, error) {
 	opts = opts.Normalized()
 

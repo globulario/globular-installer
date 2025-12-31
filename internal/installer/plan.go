@@ -10,12 +10,12 @@ type Plan struct {
 	Steps []Step
 }
 
-func NewPlan(name string, steps ...Step) *Plan {
+func NewPlan(name string, stepsSlice ...Step) *Plan {
 	if name == "" {
 		name = "unnamed-plan"
 	}
-	filtered := make([]Step, 0, len(steps))
-	for _, s := range steps {
+	filtered := make([]Step, 0, len(stepsSlice))
+	for _, s := range stepsSlice {
 		if s != nil {
 			filtered = append(filtered, s)
 		}
