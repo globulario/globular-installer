@@ -38,7 +38,7 @@ func (s *StartServicesStep) Apply(ctx *Context) error {
 		return fmt.Errorf("service manager unavailable")
 	}
 
-	for _, unit := range enabledServiceUnitsStart(ctx) {
+	for _, unit := range enabledServices(ctx) {
 		if ctx.DryRun {
 			if ctx.Logger != nil {
 				ctx.Logger.Infof("dry-run: would enable %s", unit)
@@ -57,7 +57,7 @@ func (s *StartServicesStep) Apply(ctx *Context) error {
 	return nil
 }
 
-func enabledServiceUnitsStart(ctx *Context) []string {
+func enabledServices(ctx *Context) []string {
 	out := make([]string, 0, 3)
 	if ctx.Features.Enabled(FeatureEnvoy) {
 		out = append(out, "globular-envoy.service")

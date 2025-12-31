@@ -65,7 +65,7 @@ func (s *InstallServicesStep) Apply(ctx *Context) error {
 
 func buildUnitFiles(ctx *Context) []platform.FileSpec {
 	out := make([]platform.FileSpec, 0)
-	for _, unit := range enabledServiceUnitsInstall(ctx) {
+	for _, unit := range enabledServices(ctx) {
 		desc := unitDescription(unit)
 		unitPath := filepath.Join("/etc/systemd/system", unit)
 		out = append(out, platform.FileSpec{
@@ -108,18 +108,4 @@ func unitDescription(unit string) string {
 	default:
 		return fmt.Sprintf("Globular service %s", unit)
 	}
-}
-
-func enabledServiceUnitsInstall(ctx *Context) []string {
-	out := make([]string, 0, 3)
-	if ctx.Features.Enabled(FeatureEnvoy) {
-		out = append(out, "globular-envoy.service")
-	}
-	if ctx.Features.Enabled(FeatureXDS) {
-		out = append(out, "globular-xds.service")
-	}
-	if ctx.Features.Enabled(FeatureGateway) {
-		out = append(out, "globular-gateway.service")
-	}
-	return out
 }

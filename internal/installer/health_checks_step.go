@@ -45,7 +45,7 @@ func (s *HealthChecksStep) Apply(ctx *Context) error {
 		return fmt.Errorf("service manager unavailable")
 	}
 
-	for _, unit := range enabledServiceUnitsHealth(ctx) {
+	for _, unit := range enabledServices(ctx) {
 		active, err := sm.IsActive(context.Background(), unit)
 		if err != nil {
 			return fmt.Errorf("is-active %s: %w", unit, err)
@@ -61,18 +61,4 @@ func (s *HealthChecksStep) Apply(ctx *Context) error {
 	}
 
 	return nil
-}
-
-func enabledServiceUnitsHealth(ctx *Context) []string {
-	out := make([]string, 0, 3)
-	if ctx.Features.Enabled(FeatureEnvoy) {
-		out = append(out, "globular-envoy.service")
-	}
-	if ctx.Features.Enabled(FeatureXDS) {
-		out = append(out, "globular-xds.service")
-	}
-	if ctx.Features.Enabled(FeatureGateway) {
-		out = append(out, "globular-gateway.service")
-	}
-	return out
 }
