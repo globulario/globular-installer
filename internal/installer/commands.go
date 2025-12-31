@@ -10,6 +10,7 @@ func Install(ctx *Context) (*RunReport, error) {
 	plan := NewPlan("install",
 		NewEnsureUserGroup("", ""),
 		NewEnsureDirs(),
+		NewInstallFilesStep(),
 		NewNoop("install-placeholder"),
 	)
 
