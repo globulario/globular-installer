@@ -11,6 +11,9 @@ func Install(ctx *Context) (*RunReport, error) {
 		NewEnsureUserGroup("", ""),
 		NewEnsureDirs(),
 		NewInstallFilesStep(),
+		NewInstallServicesStep(),
+		NewStartServicesStep(),
+		NewHealthChecksStep(),
 		NewNoop("install-placeholder"),
 	)
 
