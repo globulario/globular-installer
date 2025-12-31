@@ -41,8 +41,12 @@ func Doctor(ctx *Context) (*RunReport, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("context is required")
 	}
-	plan := NewPlan("doctor", NewNoop("doctor-placeholder"))
-	return NewRunner().Run(ctx, plan, ModeCheckOnly)
+	preflight := NewPlan("doctor",
+		NewRequireRootStep(),
+		NewCheckSystemdStep(),
+		NewCheckCommandsStep(nil),
+	)
+	return NewRunner().Run(ctx, preflight, ModeCheckOnly)
 }
 
 func Repair(ctx *Context) (*RunReport, error) {

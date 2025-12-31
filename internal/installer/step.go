@@ -7,6 +7,7 @@ const (
 	StatusOK
 	StatusNeedsApply
 	StatusSkipped
+	StatusFailed
 )
 
 func (s StepStatus) String() string {
@@ -17,6 +18,8 @@ func (s StepStatus) String() string {
 		return "needs-apply"
 	case StatusSkipped:
 		return "skipped"
+	case StatusFailed:
+		return "failed"
 	default:
 		return "unknown"
 	}
