@@ -32,15 +32,11 @@ func (p *Platform) EnsureUserGroup(ctx context.Context, user platform.UserSpec, 
 }
 
 func (p *Platform) EnsureDirs(ctx context.Context, dirs []platform.DirSpec) error {
-	_ = ctx
-	_ = dirs
-	return nil
+	return EnsureDirs(ctx, dirs)
 }
 
 func (p *Platform) InstallFiles(ctx context.Context, files []platform.FileSpec) error {
-	_ = ctx
-	_ = files
-	return nil
+	return InstallFiles(ctx, files)
 }
 
 func (p *Platform) ServiceManager() platform.ServiceManager {
