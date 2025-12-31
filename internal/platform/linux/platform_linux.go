@@ -25,10 +25,7 @@ func (p *Platform) Name() string {
 }
 
 func (p *Platform) EnsureUserGroup(ctx context.Context, user platform.UserSpec, group platform.GroupSpec) error {
-	_ = ctx
-	_ = user
-	_ = group
-	return nil
+	return EnsureUserGroup(ctx, user, group)
 }
 
 func (p *Platform) EnsureDirs(ctx context.Context, dirs []platform.DirSpec) error {
