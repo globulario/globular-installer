@@ -28,7 +28,6 @@ type Context struct {
 	Prefix         string
 	StateDir       string
 	ConfigDir      string
-	Features       FeatureSet
 	NonInteractive bool
 	DryRun         bool
 	Logger         Logger
@@ -87,7 +86,6 @@ func NewContext(opts Options) (*Context, error) {
 	}
 
 	logger := NewStdLogger(opts.Verbose)
-	features := ParseFeatures(opts.FeaturesCSV)
 
 	plat, err := platform.Detect()
 	if err != nil {
@@ -137,7 +135,6 @@ func NewContext(opts Options) (*Context, error) {
 		StateDir:       stateDir,
 		ConfigDir:      configDir,
 		StagingDir:     opts.StagingDir,
-		Features:       features,
 		NonInteractive: opts.NonInteractive,
 		DryRun:         opts.DryRun,
 		Logger:         logger,
