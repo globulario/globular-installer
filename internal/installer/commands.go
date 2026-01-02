@@ -1,22 +1,30 @@
 package installer
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/globulario/globular-installer/internal/installer/spec"
+)
 
 func Install(ctx *Context) (*RunReport, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("context is required")
 	}
 
-	plan := NewPlan("install",
-		NewEnsureUserGroup("", ""),
-		NewEnsureDirs(),
-		NewInstallBinariesStep(),
-		NewInstallFilesStep(),
-		NewInstallServicesStep(),
-		NewStartServicesStep(),
-		NewHealthChecksStep(),
-		NewNoop("install-placeholder"),
-	)
+	sp := ctx.Spec
+	if sp == nil {
+		sp = spec.DefaultInstallSpec(map[string]string{
+			"Prefix":    ctx.Prefix,
+			"StateDir":  ctx.StateDir,
+			"ConfigDir": ctx.ConfigDir,
+			"Version":   ctx.Version,
+		})
+	}
+
+	plan, err := BuildInstallPlan(ctx, sp)
+	if err != nil {
+		return nil, err
+	}
 
 	return NewRunner().Run(ctx, plan, ModeApply)
 }

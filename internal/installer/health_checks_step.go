@@ -22,7 +22,24 @@ func (s *HealthChecksStep) Check(ctx *Context) (StepStatus, error) {
 	if ctx.Platform == nil {
 		return StatusUnknown, fmt.Errorf("nil platform")
 	}
-	return StatusNeedsApply, nil
+	sm := ctx.Platform.ServiceManager()
+	if sm == nil {
+		return StatusUnknown, fmt.Errorf("service manager unavailable")
+	}
+	for _, unit := range enabledServices(ctx) {
+		active, err := sm.IsActive(context.Background(), unit)
+		if err != nil {
+			return StatusUnknown, fmt.Errorf("is-active %s: %w", unit, err)
+		}
+		if !active {
+			status, serr := sm.Status(context.Background(), unit)
+			if serr != nil {
+				return StatusFailed, fmt.Errorf("status %s: %w", unit, serr)
+			}
+			return StatusFailed, fmt.Errorf("service %s not active (state=%v detail=%s)", unit, status.State, status.Detail)
+		}
+	}
+	return StatusOK, nil
 }
 
 func (s *HealthChecksStep) Apply(ctx *Context) error {
@@ -40,25 +57,12 @@ func (s *HealthChecksStep) Apply(ctx *Context) error {
 		return nil
 	}
 
-	sm := ctx.Platform.ServiceManager()
-	if sm == nil {
-		return fmt.Errorf("service manager unavailable")
+	status, err := s.Check(ctx)
+	if err != nil {
+		return err
 	}
-
-	for _, unit := range enabledServices(ctx) {
-		active, err := sm.IsActive(context.Background(), unit)
-		if err != nil {
-			return fmt.Errorf("is-active %s: %w", unit, err)
-		}
-		if active {
-			continue
-		}
-		status, err := sm.Status(context.Background(), unit)
-		if err != nil {
-			return fmt.Errorf("status %s: %w", unit, err)
-		}
-		return fmt.Errorf("service %s not active (state=%v detail=%s)", unit, status.State, status.Detail)
+	if status != StatusOK {
+		return fmt.Errorf("health checks failed: %s", status.String())
 	}
-
 	return nil
 }

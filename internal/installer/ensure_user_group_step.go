@@ -3,6 +3,7 @@ package installer
 import (
 	"context"
 	"fmt"
+	"os/user"
 
 	"github.com/globulario/globular-installer/internal/platform"
 )
@@ -42,7 +43,19 @@ func (s *EnsureUserGroupStep) Check(ctx *Context) (StepStatus, error) {
 	if ctx.Platform == nil {
 		return StatusUnknown, fmt.Errorf("platform is required")
 	}
-	return StatusNeedsApply, nil
+	if _, err := user.Lookup(s.User); err != nil {
+		if _, ok := err.(user.UnknownUserError); ok {
+			return StatusNeedsApply, nil
+		}
+		return StatusUnknown, fmt.Errorf("lookup user %s: %w", s.User, err)
+	}
+	if _, err := user.LookupGroup(s.Group); err != nil {
+		if _, ok := err.(user.UnknownGroupError); ok {
+			return StatusNeedsApply, nil
+		}
+		return StatusUnknown, fmt.Errorf("lookup group %s: %w", s.Group, err)
+	}
+	return StatusOK, nil
 }
 
 func (s *EnsureUserGroupStep) Apply(ctx *Context) error {

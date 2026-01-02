@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/globulario/globular-installer/internal/installer/manifest"
+	"github.com/globulario/globular-installer/internal/installer/spec"
 	"github.com/globulario/globular-installer/internal/platform"
 )
 
@@ -32,6 +33,8 @@ type Context struct {
 	Logger         Logger
 	StagingDir     string
 	Runtime        *RuntimeState
+	Spec           *spec.InstallSpec
+	SpecPath       string
 	Platform       platform.Platform
 	Manifest       *manifest.Manifest
 	ManifestPath   string
@@ -100,6 +103,33 @@ func NewContext(opts Options) (*Context, error) {
 		}
 	}
 
+	var (
+		specObj  *spec.InstallSpec
+		specDesc string
+	)
+	templateVars := map[string]string{
+		"Prefix":    prefix,
+		"StateDir":  stateDir,
+		"ConfigDir": configDir,
+		"Version":   opts.Version,
+	}
+	if opts.SpecInline != "" {
+		specObj, err = spec.LoadInline(opts.SpecInline, templateVars)
+		if err != nil {
+			return nil, fmt.Errorf("load spec inline: %w", err)
+		}
+		specDesc = "inline"
+	} else if opts.SpecPath != "" {
+		specObj, err = spec.Load(opts.SpecPath, templateVars)
+		if err != nil {
+			return nil, fmt.Errorf("load spec %s: %w", opts.SpecPath, err)
+		}
+		specDesc = fmt.Sprintf("path=%s", opts.SpecPath)
+	} else {
+		specObj = spec.DefaultInstallSpec(templateVars)
+		specDesc = "default"
+	}
+
 	ctx := &Context{
 		Version:        opts.Version,
 		Prefix:         prefix,
@@ -114,6 +144,8 @@ func NewContext(opts Options) (*Context, error) {
 			ChangedBinaries: make(map[string]bool),
 			ChangedUnits:    make(map[string]bool),
 		},
+		Spec:         specObj,
+		SpecPath:     opts.SpecPath,
 		Platform:     plat,
 		Manifest:     m,
 		ManifestPath: mpath,
@@ -122,6 +154,7 @@ func NewContext(opts Options) (*Context, error) {
 	if logger != nil {
 		logger.Infof("context: version=%q prefix=%q stateDir=%q configDir=%q dryRun=%v nonInteractive=%v",
 			ctx.Version, ctx.Prefix, ctx.StateDir, ctx.ConfigDir, ctx.DryRun, ctx.NonInteractive)
+		logger.Infof("using spec %s", specDesc)
 	}
 
 	return ctx, nil

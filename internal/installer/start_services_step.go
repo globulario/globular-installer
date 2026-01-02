@@ -23,7 +23,20 @@ func (s *StartServicesStep) Check(ctx *Context) (StepStatus, error) {
 	if ctx.Platform == nil {
 		return StatusUnknown, fmt.Errorf("nil platform")
 	}
-	return StatusNeedsApply, nil
+	sm := ctx.Platform.ServiceManager()
+	if sm == nil {
+		return StatusUnknown, fmt.Errorf("service manager unavailable")
+	}
+	for _, unit := range enabledServices(ctx) {
+		active, err := sm.IsActive(context.Background(), unit)
+		if err != nil {
+			return StatusUnknown, fmt.Errorf("is-active %s: %w", unit, err)
+		}
+		if !active {
+			return StatusNeedsApply, nil
+		}
+	}
+	return StatusOK, nil
 }
 
 func (s *StartServicesStep) Apply(ctx *Context) error {
@@ -113,6 +126,10 @@ func unitBinary(unit string) string {
 		return "xds"
 	case "globular-gateway.service":
 		return "gateway"
+	case "globular-envoy.service":
+		return "envoy"
+	case "globular-etcd.service":
+		return "etcd"
 	default:
 		return ""
 	}

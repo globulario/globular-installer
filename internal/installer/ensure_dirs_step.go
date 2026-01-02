@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 
 	"github.com/globulario/globular-installer/internal/platform"
@@ -16,7 +17,9 @@ const (
 	appGroup    = "globular"
 )
 
-type EnsureDirsStep struct{}
+type EnsureDirsStep struct {
+	Dirs []platform.DirSpec
+}
 
 func NewEnsureDirs() *EnsureDirsStep {
 	return &EnsureDirsStep{}
@@ -33,7 +36,19 @@ func (s *EnsureDirsStep) Check(ctx *Context) (StepStatus, error) {
 	if ctx.Platform == nil {
 		return StatusUnknown, fmt.Errorf("platform is required")
 	}
-	return StatusNeedsApply, nil
+	for _, dir := range s.dirSpecs(ctx) {
+		info, err := os.Stat(dir.Path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return StatusNeedsApply, nil
+			}
+			return StatusUnknown, fmt.Errorf("stat %s: %w", dir.Path, err)
+		}
+		if !info.IsDir() {
+			return StatusUnknown, fmt.Errorf("%s exists but is not a directory", dir.Path)
+		}
+	}
+	return StatusOK, nil
 }
 
 func (s *EnsureDirsStep) Apply(ctx *Context) error {
@@ -44,11 +59,21 @@ func (s *EnsureDirsStep) Apply(ctx *Context) error {
 		return fmt.Errorf("platform is required")
 	}
 
+	if err := ctx.Platform.EnsureDirs(context.Background(), s.dirSpecs(ctx)); err != nil {
+		return fmt.Errorf("ensure dirs: %w", err)
+	}
+
+	return nil
+}
+
+func (s *EnsureDirsStep) dirSpecs(ctx *Context) []platform.DirSpec {
+	if len(s.Dirs) > 0 {
+		return s.Dirs
+	}
 	prefix := ctx.Prefix
 	stateDir := ctx.StateDir
 	configDir := ctx.ConfigDir
-
-	dirs := []platform.DirSpec{
+	return []platform.DirSpec{
 		{Path: prefix, Owner: systemUser, Group: systemGroup, Mode: fs.FileMode(0o755)},
 		{Path: filepath.Join(prefix, "bin"), Owner: systemUser, Group: systemGroup, Mode: fs.FileMode(0o755)},
 		{Path: stateDir, Owner: appUser, Group: appGroup, Mode: fs.FileMode(0o750)},
@@ -57,10 +82,4 @@ func (s *EnsureDirsStep) Apply(ctx *Context) error {
 		{Path: filepath.Join(configDir, "config"), Owner: systemUser, Group: appGroup, Mode: fs.FileMode(0o750)},
 		{Path: filepath.Join(configDir, "features"), Owner: systemUser, Group: systemGroup, Mode: fs.FileMode(0o755)},
 	}
-
-	if err := ctx.Platform.EnsureDirs(context.Background(), dirs); err != nil {
-		return fmt.Errorf("ensure dirs: %w", err)
-	}
-
-	return nil
 }

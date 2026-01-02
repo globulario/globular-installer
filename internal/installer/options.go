@@ -12,6 +12,8 @@ type Options struct {
 	DryRun         bool
 	Verbose        bool
 	StagingDir     string
+	SpecPath       string
+	SpecInline     string
 }
 
 func (o Options) Normalized() Options {
@@ -21,5 +23,7 @@ func (o Options) Normalized() Options {
 	o.ConfigDir = strings.TrimSpace(o.ConfigDir)
 	o.FeaturesCSV = strings.TrimSpace(o.FeaturesCSV)
 	o.StagingDir = strings.TrimSpace(o.StagingDir)
+	o.SpecPath = strings.TrimSpace(o.SpecPath)
+	o.SpecInline = strings.TrimSpace(o.SpecInline)
 	return o
 }

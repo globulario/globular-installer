@@ -26,7 +26,23 @@ func (s *InstallServicesStep) Check(ctx *Context) (StepStatus, error) {
 	if ctx.Platform == nil {
 		return StatusUnknown, fmt.Errorf("nil platform")
 	}
-	return StatusNeedsApply, nil
+	files := buildUnitFiles(ctx)
+	if len(files) == 0 {
+		return StatusOK, nil
+	}
+	for _, spec := range files {
+		data, err := os.ReadFile(spec.Path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return StatusNeedsApply, nil
+			}
+			return StatusUnknown, fmt.Errorf("read %s: %w", spec.Path, err)
+		}
+		if !bytesEqual(data, spec.Data) {
+			return StatusNeedsApply, nil
+		}
+	}
+	return StatusOK, nil
 }
 
 func (s *InstallServicesStep) Apply(ctx *Context) error {

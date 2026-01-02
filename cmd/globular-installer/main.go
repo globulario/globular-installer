@@ -52,6 +52,8 @@ func runCommand(prog, cmd string, args []string) int {
 	configDir := fs.String("config-dir", "", "configuration directory")
 	features := fs.String("features", "", "comma-separated feature list")
 	stagingDir := fs.String("staging-dir", "", "staging directory for binaries")
+	specPath := fs.String("spec", "", "path to YAML/JSON install spec")
+	specInline := fs.String("spec-inline", "", "inline spec content (YAML/JSON)")
 	dryRun := fs.Bool("dry-run", false, "perform a dry run")
 	nonInteractive := fs.Bool("non-interactive", false, "run without prompts")
 	verbose := fs.Bool("verbose", false, "enable verbose logging")
@@ -77,6 +79,8 @@ func runCommand(prog, cmd string, args []string) int {
 		ConfigDir:      *configDir,
 		FeaturesCSV:    *features,
 		StagingDir:     *stagingDir,
+		SpecPath:       *specPath,
+		SpecInline:     *specInline,
 		DryRun:         *dryRun,
 		NonInteractive: *nonInteractive,
 		Verbose:        *verbose,
@@ -122,6 +126,8 @@ func printCommandUsage(w io.Writer, prog, cmd string) {
 	fmt.Fprintln(w, "  --config-dir string      configuration directory")
 	fmt.Fprintln(w, "  --features string        feature list (csv or enable:prefix)")
 	fmt.Fprintln(w, "  --staging-dir string     staging directory with bin/ artifacts")
+	fmt.Fprintln(w, "  --spec string            path to YAML/JSON install spec")
+	fmt.Fprintln(w, "  --spec-inline string     inline spec contents (YAML/JSON)")
 	fmt.Fprintln(w, "  --dry-run                run without making system changes")
 	fmt.Fprintln(w, "  --non-interactive        run without prompts")
 	fmt.Fprintln(w, "  --verbose                print verbose logs")
