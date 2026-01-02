@@ -5,7 +5,9 @@ import (
 	"fmt"
 )
 
-type HealthChecksStep struct{}
+type HealthChecksStep struct {
+	Services []string
+}
 
 func NewHealthChecksStep() *HealthChecksStep {
 	return &HealthChecksStep{}
@@ -26,7 +28,7 @@ func (s *HealthChecksStep) Check(ctx *Context) (StepStatus, error) {
 	if sm == nil {
 		return StatusUnknown, fmt.Errorf("service manager unavailable")
 	}
-	for _, unit := range enabledServices(ctx) {
+	for _, unit := range s.serviceList(ctx) {
 		active, err := sm.IsActive(context.Background(), unit)
 		if err != nil {
 			return StatusUnknown, fmt.Errorf("is-active %s: %w", unit, err)
@@ -65,4 +67,11 @@ func (s *HealthChecksStep) Apply(ctx *Context) error {
 		return fmt.Errorf("health checks failed: %s", status.String())
 	}
 	return nil
+}
+
+func (s *HealthChecksStep) serviceList(ctx *Context) []string {
+	if len(s.Services) > 0 {
+		return s.Services
+	}
+	return enabledServices(ctx)
 }

@@ -3,6 +3,7 @@ package installer
 import (
 	"fmt"
 	"io/fs"
+	"path/filepath"
 	"strconv"
 
 	"github.com/globulario/globular-installer/internal/installer/spec"
@@ -44,13 +45,41 @@ func buildStep(ctx *Context, ss spec.StepSpec) (Step, error) {
 	case "install_binaries":
 		return NewInstallBinariesStep(), nil
 	case "install_files":
-		return NewInstallFilesStep(), nil
+		step := NewInstallFilesStep()
+		if val, ok := ss.Params["files"]; ok {
+			files, err := parseFileSpecs(val)
+			if err != nil {
+				return nil, err
+			}
+			step.Files = files
+		}
+		return step, nil
 	case "install_services":
-		return NewInstallServicesStep(), nil
+		step := NewInstallServicesStep()
+		if val, ok := ss.Params["units"]; ok {
+			units, err := parseUnitSpecs(val)
+			if err != nil {
+				return nil, err
+			}
+			step.Units = units
+		}
+		return step, nil
 	case "start_services":
-		return NewStartServicesStep(), nil
+		step := NewStartServicesStep()
+		if services, err := getStringSliceParam(ss.Params, "services"); err != nil {
+			return nil, err
+		} else if len(services) > 0 {
+			step.Services = services
+		}
+		return step, nil
 	case "health_checks":
-		return NewHealthChecksStep(), nil
+		step := NewHealthChecksStep()
+		if services, err := getStringSliceParam(ss.Params, "services"); err != nil {
+			return nil, err
+		} else if len(services) > 0 {
+			step.Services = services
+		}
+		return step, nil
 	case "noop":
 		name := ss.ID
 		if name == "" {
@@ -74,7 +103,7 @@ func buildEnsureUserGroupStep(ss spec.StepSpec) (Step, error) {
 
 func buildEnsureDirsStep(ss spec.StepSpec) (Step, error) {
 	step := NewEnsureDirs()
-	if val, ok := ss.Params["dirs"]; ok && val != nil {
+	if val, ok := ss.Params["dirs"]; ok {
 		dirs, err := parseDirSpecs(val)
 		if err != nil {
 			return nil, err
@@ -118,6 +147,64 @@ func parseDirSpecs(val any) ([]platform.DirSpec, error) {
 	return out, nil
 }
 
+func parseFileSpecs(val any) ([]platform.FileSpec, error) {
+	rawList, ok := val.([]any)
+	if !ok {
+		return nil, fmt.Errorf("files must be a list")
+	}
+	out := make([]platform.FileSpec, 0, len(rawList))
+	for idx, entry := range rawList {
+		m, ok := entry.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("files[%d] must be a map", idx)
+		}
+		path := getStringParam(m, "path", "")
+		if path == "" {
+			return nil, fmt.Errorf("files[%d] missing path", idx)
+		}
+		content := getStringParam(m, "content", "")
+		dir := platform.FileSpec{
+			Path:   path,
+			Data:   []byte(content),
+			Owner:  getStringParam(m, "owner", "root"),
+			Group:  getStringParam(m, "group", "root"),
+			Mode:   getModeParam(m, "mode", 0o644),
+			Atomic: getBoolParam(m, "atomic", true),
+		}
+		out = append(out, dir)
+	}
+	return out, nil
+}
+
+func parseUnitSpecs(val any) ([]platform.FileSpec, error) {
+	rawList, ok := val.([]any)
+	if !ok {
+		return nil, fmt.Errorf("units must be a list")
+	}
+	out := make([]platform.FileSpec, 0, len(rawList))
+	for idx, entry := range rawList {
+		m, ok := entry.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("units[%d] must be a map", idx)
+		}
+		name := getStringParam(m, "name", "")
+		if name == "" {
+			return nil, fmt.Errorf("units[%d] missing name", idx)
+		}
+		content := getStringParam(m, "content", "")
+		spec := platform.FileSpec{
+			Path:   filepath.Join("/etc/systemd/system", name),
+			Data:   []byte(content),
+			Owner:  getStringParam(m, "owner", "root"),
+			Group:  getStringParam(m, "group", "root"),
+			Mode:   getModeParam(m, "mode", 0o644),
+			Atomic: getBoolParam(m, "atomic", true),
+		}
+		out = append(out, spec)
+	}
+	return out, nil
+}
+
 func parseMode(val any) (fs.FileMode, error) {
 	switch v := val.(type) {
 	case int:
@@ -135,9 +222,20 @@ func parseMode(val any) (fs.FileMode, error) {
 			return 0, err
 		}
 		return fs.FileMode(parsed), nil
-	default:
-		return 0, fmt.Errorf("unsupported mode type %T", val)
 	}
+	return 0, fmt.Errorf("unsupported mode type %T", val)
+}
+
+func getModeParam(params map[string]any, key string, def fs.FileMode) fs.FileMode {
+	if params == nil {
+		return def
+	}
+	if val, ok := params[key]; ok {
+		if parsed, err := parseMode(val); err == nil && parsed != 0 {
+			return parsed
+		}
+	}
+	return def
 }
 
 func getStringParam(params map[string]any, key, def string) string {
@@ -161,11 +259,36 @@ func getBoolParam(params map[string]any, key string, def bool) bool {
 		case bool:
 			return v
 		case string:
-			parsed, err := strconv.ParseBool(v)
-			if err == nil {
+			if parsed, err := strconv.ParseBool(v); err == nil {
 				return parsed
 			}
 		}
 	}
 	return def
+}
+
+func getStringSliceParam(params map[string]any, key string) ([]string, error) {
+	if params == nil {
+		return nil, nil
+	}
+	raw, ok := params[key]
+	if !ok || raw == nil {
+		return nil, nil
+	}
+	switch v := raw.(type) {
+	case []string:
+		return v, nil
+	case []any:
+		out := make([]string, 0, len(v))
+		for idx, elem := range v {
+			s, ok := elem.(string)
+			if !ok {
+				return nil, fmt.Errorf("%s[%d] must be a string", key, idx)
+			}
+			out = append(out, s)
+		}
+		return out, nil
+	default:
+		return nil, fmt.Errorf("%s must be a list of strings", key)
+	}
 }

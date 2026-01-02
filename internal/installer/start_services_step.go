@@ -6,7 +6,9 @@ import (
 	"path/filepath"
 )
 
-type StartServicesStep struct{}
+type StartServicesStep struct {
+	Services []string
+}
 
 func NewStartServicesStep() *StartServicesStep {
 	return &StartServicesStep{}
@@ -27,7 +29,7 @@ func (s *StartServicesStep) Check(ctx *Context) (StepStatus, error) {
 	if sm == nil {
 		return StatusUnknown, fmt.Errorf("service manager unavailable")
 	}
-	for _, unit := range enabledServices(ctx) {
+	for _, unit := range s.serviceList(ctx) {
 		active, err := sm.IsActive(context.Background(), unit)
 		if err != nil {
 			return StatusUnknown, fmt.Errorf("is-active %s: %w", unit, err)
@@ -52,7 +54,7 @@ func (s *StartServicesStep) Apply(ctx *Context) error {
 		return fmt.Errorf("service manager unavailable")
 	}
 
-	for _, unit := range enabledServices(ctx) {
+	for _, unit := range s.serviceList(ctx) {
 		restartNeeded := needsRestart(ctx, unit)
 		if ctx.DryRun {
 			if ctx.Logger != nil {
@@ -87,18 +89,11 @@ func (s *StartServicesStep) Apply(ctx *Context) error {
 	return nil
 }
 
-func enabledServices(ctx *Context) []string {
-	out := make([]string, 0, 3)
-	if ctx.Features.Enabled(FeatureEnvoy) {
-		out = append(out, "globular-envoy.service")
+func (s *StartServicesStep) serviceList(ctx *Context) []string {
+	if len(s.Services) > 0 {
+		return s.Services
 	}
-	if ctx.Features.Enabled(FeatureXDS) {
-		out = append(out, "globular-xds.service")
-	}
-	if ctx.Features.Enabled(FeatureGateway) {
-		out = append(out, "globular-gateway.service")
-	}
-	return out
+	return enabledServices(ctx)
 }
 
 func needsRestart(ctx *Context, unit string) bool {
@@ -133,4 +128,18 @@ func unitBinary(unit string) string {
 	default:
 		return ""
 	}
+}
+
+func enabledServices(ctx *Context) []string {
+	out := make([]string, 0, 3)
+	if ctx.Features.Enabled(FeatureEnvoy) {
+		out = append(out, "globular-envoy.service")
+	}
+	if ctx.Features.Enabled(FeatureXDS) {
+		out = append(out, "globular-xds.service")
+	}
+	if ctx.Features.Enabled(FeatureGateway) {
+		out = append(out, "globular-gateway.service")
+	}
+	return out
 }

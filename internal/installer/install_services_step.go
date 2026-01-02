@@ -1,6 +1,7 @@
 package installer
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -9,7 +10,9 @@ import (
 	"github.com/globulario/globular-installer/internal/platform"
 )
 
-type InstallServicesStep struct{}
+type InstallServicesStep struct {
+	Units []platform.FileSpec
+}
 
 func NewInstallServicesStep() *InstallServicesStep {
 	return &InstallServicesStep{}
@@ -26,7 +29,7 @@ func (s *InstallServicesStep) Check(ctx *Context) (StepStatus, error) {
 	if ctx.Platform == nil {
 		return StatusUnknown, fmt.Errorf("nil platform")
 	}
-	files := buildUnitFiles(ctx)
+	files := s.unitsToInstall(ctx)
 	if len(files) == 0 {
 		return StatusOK, nil
 	}
@@ -38,7 +41,7 @@ func (s *InstallServicesStep) Check(ctx *Context) (StepStatus, error) {
 			}
 			return StatusUnknown, fmt.Errorf("read %s: %w", spec.Path, err)
 		}
-		if !bytesEqual(data, spec.Data) {
+		if !bytes.Equal(data, spec.Data) {
 			return StatusNeedsApply, nil
 		}
 	}
@@ -53,7 +56,7 @@ func (s *InstallServicesStep) Apply(ctx *Context) error {
 		return fmt.Errorf("nil platform")
 	}
 
-	files := buildUnitFiles(ctx)
+	files := s.unitsToInstall(ctx)
 	if len(files) == 0 {
 		return nil
 	}
@@ -66,8 +69,8 @@ func (s *InstallServicesStep) Apply(ctx *Context) error {
 	}
 
 	changedCount := 0
-	if installer, ok := ctx.Platform.(platform.FileInstallerWithResult); ok {
-		result, err := installer.InstallFilesWithResult(context.Background(), files)
+	if installerWithResult, ok := ctx.Platform.(platform.FileInstallerWithResult); ok {
+		result, err := installerWithResult.InstallFilesWithResult(context.Background(), files)
 		if err != nil {
 			return fmt.Errorf("install services: %w", err)
 		}
@@ -83,8 +86,8 @@ func (s *InstallServicesStep) Apply(ctx *Context) error {
 		}
 		changedCount = len(files)
 		if ctx.Runtime != nil {
-			for _, file := range files {
-				ctx.Runtime.ChangedUnits[file.Path] = true
+			for _, spec := range files {
+				ctx.Runtime.ChangedUnits[spec.Path] = true
 			}
 		}
 	}
@@ -102,6 +105,13 @@ func (s *InstallServicesStep) Apply(ctx *Context) error {
 	}
 
 	return nil
+}
+
+func (s *InstallServicesStep) unitsToInstall(ctx *Context) []platform.FileSpec {
+	if len(s.Units) > 0 {
+		return s.Units
+	}
+	return buildUnitFiles(ctx)
 }
 
 func buildUnitFiles(ctx *Context) []platform.FileSpec {

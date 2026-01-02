@@ -20,6 +20,7 @@ const (
 type RuntimeState struct {
 	ChangedBinaries map[string]bool
 	ChangedUnits    map[string]bool
+	ChangedFiles    map[string]bool
 }
 
 type Context struct {
@@ -143,6 +144,7 @@ func NewContext(opts Options) (*Context, error) {
 		Runtime: &RuntimeState{
 			ChangedBinaries: make(map[string]bool),
 			ChangedUnits:    make(map[string]bool),
+			ChangedFiles:    make(map[string]bool),
 		},
 		Spec:         specObj,
 		SpecPath:     opts.SpecPath,
