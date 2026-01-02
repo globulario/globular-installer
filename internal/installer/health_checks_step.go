@@ -24,6 +24,9 @@ func (s *HealthChecksStep) Check(ctx *Context) (StepStatus, error) {
 	if ctx.Platform == nil {
 		return StatusUnknown, fmt.Errorf("nil platform")
 	}
+	if len(s.serviceList(ctx)) == 0 {
+		return StatusUnknown, fmt.Errorf("health-checks step requires services list")
+	}
 	sm := ctx.Platform.ServiceManager()
 	if sm == nil {
 		return StatusUnknown, fmt.Errorf("service manager unavailable")
@@ -59,19 +62,10 @@ func (s *HealthChecksStep) Apply(ctx *Context) error {
 		return nil
 	}
 
-	status, err := s.Check(ctx)
-	if err != nil {
-		return err
-	}
-	if status != StatusOK {
-		return fmt.Errorf("health checks failed: %s", status.String())
-	}
-	return nil
+	_, err := s.Check(ctx)
+	return err
 }
 
 func (s *HealthChecksStep) serviceList(ctx *Context) []string {
-	if len(s.Services) > 0 {
-		return s.Services
-	}
-	return enabledServices(ctx)
+	return s.Services
 }

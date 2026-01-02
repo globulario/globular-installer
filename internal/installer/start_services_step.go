@@ -7,7 +7,8 @@ import (
 )
 
 type StartServicesStep struct {
-	Services []string
+	Services       []string
+	RestartOnFiles map[string][]string
 }
 
 func NewStartServicesStep() *StartServicesStep {
@@ -25,11 +26,15 @@ func (s *StartServicesStep) Check(ctx *Context) (StepStatus, error) {
 	if ctx.Platform == nil {
 		return StatusUnknown, fmt.Errorf("nil platform")
 	}
+	units := s.serviceList(ctx)
+	if len(units) == 0 {
+		return StatusUnknown, fmt.Errorf("start-services step requires services list")
+	}
 	sm := ctx.Platform.ServiceManager()
 	if sm == nil {
 		return StatusUnknown, fmt.Errorf("service manager unavailable")
 	}
-	for _, unit := range s.serviceList(ctx) {
+	for _, unit := range units {
 		active, err := sm.IsActive(context.Background(), unit)
 		if err != nil {
 			return StatusUnknown, fmt.Errorf("is-active %s: %w", unit, err)
@@ -54,8 +59,9 @@ func (s *StartServicesStep) Apply(ctx *Context) error {
 		return fmt.Errorf("service manager unavailable")
 	}
 
-	for _, unit := range s.serviceList(ctx) {
-		restartNeeded := needsRestart(ctx, unit)
+	units := s.serviceList(ctx)
+	for _, unit := range units {
+		restartNeeded := s.needsRestart(ctx, unit)
 		if ctx.DryRun {
 			if ctx.Logger != nil {
 				ctx.Logger.Infof("dry-run: would enable %s", unit)
@@ -90,18 +96,27 @@ func (s *StartServicesStep) Apply(ctx *Context) error {
 }
 
 func (s *StartServicesStep) serviceList(ctx *Context) []string {
-	if len(s.Services) > 0 {
-		return s.Services
-	}
-	return enabledServices(ctx)
+	return s.Services
 }
 
-func needsRestart(ctx *Context, unit string) bool {
+func prefixedBinaryPath(ctx *Context, name string) string {
+	return filepath.Join(ctx.Prefix, "bin", name)
+}
+
+func (s *StartServicesStep) needsRestart(ctx *Context, unit string) bool {
 	if ctx == nil || ctx.Runtime == nil {
 		return false
 	}
 	if ctx.Runtime.ChangedUnits[unitPath(unit)] {
 		return true
+	}
+	if ctx.Runtime.ChangedUnits[unit] {
+		return true
+	}
+	for _, file := range s.RestartOnFiles[unit] {
+		if ctx.Runtime.ChangedFiles[file] {
+			return true
+		}
 	}
 	if bin := unitBinary(unit); bin != "" {
 		if ctx.Runtime.ChangedBinaries[prefixedBinaryPath(ctx, bin)] {
@@ -128,18 +143,4 @@ func unitBinary(unit string) string {
 	default:
 		return ""
 	}
-}
-
-func enabledServices(ctx *Context) []string {
-	out := make([]string, 0, 3)
-	if ctx.Features.Enabled(FeatureEnvoy) {
-		out = append(out, "globular-envoy.service")
-	}
-	if ctx.Features.Enabled(FeatureXDS) {
-		out = append(out, "globular-xds.service")
-	}
-	if ctx.Features.Enabled(FeatureGateway) {
-		out = append(out, "globular-gateway.service")
-	}
-	return out
 }

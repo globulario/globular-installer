@@ -46,39 +46,60 @@ func buildStep(ctx *Context, ss spec.StepSpec) (Step, error) {
 		return NewInstallBinariesStep(), nil
 	case "install_files":
 		step := NewInstallFilesStep()
-		if val, ok := ss.Params["files"]; ok {
-			files, err := parseFileSpecs(val)
-			if err != nil {
-				return nil, err
-			}
-			step.Files = files
+		val, ok := ss.Params["files"]
+		if !ok {
+			return nil, fmt.Errorf("install_files step %q missing files definition", ss.ID)
 		}
+		files, err := parseFileSpecs(val)
+		if err != nil {
+			return nil, err
+		}
+		if len(files) == 0 {
+			return nil, fmt.Errorf("install_files step %q defined empty files list", ss.ID)
+		}
+		step.Files = files
 		return step, nil
 	case "install_services":
 		step := NewInstallServicesStep()
-		if val, ok := ss.Params["units"]; ok {
-			units, err := parseUnitSpecs(val)
-			if err != nil {
-				return nil, err
-			}
-			step.Units = units
+		val, ok := ss.Params["units"]
+		if !ok {
+			return nil, fmt.Errorf("install_services step %q missing units definition", ss.ID)
 		}
+		units, err := parseUnitSpecs(val)
+		if err != nil {
+			return nil, err
+		}
+		if len(units) == 0 {
+			return nil, fmt.Errorf("install_services step %q defined empty units list", ss.ID)
+		}
+		step.Units = units
 		return step, nil
 	case "start_services":
 		step := NewStartServicesStep()
-		if services, err := getStringSliceParam(ss.Params, "services"); err != nil {
+		services, err := getStringSliceParam(ss.Params, "services")
+		if err != nil {
 			return nil, err
-		} else if len(services) > 0 {
-			step.Services = services
+		}
+		if len(services) == 0 {
+			return nil, fmt.Errorf("start_services step %q must declare services", ss.ID)
+		}
+		step.Services = services
+		if restartMap, err := parseRestartOnFiles(ss.Params["restart_on_files"]); err != nil {
+			return nil, err
+		} else if len(restartMap) > 0 {
+			step.RestartOnFiles = restartMap
 		}
 		return step, nil
 	case "health_checks":
 		step := NewHealthChecksStep()
-		if services, err := getStringSliceParam(ss.Params, "services"); err != nil {
+		services, err := getStringSliceParam(ss.Params, "services")
+		if err != nil {
 			return nil, err
-		} else if len(services) > 0 {
-			step.Services = services
 		}
+		if len(services) == 0 {
+			return nil, fmt.Errorf("health_checks step %q must declare services", ss.ID)
+		}
+		step.Services = services
 		return step, nil
 	case "noop":
 		name := ss.ID
@@ -203,6 +224,44 @@ func parseUnitSpecs(val any) ([]platform.FileSpec, error) {
 		out = append(out, spec)
 	}
 	return out, nil
+}
+
+func parseRestartOnFiles(val any) (map[string][]string, error) {
+	if val == nil {
+		return nil, nil
+	}
+	m, ok := val.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("restart_on_files must be a map")
+	}
+	out := make(map[string][]string, len(m))
+	for unit, entry := range m {
+		list, err := parseStringList(entry)
+		if err != nil {
+			return nil, fmt.Errorf("restart_on_files[%s]: %w", unit, err)
+		}
+		out[unit] = list
+	}
+	return out, nil
+}
+
+func parseStringList(val any) ([]string, error) {
+	switch v := val.(type) {
+	case []string:
+		return v, nil
+	case []any:
+		out := make([]string, 0, len(v))
+		for idx, elem := range v {
+			s, ok := elem.(string)
+			if !ok {
+				return nil, fmt.Errorf("entry[%d] must be a string", idx)
+			}
+			out = append(out, s)
+		}
+		return out, nil
+	default:
+		return nil, fmt.Errorf("must be list of strings")
+	}
 }
 
 func parseMode(val any) (fs.FileMode, error) {

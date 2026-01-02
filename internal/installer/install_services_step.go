@@ -74,9 +74,13 @@ func (s *InstallServicesStep) Apply(ctx *Context) error {
 		if err != nil {
 			return fmt.Errorf("install services: %w", err)
 		}
+		if ctx.Runtime != nil {
+			ensureRuntimeMaps(ctx.Runtime)
+		}
 		for _, path := range result.Changed {
 			if ctx.Runtime != nil {
 				ctx.Runtime.ChangedUnits[path] = true
+				ctx.Runtime.ChangedUnits[filepath.Base(path)] = true
 			}
 		}
 		changedCount = len(result.Changed)
@@ -86,8 +90,10 @@ func (s *InstallServicesStep) Apply(ctx *Context) error {
 		}
 		changedCount = len(files)
 		if ctx.Runtime != nil {
+			ensureRuntimeMaps(ctx.Runtime)
 			for _, spec := range files {
 				ctx.Runtime.ChangedUnits[spec.Path] = true
+				ctx.Runtime.ChangedUnits[filepath.Base(spec.Path)] = true
 			}
 		}
 	}
@@ -108,100 +114,5 @@ func (s *InstallServicesStep) Apply(ctx *Context) error {
 }
 
 func (s *InstallServicesStep) unitsToInstall(ctx *Context) []platform.FileSpec {
-	if len(s.Units) > 0 {
-		return s.Units
-	}
-	return buildUnitFiles(ctx)
-}
-
-func buildUnitFiles(ctx *Context) []platform.FileSpec {
-	out := make([]platform.FileSpec, 0, len(enabledServices(ctx)))
-	for _, unit := range enabledServices(ctx) {
-		desc := unitDescription(unit)
-		unitPath := filepath.Join("/etc/systemd/system", unit)
-		data := []byte(unitTemplatePlaceholder(desc))
-		switch unit {
-		case "globular-gateway.service":
-			path := prefixedBinaryPath(ctx, "gateway")
-			if fileExists(path) {
-				data = []byte(unitTemplateReal(desc, path, ctx.StateDir))
-			}
-		case "globular-xds.service":
-			path := prefixedBinaryPath(ctx, "xds")
-			if fileExists(path) {
-				data = []byte(unitTemplateReal(desc, path, ctx.StateDir))
-			}
-		}
-		out = append(out, platform.FileSpec{
-			Path:   unitPath,
-			Data:   data,
-			Owner:  "root",
-			Group:  "root",
-			Mode:   0o644,
-			Atomic: true,
-		})
-	}
-	return out
-}
-
-func unitTemplatePlaceholder(description string) string {
-	return fmt.Sprintf(`[Unit]
-Description=%s
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-ExecStart=/bin/sleep infinity
-Restart=always
-RestartSec=2
-
-[Install]
-WantedBy=multi-user.target
-`, description)
-}
-
-func unitTemplateReal(description, execStart, workDir string) string {
-	return fmt.Sprintf(`[Unit]
-Description=%s
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=globular
-Group=globular
-WorkingDirectory=%s
-ExecStart=%s
-Restart=on-failure
-RestartSec=2
-
-[Install]
-WantedBy=multi-user.target
-`, description, workDir, execStart)
-}
-
-func prefixedBinaryPath(ctx *Context, name string) string {
-	return filepath.Join(ctx.Prefix, "bin", name)
-}
-
-func fileExists(path string) bool {
-	st, err := os.Stat(path)
-	if err != nil {
-		return false
-	}
-	return st.Mode().IsRegular()
-}
-
-func unitDescription(unit string) string {
-	switch unit {
-	case "globular-envoy.service":
-		return "Globular Envoy (placeholder)"
-	case "globular-xds.service":
-		return "Globular xDS (placeholder)"
-	case "globular-gateway.service":
-		return "Globular Gateway (placeholder)"
-	default:
-		return fmt.Sprintf("Globular service %s", unit)
-	}
+	return s.Units
 }
