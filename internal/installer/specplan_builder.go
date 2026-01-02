@@ -89,6 +89,11 @@ func buildStep(ctx *Context, ss spec.StepSpec) (Step, error) {
 		} else if len(restartMap) > 0 {
 			step.RestartOnFiles = restartMap
 		}
+		if binMap, err := parseStringMap(ss.Params["binaries"]); err != nil {
+			return nil, err
+		} else if len(binMap) > 0 {
+			step.Binaries = binMap
+		}
 		return step, nil
 	case "health_checks":
 		step := NewHealthChecksStep()
@@ -262,6 +267,25 @@ func parseStringList(val any) ([]string, error) {
 	default:
 		return nil, fmt.Errorf("must be list of strings")
 	}
+}
+
+func parseStringMap(val any) (map[string]string, error) {
+	if val == nil {
+		return nil, nil
+	}
+	m, ok := val.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("must be a map of strings")
+	}
+	out := make(map[string]string, len(m))
+	for key, entry := range m {
+		s, ok := entry.(string)
+		if !ok {
+			return nil, fmt.Errorf("binaries[%s] must be a string", key)
+		}
+		out[key] = s
+	}
+	return out, nil
 }
 
 func parseMode(val any) (fs.FileMode, error) {

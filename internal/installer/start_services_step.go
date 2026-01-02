@@ -9,6 +9,7 @@ import (
 type StartServicesStep struct {
 	Services       []string
 	RestartOnFiles map[string][]string
+	Binaries       map[string]string
 }
 
 func NewStartServicesStep() *StartServicesStep {
@@ -118,7 +119,7 @@ func (s *StartServicesStep) needsRestart(ctx *Context, unit string) bool {
 			return true
 		}
 	}
-	if bin := unitBinary(unit); bin != "" {
+	if bin, ok := s.Binaries[unit]; ok && bin != "" {
 		if ctx.Runtime.ChangedBinaries[prefixedBinaryPath(ctx, bin)] {
 			return true
 		}
@@ -128,19 +129,4 @@ func (s *StartServicesStep) needsRestart(ctx *Context, unit string) bool {
 
 func unitPath(unit string) string {
 	return filepath.Join("/etc/systemd/system", unit)
-}
-
-func unitBinary(unit string) string {
-	switch unit {
-	case "globular-xds.service":
-		return "xds"
-	case "globular-gateway.service":
-		return "gateway"
-	case "globular-envoy.service":
-		return "envoy"
-	case "globular-etcd.service":
-		return "etcd"
-	default:
-		return ""
-	}
 }

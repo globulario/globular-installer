@@ -165,6 +165,7 @@ func (s *InstallBinariesStep) deploySpecs(ctx *Context, specs []platform.FileSpe
 		}
 	}
 	if ctx.Runtime != nil {
+		ensureRuntimeMaps(ctx.Runtime)
 		for _, path := range changed {
 			ctx.Runtime.ChangedBinaries[path] = true
 		}
