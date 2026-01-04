@@ -38,11 +38,31 @@ func Upgrade(ctx *Context) (*RunReport, error) {
 }
 
 func Uninstall(ctx *Context) (*RunReport, error) {
-	plan := NewPlan("uninstall", NewNoop("uninstall-placeholder"))
 	if ctx == nil {
 		return nil, fmt.Errorf("context is required")
 	}
-	return NewRunner().Run(ctx, plan, ModeCheckOnly)
+	sp := ctx.Spec
+	if sp == nil {
+		sp = spec.DefaultInstallSpec(map[string]string{
+			"Prefix":    ctx.Prefix,
+			"StateDir":  ctx.StateDir,
+			"ConfigDir": ctx.ConfigDir,
+			"Version":   ctx.Version,
+		})
+	}
+	preflight := NewPlan("uninstall-preflight",
+		NewRequireRootStep(),
+		NewCheckSystemdStep(),
+	)
+	runner := NewRunner()
+	if _, err := runner.Run(ctx, preflight, ModeApply); err != nil {
+		return nil, err
+	}
+	plan, err := BuildUninstallPlan(ctx, sp)
+	if err != nil {
+		return nil, err
+	}
+	return runner.Run(ctx, plan, ModeApply)
 }
 
 func Doctor(ctx *Context) (*RunReport, error) {

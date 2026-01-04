@@ -169,3 +169,22 @@ func (m *SystemdManager) IsActive(ctx context.Context, name string) (bool, error
 	}
 	return false, nil
 }
+
+func (m *SystemdManager) IsEnabled(ctx context.Context, name string) (bool, error) {
+	if err := platform.ValidateServiceName(name); err != nil {
+		return false, err
+	}
+	args := []string{"is-enabled", "--quiet", name}
+	_, stderr, err := m.run(ctx, args...)
+	if err == nil {
+		return true, nil
+	}
+	if ctx.Err() != nil {
+		return false, ctx.Err()
+	}
+	text := strings.ToLower(stderr)
+	if strings.Contains(text, "not found") || strings.Contains(text, "could not be found") {
+		return false, nil
+	}
+	return false, nil
+}

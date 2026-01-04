@@ -45,6 +45,7 @@ type ServiceManager interface {
 	Restart(ctx context.Context, name string) error
 	Status(ctx context.Context, name string) (ServiceStatus, error)
 	IsActive(ctx context.Context, name string) (bool, error)
+	IsEnabled(ctx context.Context, name string) (bool, error)
 }
 
 func ValidateServiceName(name string) error {
