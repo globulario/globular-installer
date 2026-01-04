@@ -1,0 +1,100 @@
+version: 1
+steps:
+  - id: ensure-user-group
+    type: ensure_user_group
+    user: globular
+    group: globular
+    home: "{{.StateDir}}"
+    shell: /usr/sbin/nologin
+    system: true
+
+  - id: ensure-dirs
+    type: ensure_dirs
+    dirs:
+      - path: "{{.Prefix}}"
+        owner: root
+        group: root
+        mode: 0755
+      - path: "{{.Prefix}}/bin"
+        owner: root
+        group: root
+        mode: 0755
+
+      - path: "{{.StateDir}}"
+        owner: globular
+        group: globular
+        mode: 0750
+
+      - path: "{{.ConfigDir}}"
+        owner: root
+        group: root
+        mode: 0755
+      - path: "{{.ConfigDir}}/envoy"
+        owner: root
+        group: root
+        mode: 0755
+
+  # Copies embedded assets/bin/* into {{.Prefix}}/bin (includes envoy)
+  - id: install-binaries
+    type: install_binaries
+
+  # Writes the Envoy config file.
+  # Replace the 'content' below with the contents of your basic config from assets/config.
+  - id: install-envoy-config
+    type: install_files
+    files:
+      - path: "{{.ConfigDir}}/envoy/envoy.yaml"
+        owner: root
+        group: root
+        mode: 0644
+        atomic: true
+        content: |
+          # REPLACE THIS WITH YOUR assets/config/envoy.yaml CONTENT
+          static_resources:
+            listeners: []
+            clusters: []
+          admin:
+            access_log_path: /tmp/admin_access.log
+            address:
+              socket_address:
+                address: 127.0.0.1
+                port_value: 9901
+
+  # Installs the systemd unit for Envoy.
+  - id: install-envoy-service
+    type: install_services
+    units:
+      - name: globular-envoy.service
+        owner: root
+        group: root
+        mode: 0644
+        atomic: true
+        content: |
+          [Unit]
+          Description=Globular Envoy Proxy
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          ExecStart={{.Prefix}}/bin/envoy -c {{.ConfigDir}}/envoy/envoy.yaml
+          Restart=on-failure
+          RestartSec=2
+
+          [Install]
+          WantedBy=multi-user.target
+
+  - id: start-envoy
+    type: start_services
+    services:
+      - globular-envoy.service
+    restart_on_files:
+      globular-envoy.service:
+        - "{{.ConfigDir}}/envoy/envoy.yaml"
+    binaries:
+      globular-envoy.service: envoy
+
+  - id: health-envoy
+    type: health_checks
+    services:
+      - globular-envoy.service

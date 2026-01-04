@@ -1,6 +1,7 @@
 package installer
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -30,11 +31,33 @@ func (s *InstallBinariesStep) Check(ctx *Context) (StepStatus, error) {
 	if ctx.Platform == nil {
 		return StatusUnknown, fmt.Errorf("nil platform")
 	}
-	if ctx.StagingDir != "" {
-		return StatusNeedsApply, nil
+	specs, _, err := s.desiredSpecs(ctx)
+	if err != nil {
+		return StatusUnknown, err
 	}
-	if hasEmbeddedBins() {
-		return StatusNeedsApply, nil
+	if len(specs) == 0 {
+		return StatusOK, nil
+	}
+	for _, spec := range specs {
+		info, err := os.Stat(spec.Path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return StatusNeedsApply, nil
+			}
+			return StatusUnknown, err
+		}
+		data, err := os.ReadFile(spec.Path)
+		if err != nil {
+			return StatusUnknown, err
+		}
+		if !bytes.Equal(spec.Data, data) {
+			return StatusNeedsApply, nil
+		}
+		if spec.Mode != 0 {
+			if info.Mode().Perm() != spec.Mode.Perm() {
+				return StatusNeedsApply, nil
+			}
+		}
 	}
 	return StatusOK, nil
 }
@@ -53,49 +76,22 @@ func (s *InstallBinariesStep) Apply(ctx *Context) error {
 }
 
 func (s *InstallBinariesStep) installFromStaging(ctx *Context) error {
-	srcBin := filepath.Join(ctx.StagingDir, "bin")
-	specs, err := buildSpecsFromDir(srcBin, ctx.Prefix)
+	specs, source, err := s.desiredSpecs(ctx)
 	if err != nil {
-		return fmt.Errorf("read staging bin %s: %w", srcBin, err)
+		return fmt.Errorf("read staging bins: %w", err)
 	}
-	return s.deploySpecs(ctx, specs, srcBin)
+	return s.deploySpecs(ctx, specs, source)
 }
 
 func (s *InstallBinariesStep) installFromEmbedded(ctx *Context) error {
-	binFS := assets.BinFS()
-	entries, err := iofs.ReadDir(binFS, ".")
+	specs, source, err := s.desiredSpecs(ctx)
 	if err != nil {
 		if ctx.Logger != nil {
 			ctx.Logger.Infof("install-binaries: embedded bundle not available: %v", err)
 		}
 		return nil
 	}
-
-	specs := make([]platform.FileSpec, 0, len(entries))
-	for _, entry := range entries {
-		if entry.IsDir() || shouldSkipEmbedded(entry.Name()) {
-			continue
-		}
-		f, err := binFS.Open(entry.Name())
-		if err != nil {
-			return fmt.Errorf("open embedded %s: %w", entry.Name(), err)
-		}
-		data, err := io.ReadAll(f)
-		f.Close()
-		if err != nil {
-			return fmt.Errorf("read embedded %s: %w", entry.Name(), err)
-		}
-		specs = append(specs, platform.FileSpec{
-			Path:   filepath.Join(ctx.Prefix, "bin", entry.Name()),
-			Data:   data,
-			Owner:  "root",
-			Group:  "root",
-			Mode:   iofs.FileMode(0o755),
-			Atomic: true,
-		})
-	}
-
-	return s.deploySpecs(ctx, specs, "embedded bundle")
+	return s.deploySpecs(ctx, specs, source)
 }
 
 func buildSpecsFromDir(srcBin, prefix string) ([]platform.FileSpec, error) {
@@ -121,6 +117,48 @@ func buildSpecsFromDir(srcBin, prefix string) ([]platform.FileSpec, error) {
 		}
 		specs = append(specs, platform.FileSpec{
 			Path:   filepath.Join(prefix, "bin", entry.Name()),
+			Data:   data,
+			Owner:  "root",
+			Group:  "root",
+			Mode:   iofs.FileMode(0o755),
+			Atomic: true,
+		})
+	}
+	return specs, nil
+}
+
+func (s *InstallBinariesStep) desiredSpecs(ctx *Context) ([]platform.FileSpec, string, error) {
+	if ctx.StagingDir != "" {
+		srcBin := filepath.Join(ctx.StagingDir, "bin")
+		specs, err := buildSpecsFromDir(srcBin, ctx.Prefix)
+		return specs, srcBin, err
+	}
+	specs, err := buildEmbeddedSpecs(ctx)
+	return specs, "embedded bundle", err
+}
+
+func buildEmbeddedSpecs(ctx *Context) ([]platform.FileSpec, error) {
+	binFS := assets.BinFS()
+	entries, err := iofs.ReadDir(binFS, ".")
+	if err != nil {
+		return nil, err
+	}
+	specs := make([]platform.FileSpec, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || shouldSkipEmbedded(entry.Name()) {
+			continue
+		}
+		f, err := binFS.Open(entry.Name())
+		if err != nil {
+			return nil, err
+		}
+		data, err := io.ReadAll(f)
+		f.Close()
+		if err != nil {
+			return nil, err
+		}
+		specs = append(specs, platform.FileSpec{
+			Path:   filepath.Join(ctx.Prefix, "bin", entry.Name()),
 			Data:   data,
 			Owner:  "root",
 			Group:  "root",

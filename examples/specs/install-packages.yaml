@@ -1,0 +1,9 @@
+version: 1
+steps:
+  - id: base-packages
+    type: install_packages
+    manager: apt
+    packages:
+      - name: ca-certificates
+      - name: curl
+      - name: gnupg

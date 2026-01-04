@@ -1,0 +1,11 @@
+version: 1
+steps:
+  - id: fetch-envoy
+    type: fetch_file
+    url: "https://repo.globular.io/releases/1.2.3/bin/envoy"
+    to: "{{.Prefix}}/bin/envoy"
+    sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    mode: 0755
+    owner: root
+    group: root
+    binary: true

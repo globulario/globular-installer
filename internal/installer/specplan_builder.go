@@ -1,10 +1,14 @@
 package installer
 
 import (
+	"encoding/hex"
 	"fmt"
 	"io/fs"
+	"net/url"
 	"path/filepath"
+	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/globulario/globular-installer/internal/installer/spec"
 	"github.com/globulario/globular-installer/internal/platform"
@@ -105,6 +109,18 @@ func buildStep(ctx *Context, ss spec.StepSpec) (Step, error) {
 			return nil, fmt.Errorf("health_checks step %q must declare services", ss.ID)
 		}
 		step.Services = services
+		return step, nil
+	case "install_packages":
+		step, err := buildInstallPackagesStep(ss)
+		if err != nil {
+			return nil, err
+		}
+		return step, nil
+	case "fetch_file":
+		step, err := buildFetchFileStep(ss)
+		if err != nil {
+			return nil, err
+		}
 		return step, nil
 	case "noop":
 		name := ss.ID
@@ -229,6 +245,191 @@ func parseUnitSpecs(val any) ([]platform.FileSpec, error) {
 		out = append(out, spec)
 	}
 	return out, nil
+}
+
+func buildInstallPackagesStep(ss spec.StepSpec) (Step, error) {
+	step := NewInstallPackagesStep()
+	manager := getStringParam(ss.Params, "manager", "apt")
+	if manager != "apt" {
+		return nil, fmt.Errorf("install_packages step %q unsupported manager %q", ss.ID, manager)
+	}
+	pkgs, err := parsePackageSpecs(ss.Params["packages"])
+	if err != nil {
+		return nil, err
+	}
+	if len(pkgs) == 0 {
+		return nil, fmt.Errorf("install_packages step %q must declare packages", ss.ID)
+	}
+	step.Manager = manager
+	step.Packages = pkgs
+	return step, nil
+}
+
+func parsePackageSpecs(val any) ([]PackageSpec, error) {
+	rawList, ok := val.([]any)
+	if !ok {
+		return nil, fmt.Errorf("packages must be a list")
+	}
+	out := make([]PackageSpec, 0, len(rawList))
+	for idx, entry := range rawList {
+		m, ok := entry.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("packages[%d] must be a map", idx)
+		}
+		name := getStringParam(m, "name", "")
+		if name == "" {
+			return nil, fmt.Errorf("packages[%d] missing name", idx)
+		}
+		out = append(out, PackageSpec{
+			Name:    name,
+			Version: getStringParam(m, "version", ""),
+		})
+	}
+	return out, nil
+}
+
+func buildFetchFileStep(ss spec.StepSpec) (Step, error) {
+	urlStr := getStringParam(ss.Params, "url", "")
+	to := getStringParam(ss.Params, "to", "")
+	sha := strings.ToLower(strings.TrimSpace(getStringParam(ss.Params, "sha256", "")))
+	if urlStr == "" {
+		return nil, fmt.Errorf("fetch_file step %q missing url", ss.ID)
+	}
+	if to == "" {
+		return nil, fmt.Errorf("fetch_file step %q missing destination", ss.ID)
+	}
+	if sha == "" {
+		return nil, fmt.Errorf("fetch_file step %q missing sha256", ss.ID)
+	}
+	if len(sha) != 64 {
+		return nil, fmt.Errorf("fetch_file step %q sha256 must be 64 hex digits", ss.ID)
+	}
+	if _, err := hex.DecodeString(sha); err != nil {
+		return nil, fmt.Errorf("fetch_file step %q sha256 invalid: %w", ss.ID, err)
+	}
+	parsed, err := url.Parse(urlStr)
+	if err != nil {
+		return nil, fmt.Errorf("fetch_file step %q invalid url: %w", ss.ID, err)
+	}
+	if parsed.Scheme != "https" {
+		return nil, fmt.Errorf("fetch_file step %q url must use https", ss.ID)
+	}
+	destMode := getModeParam(ss.Params, "mode", 0)
+	step := &FetchFileStep{
+		URL:    urlStr,
+		To:     to,
+		Sha256: sha,
+		Mode:   destMode,
+		Owner:  getStringParam(ss.Params, "owner", "root"),
+		Group:  getStringParam(ss.Params, "group", "root"),
+		Binary: getBoolParam(ss.Params, "binary", false),
+	}
+	return step, nil
+}
+
+// BuildUninstallPlan builds an uninstall plan derived from the install spec.
+func BuildUninstallPlan(ctx *Context, sp *spec.InstallSpec) (*Plan, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("nil context")
+	}
+	if sp == nil {
+		return nil, fmt.Errorf("nil spec")
+	}
+	if err := sp.Validate(); err != nil {
+		return nil, err
+	}
+
+	serviceSet := make(map[string]struct{})
+	unitMap := make(map[string]platform.FileSpec)
+	fileMap := make(map[string]platform.FileSpec)
+	binarySet := make(map[string]struct{})
+
+	for _, ss := range sp.Steps {
+		switch ss.Type {
+		case "start_services":
+			services, err := getStringSliceParam(ss.Params, "services")
+			if err != nil {
+				return nil, err
+			}
+			for _, svc := range services {
+				serviceSet[svc] = struct{}{}
+			}
+			if binMap, err := parseStringMap(ss.Params["binaries"]); err != nil {
+				return nil, err
+			} else {
+				for _, binName := range binMap {
+					path := filepath.Join(ctx.Prefix, "bin", binName)
+					binarySet[path] = struct{}{}
+				}
+			}
+		case "install_services":
+			if val, ok := ss.Params["units"]; ok {
+				units, err := parseUnitSpecs(val)
+				if err != nil {
+					return nil, err
+				}
+				for _, unit := range units {
+					unitMap[unit.Path] = unit
+				}
+			}
+		case "install_files":
+			if val, ok := ss.Params["files"]; ok {
+				files, err := parseFileSpecs(val)
+				if err != nil {
+					return nil, err
+				}
+				for _, file := range files {
+					fileMap[file.Path] = file
+				}
+			}
+		}
+	}
+
+	steps := make([]Step, 0, 4)
+
+	if len(serviceSet) > 0 {
+		services := mapKeys(serviceSet)
+		steps = append(steps, &StopServicesStep{Services: services})
+	}
+	if len(unitMap) > 0 {
+		units := mapValues(unitMap)
+		steps = append(steps, &UninstallServicesStep{Units: units})
+	}
+	if len(fileMap) > 0 {
+		files := mapValues(fileMap)
+		steps = append(steps, &UninstallFilesStep{Files: files})
+	}
+	if len(binarySet) > 0 {
+		paths := mapKeys(binarySet)
+		steps = append(steps, &UninstallBinariesStep{Paths: paths})
+	}
+
+	if len(steps) == 0 {
+		return NewPlan("uninstall"), nil
+	}
+	return NewPlan("uninstall", steps...), nil
+}
+
+func mapKeys(set map[string]struct{}) []string {
+	out := make([]string, 0, len(set))
+	for key := range set {
+		out = append(out, key)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func mapValues(m map[string]platform.FileSpec) []platform.FileSpec {
+	out := make([]platform.FileSpec, 0, len(m))
+	keys := make([]string, 0, len(m))
+	for p := range m {
+		keys = append(keys, p)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		out = append(out, m[k])
+	}
+	return out
 }
 
 func parseRestartOnFiles(val any) (map[string][]string, error) {
