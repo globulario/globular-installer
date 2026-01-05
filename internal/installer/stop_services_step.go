@@ -75,5 +75,8 @@ func isServiceNotFound(err error) bool {
 		return false
 	}
 	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "not-found") || strings.Contains(msg, "could not be found")
+	return strings.Contains(msg, "not found") ||
+		strings.Contains(msg, "not-found") ||
+		strings.Contains(msg, "could not be found") ||
+		strings.Contains(msg, "loaded: not-found")
 }

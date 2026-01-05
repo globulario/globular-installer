@@ -14,6 +14,8 @@ type fakeServiceManager struct {
 	enabled    map[string]bool
 	enabledErr map[string]error
 	reloads    int
+	disableErr map[string]error
+	stopErr    map[string]error
 }
 
 func (f *fakeServiceManager) DaemonReload(ctx context.Context) error {
@@ -21,10 +23,20 @@ func (f *fakeServiceManager) DaemonReload(ctx context.Context) error {
 	return nil
 }
 
-func (f *fakeServiceManager) Enable(ctx context.Context, name string) error  { return nil }
-func (f *fakeServiceManager) Disable(ctx context.Context, name string) error { return nil }
-func (f *fakeServiceManager) Start(ctx context.Context, name string) error   { return nil }
-func (f *fakeServiceManager) Stop(ctx context.Context, name string) error    { return nil }
+func (f *fakeServiceManager) Enable(ctx context.Context, name string) error { return nil }
+func (f *fakeServiceManager) Disable(ctx context.Context, name string) error {
+	if err := f.disableErr[name]; err != nil {
+		return err
+	}
+	return nil
+}
+func (f *fakeServiceManager) Start(ctx context.Context, name string) error { return nil }
+func (f *fakeServiceManager) Stop(ctx context.Context, name string) error {
+	if err := f.stopErr[name]; err != nil {
+		return err
+	}
+	return nil
+}
 func (f *fakeServiceManager) Restart(ctx context.Context, name string) error { return nil }
 func (f *fakeServiceManager) Status(ctx context.Context, name string) (platform.ServiceStatus, error) {
 	return platform.ServiceStatus{Name: name, State: platform.ServiceUnknown}, nil
@@ -99,5 +111,18 @@ func TestUninstallFilesDoesNotReload(t *testing.T) {
 	}
 	if mgr.reloads != 0 {
 		t.Fatalf("expected zero reloads, got %d", mgr.reloads)
+	}
+}
+
+func TestStopServicesStepApplyIgnoresNotFound(t *testing.T) {
+	errNotFound := fmt.Errorf("Unit missing.service not found")
+	mgr := &fakeServiceManager{
+		disableErr: map[string]error{"missing.service": errNotFound},
+		stopErr:    map[string]error{"missing.service": errNotFound},
+	}
+	ctx := &Context{Platform: &fakePlatform{sm: mgr}}
+	step := &StopServicesStep{Services: []string{"missing.service"}}
+	if err := step.Apply(ctx); err != nil {
+		t.Fatalf("apply failed: %v", err)
 	}
 }
