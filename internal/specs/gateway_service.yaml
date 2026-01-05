@@ -1,0 +1,89 @@
+version: 1
+steps:
+  - id: ensure-user-group
+    type: ensure_user_group
+    user: globular
+    group: globular
+    home: "{{.StateDir}}"
+    shell: /usr/sbin/nologin
+    system: true
+
+  - id: ensure-dirs
+    type: ensure_dirs
+    dirs:
+      - path: "{{.Prefix}}"
+        owner: root
+        group: root
+        mode: 0755
+      - path: "{{.Prefix}}/bin"
+        owner: root
+        group: root
+        mode: 0755
+
+      - path: "{{.StateDir}}"
+        owner: globular
+        group: globular
+        mode: 0750
+
+      - path: "{{.ConfigDir}}"
+        owner: root
+        group: root
+        mode: 0755
+      - path: "{{.ConfigDir}}/gateway"
+        owner: root
+        group: root
+        mode: 0755
+
+  # Copies embedded assets/bin/* into {{.Prefix}}/bin
+  # (must include the gateway binary: internal/assets/bin/globular-gateway)
+  - id: install-binaries
+    type: install_binaries
+
+  - id: install-gateway-config
+    type: install_files
+    files:
+      - path: "{{.ConfigDir}}/config.json"
+        owner: root
+        group: root
+        mode: 0644
+        atomic: true
+        content: |
+          {{.GatewayConfigJSON}}
+
+  - id: install-gateway-service
+    type: install_services
+    units:
+      - name: globular-gateway.service
+        owner: root
+        group: root
+        mode: 0644
+        atomic: true
+        content: |
+          [Unit]
+          Description=Globular API Gateway
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          User=globular
+          Group=globular
+          CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+          AmbientCapabilities=CAP_NET_BIND_SERVICE
+          WorkingDirectory={{.StateDir}}
+          ExecStart={{.Prefix}}/bin/globular-gateway --config {{.ConfigDir}}/config.json
+          Restart=on-failure
+          RestartSec=2
+
+          [Install]
+          WantedBy=multi-user.target
+
+  - id: start-gateway
+    type: start_services
+    services:
+      - globular-gateway.service
+    restart_on_files:
+      globular-gateway.service:
+        - "{{.ConfigDir}}/config.json"
+    binaries:
+      globular-gateway.service: globular-gateway

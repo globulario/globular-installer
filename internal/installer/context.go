@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/globulario/globular-installer/internal/assets"
 	"github.com/globulario/globular-installer/internal/installer/manifest"
 	"github.com/globulario/globular-installer/internal/installer/spec"
 	"github.com/globulario/globular-installer/internal/platform"
@@ -35,9 +36,12 @@ type Context struct {
 	Runtime        *RuntimeState
 	Spec           *spec.InstallSpec
 	SpecPath       string
+	SpecInline     string
+	TemplateVars   map[string]string
 	Platform       platform.Platform
 	Manifest       *manifest.Manifest
 	ManifestPath   string
+	Purge          bool
 }
 
 func (c *Context) PlatformBackend() platform.Platform {
@@ -106,11 +110,22 @@ func NewContext(opts Options) (*Context, error) {
 		specObj  *spec.InstallSpec
 		specDesc string
 	)
+	xdsWatcherConfig := []byte("{}")
+	if b, err := assets.ReadConfigAsset("xds/config.json"); err == nil && len(b) > 0 {
+		xdsWatcherConfig = b
+	}
+	gatewayConfig := []byte("{}")
+	if b, err := assets.ReadConfigAsset("gateway/config.json"); err == nil && len(b) > 0 {
+		gatewayConfig = b
+	}
+
 	templateVars := map[string]string{
-		"Prefix":    prefix,
-		"StateDir":  stateDir,
-		"ConfigDir": configDir,
-		"Version":   opts.Version,
+		"Prefix":            prefix,
+		"StateDir":          stateDir,
+		"ConfigDir":         configDir,
+		"Version":           opts.Version,
+		"XDSConfigJSON":     string(xdsWatcherConfig),
+		"GatewayConfigJSON": string(gatewayConfig),
 	}
 	if opts.SpecInline != "" {
 		specObj, err = spec.LoadInline(opts.SpecInline, templateVars)
@@ -145,9 +160,12 @@ func NewContext(opts Options) (*Context, error) {
 		},
 		Spec:         specObj,
 		SpecPath:     opts.SpecPath,
+		SpecInline:   opts.SpecInline,
+		TemplateVars: templateVars,
 		Platform:     plat,
 		Manifest:     m,
 		ManifestPath: mpath,
+		Purge:        opts.Purge,
 	}
 
 	if logger != nil {
@@ -157,4 +175,27 @@ func NewContext(opts Options) (*Context, error) {
 	}
 
 	return ctx, nil
+}
+
+func (c *Context) LoadSpec(strict bool) (*spec.InstallSpec, error) {
+	if strict && c.Spec != nil {
+		return c.Spec, nil
+	}
+	if c.TemplateVars == nil {
+		c.TemplateVars = map[string]string{
+			"Prefix":            c.Prefix,
+			"StateDir":          c.StateDir,
+			"ConfigDir":         c.ConfigDir,
+			"Version":           c.Version,
+			"XDSConfigJSON":     "",
+			"GatewayConfigJSON": "",
+		}
+	}
+	if c.SpecInline != "" {
+		return spec.LoadInlineWithMode(c.SpecInline, c.TemplateVars, strict)
+	}
+	if c.SpecPath != "" {
+		return spec.LoadWithMode(c.SpecPath, c.TemplateVars, strict)
+	}
+	return spec.DefaultInstallSpec(c.TemplateVars), nil
 }

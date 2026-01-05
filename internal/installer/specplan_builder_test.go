@@ -31,8 +31,8 @@ func TestBuildUninstallPlanFromEnvoySpec(t *testing.T) {
 	if plan.Name != "uninstall" {
 		t.Fatalf("unexpected plan name %q", plan.Name)
 	}
-	if len(plan.Steps) != 4 {
-		t.Fatalf("expected 4 steps, got %d", len(plan.Steps))
+	if len(plan.Steps) != 3 {
+		t.Fatalf("expected 3 steps, got %d", len(plan.Steps))
 	}
 
 	stopStep, ok := plan.Steps[0].(*StopServicesStep)
@@ -52,18 +52,9 @@ func TestBuildUninstallPlanFromEnvoySpec(t *testing.T) {
 		t.Fatalf("expected unit %q, got %v", expectedUnit, uninstallSvc.Units)
 	}
 
-	uninstallFiles, ok := plan.Steps[2].(*UninstallFilesStep)
+	uninstallBins, ok := plan.Steps[2].(*UninstallBinariesStep)
 	if !ok {
 		t.Fatalf("step 2 is %T", plan.Steps[2])
-	}
-	expectedFile := filepath.Join(vars["ConfigDir"], "envoy", "envoy.yaml")
-	if len(uninstallFiles.Files) != 1 || uninstallFiles.Files[0].Path != expectedFile {
-		t.Fatalf("expected file %q, got %v", expectedFile, uninstallFiles.Files)
-	}
-
-	uninstallBins, ok := plan.Steps[3].(*UninstallBinariesStep)
-	if !ok {
-		t.Fatalf("step 3 is %T", plan.Steps[3])
 	}
 	expectedBin := filepath.Join(vars["Prefix"], "bin", "envoy")
 	if len(uninstallBins.Paths) != 1 || uninstallBins.Paths[0] != expectedBin {

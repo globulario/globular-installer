@@ -1,0 +1,13 @@
+grpc:
+  # Envoy bootstrap defaults in your controlplane code assume xDS at 127.0.0.1:18000,
+  # so keep that as the default unless you also change Envoy bootstrap generation.
+  address: "127.0.0.1:18000"
+
+logging:
+  level: "info"   # "debug" / "info" / "warn" / "error"
+
+runtime:
+  # Used as a general writable location for any generated runtime artifacts
+  # (snapshots, bootstrap outputs, etc.), without writing into /etc.
+  state_dir: "/var/lib/globular"
+

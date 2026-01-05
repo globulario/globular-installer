@@ -38,28 +38,6 @@ steps:
   - id: install-binaries
     type: install_binaries
 
-  # Writes the Envoy config file.
-  # Replace the 'content' below with the contents of your basic config from assets/config.
-  - id: install-envoy-config
-    type: install_files
-    files:
-      - path: "{{.ConfigDir}}/envoy/envoy.yaml"
-        owner: root
-        group: root
-        mode: 0644
-        atomic: true
-        content: |
-          # REPLACE THIS WITH YOUR assets/config/envoy.yaml CONTENT
-          static_resources:
-            listeners: []
-            clusters: []
-          admin:
-            access_log_path: /tmp/admin_access.log
-            address:
-              socket_address:
-                address: 127.0.0.1
-                port_value: 9901
-
   # Installs the systemd unit for Envoy.
   - id: install-envoy-service
     type: install_services
@@ -72,12 +50,18 @@ steps:
         content: |
           [Unit]
           Description=Globular Envoy Proxy
-          After=network-online.target
-          Wants=network-online.target
+          After=network-online.target globular-xds.service
+          Wants=network-online.target globular-xds.service
+          Requires=globular-xds.service
 
           [Service]
           Type=simple
-          ExecStart={{.Prefix}}/bin/envoy -c {{.ConfigDir}}/envoy/envoy.yaml
+          User=globular
+          Group=globular
+          ExecStartPre=/bin/sh -c 'rm -f /dev/shm/envoy_shared_memory_* || true'
+          ExecStartPre=/bin/sh -c "install -d -m 0755 /run/globular/envoy"
+          ExecStartPre=/bin/sh -c "for i in $(seq 1 60); do test -s /run/globular/envoy/envoy-bootstrap.json && exit 0; sleep 0.5; done; echo 'missing envoy bootstrap' >&2; exit 1"
+          ExecStart={{.Prefix}}/bin/envoy --base-id 0 -c /run/globular/envoy/envoy-bootstrap.json
           Restart=on-failure
           RestartSec=2
 
@@ -88,9 +72,6 @@ steps:
     type: start_services
     services:
       - globular-envoy.service
-    restart_on_files:
-      globular-envoy.service:
-        - "{{.ConfigDir}}/envoy/envoy.yaml"
     binaries:
       globular-envoy.service: envoy
 

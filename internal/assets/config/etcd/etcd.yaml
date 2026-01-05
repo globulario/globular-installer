@@ -1,0 +1,34 @@
+# Single-node embedded etcd defaults for Globular
+name: "globular-etcd"
+
+# Store data under Globular state root
+data-dir: "/var/lib/globular/etcd"
+
+# Client API (what globular-xds will dial)
+listen-client-urls: "http://127.0.0.1:2379"
+advertise-client-urls: "http://127.0.0.1:2379"
+
+# Peer traffic (single-node still uses this for cluster identity)
+listen-peer-urls: "http://127.0.0.1:2380"
+initial-advertise-peer-urls: "http://127.0.0.1:2380"
+
+# Single-node cluster bootstrap
+initial-cluster: "globular-etcd=http://127.0.0.1:2380"
+initial-cluster-state: "new"
+initial-cluster-token: "globular-etcd-cluster"
+
+# Logging
+logger: "zap"
+log-level: "info"
+log-outputs: ["stderr"]
+
+# Practical defaults
+snapshot-count: 10000
+
+# Keep DB from growing forever in typical key-churn workloads
+auto-compaction-mode: "periodic"
+auto-compaction-retention: "1h"
+
+# 0 means “use default” (keep it simple unless you want a hard quota)
+quota-backend-bytes: 0
+

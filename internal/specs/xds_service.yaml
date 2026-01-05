@@ -1,0 +1,111 @@
+version: 1
+steps:
+  - id: ensure-user-group
+    type: ensure_user_group
+    user: globular
+    group: globular
+    home: "{{.StateDir}}"
+    shell: /usr/sbin/nologin
+    system: true
+
+  - id: ensure-dirs
+    type: ensure_dirs
+    dirs:
+      - path: "{{.Prefix}}"
+        owner: root
+        group: root
+        mode: 0755
+      - path: "{{.Prefix}}/bin"
+        owner: root
+        group: root
+        mode: 0755
+
+      - path: "{{.StateDir}}"
+        owner: globular
+        group: globular
+        mode: 0750
+
+      - path: "{{.ConfigDir}}"
+        owner: root
+        group: root
+        mode: 0755
+      - path: "{{.ConfigDir}}/xds"
+        owner: root
+        group: root
+        mode: 0755
+
+  # Copies embedded assets/bin/* into {{.Prefix}}/bin
+  # (must include the xDS binary: internal/assets/bin/globular-xds)
+  - id: install-binaries
+    type: install_binaries
+
+  # Writes the xDS config file.
+  # Replace content with your real asset content later if desired.
+  - id: install-xds-config
+    type: install_files
+    files:
+      - path: "{{.ConfigDir}}/xds/xds.yaml"
+        owner: root
+        group: root
+        mode: 0644
+        atomic: true
+        content: |
+          grpc:
+            address: "127.0.0.1:18000"
+          logging:
+            level: "info"
+          runtime:
+            state_dir: "{{.StateDir}}"
+      - path: "{{.ConfigDir}}/xds/config.json"
+        owner: root
+        group: root
+        mode: 0644
+        atomic: true
+        content: |
+          {{.XDSConfigJSON}}
+
+  # Installs the systemd unit for xDS.
+  - id: install-xds-service
+    type: install_services
+    units:
+      - name: globular-xds.service
+        owner: root
+        group: root
+        mode: 0644
+        atomic: true
+        content: |
+          [Unit]
+          Description=Globular xDS Control Plane
+          After=network-online.target globular-etcd.service
+          Wants=network-online.target globular-etcd.service
+          Requires=globular-etcd.service
+
+          [Service]
+          Type=simple
+          User=globular
+          Group=globular
+          RuntimeDirectory=globular globular/envoy
+          RuntimeDirectoryMode=0755
+          ReadWritePaths=/run/globular /var/lib/globular
+          WorkingDirectory={{.StateDir}}
+          ExecStart={{.Prefix}}/bin/globular-xds --config {{.ConfigDir}}/xds/xds.yaml
+          Restart=on-failure
+          RestartSec=2
+
+          [Install]
+          WantedBy=multi-user.target
+
+  - id: start-xds
+    type: start_services
+    services:
+      - globular-xds.service
+    restart_on_files:
+      globular-xds.service:
+        - "{{.ConfigDir}}/xds/xds.yaml"
+    binaries:
+      globular-xds.service: globular-xds
+
+  - id: health-xds
+    type: health_checks
+    services:
+      - globular-xds.service

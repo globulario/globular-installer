@@ -10,7 +10,7 @@ import (
 	"github.com/globulario/globular-installer/internal/installer"
 )
 
-var availableCommands = []string{"install", "doctor", "status"}
+var availableCommands = []string{"install", "doctor", "status", "uninstall"}
 
 func main() {
 	os.Exit(run(os.Args))
@@ -34,7 +34,7 @@ func run(args []string) int {
 	}
 
 	switch cmd {
-	case "install", "doctor", "status":
+	case "install", "doctor", "status", "uninstall":
 		return runCommand(prog, cmd, args[2:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q\n", cmd)
@@ -55,6 +55,7 @@ func runCommand(prog, cmd string, args []string) int {
 	specPath := fs.String("spec", "", "path to YAML/JSON install spec")
 	specInline := fs.String("spec-inline", "", "inline spec content (YAML/JSON)")
 	dryRun := fs.Bool("dry-run", false, "perform a dry run")
+	purge := fs.Bool("purge", false, "remove config/state dirs when uninstalling")
 	nonInteractive := fs.Bool("non-interactive", false, "run without prompts")
 	verbose := fs.Bool("verbose", false, "enable verbose logging")
 	version := fs.String("version", "", "globular version being installed")
@@ -84,6 +85,7 @@ func runCommand(prog, cmd string, args []string) int {
 		DryRun:         *dryRun,
 		NonInteractive: *nonInteractive,
 		Verbose:        *verbose,
+		Purge:          *purge,
 	}
 
 	ctx, err := installer.NewContext(opts)
@@ -101,6 +103,8 @@ func runCommand(prog, cmd string, args []string) int {
 		report, runErr = installer.Doctor(ctx)
 	case "status":
 		report, runErr = installer.Status(ctx)
+	case "uninstall":
+		report, runErr = installer.Uninstall(ctx)
 	}
 
 	printReport(os.Stdout, cmd, report)
@@ -132,7 +136,12 @@ func printCommandUsage(w io.Writer, prog, cmd string) {
 	fmt.Fprintln(w, "  --non-interactive        run without prompts")
 	fmt.Fprintln(w, "  --verbose                print verbose logs")
 	fmt.Fprintln(w, "  --version string         globular version metadata")
+	fmt.Fprintln(w, "  --purge                  remove config/state dirs when uninstalling")
 	fmt.Fprintln(w, "  --help, -h               show this help")
+
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Examples:")
+	fmt.Fprintf(w, "  %s uninstall --purge --state-dir /var/lib/globular\n", prog)
 }
 
 func printReport(w io.Writer, cmd string, rep *installer.RunReport) {

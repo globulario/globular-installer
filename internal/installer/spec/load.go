@@ -10,23 +10,31 @@ import (
 )
 
 func Load(path string, vars map[string]string) (*InstallSpec, error) {
+	return LoadWithMode(path, vars, true)
+}
+
+func LoadWithMode(path string, vars map[string]string, strict bool) (*InstallSpec, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	return parseSpec(data, vars)
+	return parseSpec(data, vars, strict)
 }
 
 func LoadInline(input string, vars map[string]string) (*InstallSpec, error) {
-	return parseSpec([]byte(input), vars)
+	return LoadInlineWithMode(input, vars, true)
 }
 
-func parseSpec(data []byte, vars map[string]string) (*InstallSpec, error) {
+func LoadInlineWithMode(input string, vars map[string]string, strict bool) (*InstallSpec, error) {
+	return parseSpec([]byte(input), vars, strict)
+}
+
+func parseSpec(data []byte, vars map[string]string, strict bool) (*InstallSpec, error) {
 	var spec InstallSpec
 	if err := yaml.Unmarshal(data, &spec); err != nil {
 		return nil, err
 	}
-	if err := applyTemplates(&spec, vars); err != nil {
+	if err := applyTemplates(&spec, vars, strict); err != nil {
 		return nil, err
 	}
 	if err := spec.Validate(); err != nil {
@@ -35,9 +43,9 @@ func parseSpec(data []byte, vars map[string]string) (*InstallSpec, error) {
 	return &spec, nil
 }
 
-func applyTemplates(spec *InstallSpec, vars map[string]string) error {
+func applyTemplates(spec *InstallSpec, vars map[string]string, strict bool) error {
 	for idx := range spec.Steps {
-		rendered, err := renderParams(spec.Steps[idx].Params, vars)
+		rendered, err := renderParams(spec.Steps[idx].Params, vars, strict)
 		if err != nil {
 			return err
 		}
@@ -46,10 +54,10 @@ func applyTemplates(spec *InstallSpec, vars map[string]string) error {
 	return nil
 }
 
-func renderParams(input map[string]any, vars map[string]string) (map[string]any, error) {
+func renderParams(input map[string]any, vars map[string]string, strict bool) (map[string]any, error) {
 	out := make(map[string]any, len(input))
 	for key, value := range input {
-		rendered, err := renderValue(value, vars)
+		rendered, err := renderValue(value, vars, strict)
 		if err != nil {
 			return nil, fmt.Errorf("step param %q: %w", key, err)
 		}
@@ -58,16 +66,16 @@ func renderParams(input map[string]any, vars map[string]string) (map[string]any,
 	return out, nil
 }
 
-func renderValue(value any, vars map[string]string) (any, error) {
+func renderValue(value any, vars map[string]string, strict bool) (any, error) {
 	switch v := value.(type) {
 	case string:
-		return renderString(v, vars)
+		return renderString(v, vars, strict)
 	case map[string]any:
-		return renderParams(v, vars)
+		return renderParams(v, vars, strict)
 	case []any:
 		result := make([]any, len(v))
 		for i, element := range v {
-			rendered, err := renderValue(element, vars)
+			rendered, err := renderValue(element, vars, strict)
 			if err != nil {
 				return nil, err
 			}
@@ -79,8 +87,12 @@ func renderValue(value any, vars map[string]string) (any, error) {
 	}
 }
 
-func renderString(input string, vars map[string]string) (string, error) {
-	tmpl, err := template.New("").Option("missingkey=error").Parse(input)
+func renderString(input string, vars map[string]string, strict bool) (string, error) {
+	option := "missingkey=error"
+	if !strict {
+		option = "missingkey=zero"
+	}
+	tmpl, err := template.New("").Option(option).Parse(input)
 	if err != nil {
 		return "", err
 	}

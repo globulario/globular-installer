@@ -14,6 +14,7 @@ type Options struct {
 	StagingDir     string
 	SpecPath       string
 	SpecInline     string
+	Purge          bool
 }
 
 func (o Options) Normalized() Options {

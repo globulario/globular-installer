@@ -1,24 +1,15 @@
 package installer
 
-import (
-	"fmt"
-
-	"github.com/globulario/globular-installer/internal/installer/spec"
-)
+import "fmt"
 
 func Install(ctx *Context) (*RunReport, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("context is required")
 	}
 
-	sp := ctx.Spec
-	if sp == nil {
-		sp = spec.DefaultInstallSpec(map[string]string{
-			"Prefix":    ctx.Prefix,
-			"StateDir":  ctx.StateDir,
-			"ConfigDir": ctx.ConfigDir,
-			"Version":   ctx.Version,
-		})
+	sp, err := ctx.LoadSpec(true)
+	if err != nil {
+		return nil, err
 	}
 
 	plan, err := BuildInstallPlan(ctx, sp)
@@ -41,14 +32,9 @@ func Uninstall(ctx *Context) (*RunReport, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("context is required")
 	}
-	sp := ctx.Spec
-	if sp == nil {
-		sp = spec.DefaultInstallSpec(map[string]string{
-			"Prefix":    ctx.Prefix,
-			"StateDir":  ctx.StateDir,
-			"ConfigDir": ctx.ConfigDir,
-			"Version":   ctx.Version,
-		})
+	sp, err := ctx.LoadSpec(false)
+	if err != nil {
+		return nil, err
 	}
 	preflight := NewPlan("uninstall-preflight",
 		NewRequireRootStep(),
