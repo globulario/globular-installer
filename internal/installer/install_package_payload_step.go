@@ -33,8 +33,96 @@ func (s *InstallPackagePayloadStep) Check(ctx *Context) (StepStatus, error) {
 	if ctx.StagingDir == "" {
 		return StatusUnknown, fmt.Errorf("staging dir not set; run stage_package first")
 	}
-	// payload install is idempotent but not trivially checkable; always apply
-	return StatusNeedsApply, nil
+
+	manifest, err := loadPackageManifest(filepath.Join(ctx.StagingDir, "package.json"))
+	if err != nil {
+		return StatusUnknown, err
+	}
+	if err := manifest.ValidateDefaults(); err != nil {
+		return StatusUnknown, err
+	}
+
+	prefix := s.Prefix
+	if prefix == "" {
+		prefix = ctx.Prefix
+	}
+	cfgRoot := s.ConfigDestRoot
+	if cfgRoot == "" {
+		cfgRoot = ctx.ConfigDir
+	}
+	specRoot := s.SpecDestRoot
+	if specRoot == "" {
+		specRoot = "/etc/globular/specs"
+	}
+	systemdRoot := s.SystemdDestRoot
+	if systemdRoot == "" {
+		systemdRoot = "/etc/systemd/system"
+	}
+
+	needsApply := false
+
+	if s.InstallBins {
+		dstBin := filepath.Join(prefix, filepath.Clean(manifest.Entrypoint))
+		if _, err := os.Stat(dstBin); err != nil {
+			if os.IsNotExist(err) {
+				needsApply = true
+			} else {
+				return StatusUnknown, err
+			}
+		}
+	}
+
+	if s.InstallConfig && manifest.Defaults.ConfigDir != "" {
+		destRoot := filepath.Join(cfgRoot, manifest.Name)
+		if _, err := os.Stat(destRoot); err != nil {
+			if os.IsNotExist(err) {
+				needsApply = true
+			} else {
+				return StatusUnknown, err
+			}
+		}
+	}
+
+	if s.InstallSpec && manifest.Defaults.Spec != "" {
+		srcSpec := filepath.Join(ctx.StagingDir, filepath.Clean(manifest.Defaults.Spec))
+		dstSpec := filepath.Join(specRoot, filepath.Base(srcSpec))
+		if _, err := os.Stat(dstSpec); err != nil {
+			if os.IsNotExist(err) {
+				needsApply = true
+			} else {
+				return StatusUnknown, err
+			}
+		}
+	}
+
+	if s.InstallSystemd {
+		systemdDir := filepath.Join(ctx.StagingDir, "systemd")
+		entries, err := os.ReadDir(systemdDir)
+		if err != nil && !os.IsNotExist(err) {
+			return StatusUnknown, err
+		}
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			if !strings.HasSuffix(entry.Name(), ".service") {
+				continue
+			}
+			dstUnit := filepath.Join(systemdRoot, entry.Name())
+			if _, err := os.Stat(dstUnit); err != nil {
+				if os.IsNotExist(err) {
+					needsApply = true
+					break
+				}
+				return StatusUnknown, err
+			}
+		}
+	}
+
+	if needsApply {
+		return StatusNeedsApply, nil
+	}
+	return StatusOK, nil
 }
 
 func (s *InstallPackagePayloadStep) Apply(ctx *Context) error {
@@ -63,7 +151,7 @@ func (s *InstallPackagePayloadStep) Apply(ctx *Context) error {
 	}
 	cfgRoot := s.ConfigDestRoot
 	if cfgRoot == "" {
-		cfgRoot = "/etc/globular/config"
+		cfgRoot = ctx.ConfigDir
 	}
 	specRoot := s.SpecDestRoot
 	if specRoot == "" {

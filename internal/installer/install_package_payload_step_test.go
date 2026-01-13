@@ -40,7 +40,7 @@ func TestInstallPackagePayloadInstallsFiles(t *testing.T) {
 
 	sm := &reloadServiceManager{}
 	plat := &recordingPlatform{sm: sm}
-	ctx := &Context{StagingDir: staging, Platform: plat, Runtime: &RuntimeState{}}
+	ctx := &Context{StagingDir: staging, Platform: plat, Runtime: &RuntimeState{}, ConfigDir: DefaultConfigDir}
 
 	step := &InstallPackagePayloadStep{InstallBins: false, InstallConfig: true, InstallSpec: true, InstallSystemd: true, ReloadSystemd: true}
 	if err := step.Apply(ctx); err != nil {
@@ -48,7 +48,7 @@ func TestInstallPackagePayloadInstallsFiles(t *testing.T) {
 	}
 
 	expectPaths := map[string]bool{
-		"/etc/globular/config/svc/a.conf": true,
+		"/etc/globular/svc/a.conf":        true,
 		"/etc/globular/specs/svc.yaml":    true,
 		"/etc/systemd/system/svc.service": true,
 	}
@@ -63,6 +63,67 @@ func TestInstallPackagePayloadInstallsFiles(t *testing.T) {
 	}
 	if sm.reloads != 1 {
 		t.Fatalf("expected daemon-reload, got %d", sm.reloads)
+	}
+}
+
+func TestInstallPackagePayloadCheckConverges(t *testing.T) {
+	staging := t.TempDir()
+	pkgJSON := `{"type":"service","name":"svc","version":"1.0.0","platform":"linux_amd64","entrypoint":"bin/svc","defaults":{"configDir":"config/svc","spec":"specs/svc.yaml"}}`
+	mustWriteFile(t, filepath.Join(staging, "package.json"), []byte(pkgJSON))
+	mustMkdir(t, filepath.Join(staging, "config", "svc"))
+	mustWriteFile(t, filepath.Join(staging, "config", "svc", "a.conf"), []byte("cfg"))
+	mustMkdir(t, filepath.Join(staging, "specs"))
+	mustWriteFile(t, filepath.Join(staging, "specs", "svc.yaml"), []byte("spec"))
+	mustMkdir(t, filepath.Join(staging, "systemd"))
+	mustWriteFile(t, filepath.Join(staging, "systemd", "svc.service"), []byte("[Unit]\n"))
+
+	prefix := filepath.Join(t.TempDir(), "prefix")
+	cfgRoot := filepath.Join(t.TempDir(), "config")
+	specRoot := filepath.Join(t.TempDir(), "specs")
+	systemdRoot := filepath.Join(t.TempDir(), "systemd")
+
+	mustMkdir(t, filepath.Join(prefix, "bin"))
+	mustWriteFile(t, filepath.Join(prefix, "bin", "svc"), []byte("bin"))
+	mustMkdir(t, filepath.Join(cfgRoot, "svc"))
+	mustWriteFile(t, filepath.Join(cfgRoot, "svc", "a.conf"), []byte("cfg"))
+	mustMkdir(t, specRoot)
+	mustWriteFile(t, filepath.Join(specRoot, "svc.yaml"), []byte("spec"))
+	mustMkdir(t, systemdRoot)
+	mustWriteFile(t, filepath.Join(systemdRoot, "svc.service"), []byte("[Unit]\n"))
+
+	ctx := &Context{
+		StagingDir: staging,
+		Prefix:     prefix,
+		ConfigDir:  cfgRoot,
+	}
+
+	step := &InstallPackagePayloadStep{
+		InstallBins:     true,
+		InstallConfig:   true,
+		InstallSpec:     true,
+		InstallSystemd:  true,
+		SpecDestRoot:    specRoot,
+		SystemdDestRoot: systemdRoot,
+	}
+
+	status, err := step.Check(ctx)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if status != StatusOK {
+		t.Fatalf("expected status ok, got %v", status)
+	}
+
+	if err := os.Remove(filepath.Join(systemdRoot, "svc.service")); err != nil {
+		t.Fatalf("remove systemd unit: %v", err)
+	}
+
+	status, err = step.Check(ctx)
+	if err != nil {
+		t.Fatalf("check after removal: %v", err)
+	}
+	if status != StatusNeedsApply {
+		t.Fatalf("expected needs-apply after removal, got %v", status)
 	}
 }
 

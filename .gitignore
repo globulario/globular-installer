@@ -13,6 +13,7 @@ coverage.out
 
 # Go tool cache
 .cache/
+.gocache/
 GOCACHE
 
 # Dependency directories (remove the comment below if you are vendoring dependencies)
@@ -26,3 +27,6 @@ vendor/
 
 # Logs and temp files
 *.log
+
+# Local package artifacts
+internal/assets/packages/

@@ -28,6 +28,10 @@ steps:
         owner: globular
         group: globular
         mode: 0750
+      - path: "{{.StateDir}}/minio/data"
+        owner: globular
+        group: globular
+        mode: 0750
 
       - path: "{{.ConfigDir}}"
         owner: root
@@ -38,76 +42,37 @@ steps:
         group: root
         mode: 0755
 
-      # Canonical contract location (preferred by Globular wrapper).
-      - path: "{{.ConfigDir}}/objectstore.d"
-        owner: root
-        group: root
-        mode: 0755
+  # Stages the service package (created with `globular-cli pkg build`) into the installer staging directory.
+  # NOTE: pass --version to globular-installer so {{.Version}} matches the package filename.
+  - id: stage-minio-package
+    type: stage_package
+    path: "internal/assets/packages/service.minio_{{.Version}}_linux_amd64.tgz"
+    require_platform_match: true
+    require_type_service: true
 
-  # Copies embedded assets/bin/* into {{.Prefix}}/bin
-  # Must include the MinIO binary at internal/assets/bin/minio
-  - id: install-binaries
-    type: install_binaries
+  # Installs only binaries from the staged package into {{.Prefix}}/bin.
+  # Config/systemd/spec are still installed from this spec because package payload files are copied verbatim (no templating).
+  - id: install-minio-bin
+    type: install_package_payload
+    install_bins: true
+    install_config: false
+    install_spec: false
+    install_systemd: false
 
-  # Writes:
-  #  - MinIO server env file (root user/password or other MinIO env vars)
-  #  - MinIO credential file (used by services via auth.mode=file)
-  #  - Object store contract file (consumed by minio_proxy_io.go through Globular wrapper)
   - id: install-minio-config
     type: install_files
     files:
-      # MinIO server environment (server-side credentials).
-      # NOTE: These are for the MinIO *server*.
       - path: "{{.ConfigDir}}/minio/minio.env"
-        owner: root
-        group: root
-        mode: 0600
-        atomic: true
-        content: |
-          # MinIO server env
-          MINIO_VOLUMES={{.StateDir}}/minio
-          MINIO_ADDRESS=127.0.0.1:9000
-          MINIO_CONSOLE_ADDRESS=127.0.0.1:9001
-
-          # Set server root credentials (REPLACE with your generated secrets)
-          MINIO_ROOT_USER=globular
-          MINIO_ROOT_PASSWORD=CHANGE_ME_GENERATE_SECRET
-
-      # Credential file used by Globular services (client-side).
-      # This is referenced by the contract under auth.credFile and must be 0600.
-      - path: "{{.ConfigDir}}/minio/credentials.json"
-        owner: root
-        group: root
-        mode: 0600
-        atomic: true
-        content: |
-          {
-            "accessKey": "globular",
-            "secretKey": "CHANGE_ME_GENERATE_SECRET"
-          }
-
-      # Object store contract (NO secrets here; points to credentials.json).
-      # REPLACE content below with your internal/assets/minio.config content.
-      - path: "{{.ConfigDir}}/objectstore.d/minio.json"
         owner: root
         group: root
         mode: 0644
         atomic: true
         content: |
-          {
-            "type": "minio",
-            "endpoint": "127.0.0.1:9000",
-            "bucket": "users",
-            "prefix": "users",
-            "secure": false,
-            "caBundlePath": "",
-            "auth": {
-              "mode": "file",
-              "credFile": "{{.ConfigDir}}/minio/credentials.json"
-            }
-          }
+          MINIO_ROOT_USER=globular
+          MINIO_ROOT_PASSWORD=globularadmin
+          MINIO_VOLUMES={{.StateDir}}/minio/data
+          MINIO_OPTS=--address 127.0.0.1:9000 --console-address 127.0.0.1:9001
 
-  # Installs the systemd unit for MinIO.
   - id: install-minio-service
     type: install_services
     units:
@@ -128,19 +93,10 @@ steps:
           Group=globular
           WorkingDirectory={{.StateDir}}/minio
           EnvironmentFile={{.ConfigDir}}/minio/minio.env
-
-          # IMPORTANT: We bind only to loopback by default (127.0.0.1:9000).
-          # If you want cluster-wide access, change MINIO_ADDRESS above or front it with Envoy.
-          ExecStart={{.Prefix}}/bin/minio server ${MINIO_VOLUMES} --address ${MINIO_ADDRESS} --console-address ${MINIO_CONSOLE_ADDRESS}
-
+          ExecStart={{.Prefix}}/bin/minio server $MINIO_OPTS $MINIO_VOLUMES
           Restart=on-failure
           RestartSec=2
           LimitNOFILE=524288
-          NoNewPrivileges=true
-          PrivateTmp=true
-          ProtectHome=true
-          ProtectSystem=full
-          ReadWritePaths={{.StateDir}}/minio
 
           [Install]
           WantedBy=multi-user.target
@@ -152,8 +108,6 @@ steps:
     restart_on_files:
       globular-minio.service:
         - "{{.ConfigDir}}/minio/minio.env"
-        - "{{.ConfigDir}}/minio/credentials.json"
-        - "{{.ConfigDir}}/objectstore.d/minio.json"
     binaries:
       globular-minio.service: minio
 

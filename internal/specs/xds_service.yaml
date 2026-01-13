@@ -24,6 +24,10 @@ steps:
         owner: globular
         group: globular
         mode: 0750
+      - path: "{{.StateDir}}/xds"
+        owner: globular
+        group: globular
+        mode: 0750
 
       - path: "{{.ConfigDir}}"
         owner: root
@@ -33,14 +37,32 @@ steps:
         owner: root
         group: root
         mode: 0755
+      - path: "/run/globular"
+        owner: globular
+        group: globular
+        mode: 0755
+      - path: "/run/globular/envoy"
+        owner: globular
+        group: globular
+        mode: 0755
 
-  # Copies embedded assets/bin/* into {{.Prefix}}/bin
-  # (must include the xDS binary: internal/assets/bin/globular-xds)
-  - id: install-binaries
-    type: install_binaries
+  # Stages the service package (created with `globular-cli pkg build`) into the installer staging directory.
+  # NOTE: pass --version to globular-installer so {{.Version}} matches the package filename.
+  - id: stage-xds-package
+    type: stage_package
+    path: "internal/assets/packages/service.xds_{{.Version}}_linux_amd64.tgz"
+    require_platform_match: true
+    require_type_service: true
 
-  # Writes the xDS config file.
-  # Replace content with your real asset content later if desired.
+  # Installs only binaries from the staged package into {{.Prefix}}/bin.
+  # Config/systemd/spec are still installed from this spec because package payload files are copied verbatim (no templating).
+  - id: install-xds-bin
+    type: install_package_payload
+    install_bins: true
+    install_config: false
+    install_spec: false
+    install_systemd: false
+
   - id: install-xds-config
     type: install_files
     files:
@@ -50,21 +72,14 @@ steps:
         mode: 0644
         atomic: true
         content: |
-          grpc:
-            address: "127.0.0.1:18000"
-          logging:
-            level: "info"
-          runtime:
-            state_dir: "{{.StateDir}}"
-      - path: "{{.ConfigDir}}/xds/config.json"
-        owner: root
-        group: root
-        mode: 0644
-        atomic: true
-        content: |
-          {{.XDSConfigJSON}}
+          server:
+            address: 127.0.0.1
+            port: 18000
+          state_dir: "{{.StateDir}}"
+          # embedded configs are injected via installer context:
+          xds_config_json: '{{.XDSConfigJSON}}'
+          gateway_config_json: '{{.GatewayConfigJSON}}'
 
-  # Installs the systemd unit for xDS.
   - id: install-xds-service
     type: install_services
     units:
@@ -75,22 +90,22 @@ steps:
         atomic: true
         content: |
           [Unit]
-          Description=Globular xDS Control Plane
-          After=network-online.target globular-etcd.service
-          Wants=network-online.target globular-etcd.service
-          Requires=globular-etcd.service
+          Description=Globular xDS Control Plane (embedded)
+          After=network-online.target
+          Wants=network-online.target
 
           [Service]
           Type=simple
           User=globular
           Group=globular
+          WorkingDirectory={{.StateDir}}
           RuntimeDirectory=globular globular/envoy
           RuntimeDirectoryMode=0755
-          ReadWritePaths=/run/globular /var/lib/globular
-          WorkingDirectory={{.StateDir}}
-          ExecStart={{.Prefix}}/bin/globular-xds --config {{.ConfigDir}}/xds/xds.yaml
+          RuntimeDirectoryPreserve=yes
+          ExecStart={{.Prefix}}/bin/xds --config {{.ConfigDir}}/xds/xds.yaml
           Restart=on-failure
           RestartSec=2
+          LimitNOFILE=524288
 
           [Install]
           WantedBy=multi-user.target
@@ -103,7 +118,7 @@ steps:
       globular-xds.service:
         - "{{.ConfigDir}}/xds/xds.yaml"
     binaries:
-      globular-xds.service: globular-xds
+      globular-xds.service: xds
 
   - id: health-xds
     type: health_checks

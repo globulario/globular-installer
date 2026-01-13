@@ -1,6 +1,13 @@
 version: 1
 steps:
-  # Node-agent is a node-level actuator; run as root.
+  - id: ensure-user-group
+    type: ensure_user_group
+    user: globular
+    group: globular
+    home: "{{.StateDir}}"
+    shell: /usr/sbin/nologin
+    system: true
+
   - id: ensure-dirs
     type: ensure_dirs
     dirs:
@@ -14,12 +21,8 @@ steps:
         mode: 0755
 
       - path: "{{.StateDir}}"
-        owner: root
-        group: root
-        mode: 0755
-      - path: "{{.StateDir}}/nodeagent"
-        owner: root
-        group: root
+        owner: globular
+        group: globular
         mode: 0750
 
       - path: "{{.ConfigDir}}"
@@ -31,103 +34,22 @@ steps:
         group: root
         mode: 0755
 
-  # Copies embedded assets/bin/* into {{.Prefix}}/bin
-  # Must include nodeagent_server at internal/assets/bin/nodeagent_server
-  - id: install-binaries
-    type: install_binaries
+  # Stages the service package (created with `globular-cli pkg build`) into the installer staging directory.
+  # NOTE: pass --version to globular-installer so {{.Version}} matches the package filename.
+  - id: stage-node-agent-package
+    type: stage_package
+    path: "internal/assets/packages/service.node-agent_{{.Version}}_linux_amd64.tgz"
+    require_platform_match: true
+    require_type_service: true
 
-  # Writes node-agent runtime files.
-  - id: install-node-agent-config
-    type: install_files
-    files:
-      - path: "{{.ConfigDir}}/node-agent/config.json"
-        owner: root
-        group: root
-        mode: 0644
-        atomic: true
-        content: |
-          {
-            "service": {
-              "name": "globular-node-agent",
-              "listen_port": 11000,
-              "state_path": "{{.StateDir}}/nodeagent/state.json",
-              "advertise_addr": "",
-              "labels": {
-                "role": "worker"
-              }
-            },
-            "cluster": {
-              "etcd_mode": "managed",
-              "controller_endpoint": "",
-              "join_token": "",
-              "bootstrap_token": ""
-            },
-            "security": {
-              "insecure": true,
-              "tls_cert": "",
-              "tls_key": "",
-              "tls_ca": "",
-              "controller_ca": "",
-              "controller_sni": "",
-              "controller_use_system_roots": false
-            },
-            "bootstrap": {
-              "plan_path": "{{.ConfigDir}}/node-agent/bootstrap-plan.json",
-              "plan": [
-                "etcd",
-                "xds",
-                "gateway",
-                "envoy",
-                "minio"
-              ]
-            }
-          }
-
-      - path: "{{.ConfigDir}}/node-agent/nodeagent.env"
-        owner: root
-        group: root
-        mode: 0644
-        atomic: true
-        content: |
-          # Node Agent runtime env
-          NODE_AGENT_PORT=11000
-          NODE_AGENT_STATE_PATH={{.StateDir}}/nodeagent/state.json
-
-          # managed | external
-          NODE_AGENT_ETCD_MODE=managed
-
-          # Optional: controller endpoint (empty means standalone for now)
-          # NODE_AGENT_CONTROLLER_ENDPOINT=127.0.0.1:12000
-
-          # Optional: advertise addr override (otherwise auto-pick)
-          # NODE_AGENT_ADVERTISE_ADDR=192.168.1.10:11000
-
-          # Dial security to controller
-          NODE_AGENT_INSECURE=true
-          # When NODE_AGENT_INSECURE=false, provide one of:
-          # NODE_AGENT_CONTROLLER_CA=/etc/globular/tls/ca.pem
-          # NODE_AGENT_CONTROLLER_USE_SYSTEM_ROOTS=true
-          # NODE_AGENT_CONTROLLER_SNI=cluster-controller.globular
-
-          # Optional: node id override
-          # NODE_AGENT_NODE_ID=node-1
-
-          # Optional: labels
-          # NODE_AGENT_LABELS=role=worker,zone=dc1
-
-      - path: "{{.ConfigDir}}/node-agent/bootstrap-plan.json"
-        owner: root
-        group: root
-        mode: 0644
-        atomic: true
-        content: |
-          [
-            "etcd",
-            "xds",
-            "gateway",
-            "envoy",
-            "minio"
-          ]
+  # Installs only binaries from the staged package into {{.Prefix}}/bin.
+  # Config/systemd/spec are still installed from this spec because package payload files are copied verbatim (no templating).
+  - id: install-node-agent-bin
+    type: install_package_payload
+    install_bins: true
+    install_config: false
+    install_spec: false
+    install_systemd: false
 
   - id: install-node-agent-service
     type: install_services
@@ -139,22 +61,16 @@ steps:
         atomic: true
         content: |
           [Unit]
-          Description=Globular Node Agent
+          Description=Globular Node Agent (embedded)
           After=network-online.target
           Wants=network-online.target
 
           [Service]
           Type=simple
-          User=root
-          Group=root
-          WorkingDirectory={{.StateDir}}/nodeagent
-
-          EnvironmentFile={{.ConfigDir}}/node-agent/nodeagent.env
-
-          ExecStart={{.Prefix}}/bin/nodeagent_server \
-            --bootstrap-plan {{.ConfigDir}}/node-agent/bootstrap-plan.json \
-            --etcd-mode ${NODE_AGENT_ETCD_MODE}
-
+          User=globular
+          Group=globular
+          WorkingDirectory={{.StateDir}}
+          ExecStart={{.Prefix}}/bin/node_agent
           Restart=on-failure
           RestartSec=2
           LimitNOFILE=524288
@@ -166,15 +82,11 @@ steps:
     type: start_services
     services:
       - globular-node-agent.service
-    restart_on_files:
-      globular-node-agent.service:
-        - "{{.ConfigDir}}/node-agent/nodeagent.env"
-        - "{{.ConfigDir}}/node-agent/bootstrap-plan.json"
-        - "{{.ConfigDir}}/node-agent/config.json"
     binaries:
-      globular-node-agent.service: nodeagent_server
+      globular-node-agent.service: node_agent
 
   - id: health-node-agent
     type: health_checks
     services:
       - globular-node-agent.service
+

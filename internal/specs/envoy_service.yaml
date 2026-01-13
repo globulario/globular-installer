@@ -33,12 +33,32 @@ steps:
         owner: root
         group: root
         mode: 0755
+      - path: "/run/globular"
+        owner: globular
+        group: globular
+        mode: 0755
+      - path: "/run/globular/envoy"
+        owner: globular
+        group: globular
+        mode: 0755
 
-  # Copies embedded assets/bin/* into {{.Prefix}}/bin (includes envoy)
-  - id: install-binaries
-    type: install_binaries
+  # Stages the service package (created with `globular-cli pkg build`) into the installer staging directory.
+  # NOTE: pass --version to globular-installer so {{.Version}} matches the package filename.
+  - id: stage-envoy-package
+    type: stage_package
+    path: "internal/assets/packages/service.envoy_{{.Version}}_linux_amd64.tgz"
+    require_platform_match: true
+    require_type_service: true
 
-  # Installs the systemd unit for Envoy.
+  # Installs only binaries from the staged package into {{.Prefix}}/bin.
+  # Config/systemd/spec are still installed from this spec because package payload files are copied verbatim (no templating).
+  - id: install-envoy-bin
+    type: install_package_payload
+    install_bins: true
+    install_config: false
+    install_spec: false
+    install_systemd: false
+
   - id: install-envoy-service
     type: install_services
     units:
@@ -49,24 +69,24 @@ steps:
         atomic: true
         content: |
           [Unit]
-          Description=Globular Envoy Proxy
+          Description=Globular Envoy (embedded)
           After=network-online.target globular-xds.service
           Wants=network-online.target globular-xds.service
-          Requires=globular-xds.service
+          ConditionPathExists=/run/globular/envoy/envoy-bootstrap.json
 
           [Service]
           Type=simple
           User=globular
           Group=globular
-          ExecStartPre=/bin/sh -c 'rm -f /dev/shm/envoy_shared_memory_* || true'
-          ExecStartPre=/bin/sh -c "install -d -m 0755 /run/globular/envoy"
-          ExecStartPre=/bin/sh -c "for i in $(seq 1 60); do test -s /run/globular/envoy/envoy-bootstrap.json && exit 0; sleep 0.5; done; echo 'missing envoy bootstrap' >&2; exit 1"
-          ExecStart={{.Prefix}}/bin/envoy --base-id 0 -c /run/globular/envoy/envoy-bootstrap.json
+          WorkingDirectory={{.StateDir}}
           AmbientCapabilities=CAP_NET_BIND_SERVICE
           CapabilityBoundingSet=CAP_NET_BIND_SERVICE
-          NoNewPrivileges=false
+          NoNewPrivileges=true
+          ExecStartPre=/bin/sh -c 'for i in $(seq 1 60); do [ -s /run/globular/envoy/envoy-bootstrap.json ] && exit 0; sleep 1; done; echo "envoy-bootstrap.json not ready"; exit 1'
+          ExecStart={{.Prefix}}/bin/envoy -c /run/globular/envoy/envoy-bootstrap.json --log-level info
           Restart=on-failure
           RestartSec=2
+          LimitNOFILE=524288
 
           [Install]
           WantedBy=multi-user.target

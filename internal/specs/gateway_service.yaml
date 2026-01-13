@@ -34,21 +34,22 @@ steps:
         group: root
         mode: 0755
 
-  # Copies embedded assets/bin/* into {{.Prefix}}/bin
-  # (must include the gateway binary: internal/assets/bin/globular-gateway)
-  - id: install-binaries
-    type: install_binaries
+  # Stages the service package (created with `globular-cli pkg build`) into the installer staging directory.
+  # NOTE: pass --version to globular-installer so {{.Version}} matches the package filename.
+  - id: stage-gateway-package
+    type: stage_package
+    path: "internal/assets/packages/service.gateway_{{.Version}}_linux_amd64.tgz"
+    require_platform_match: true
+    require_type_service: true
 
-  - id: install-gateway-config
-    type: install_files
-    files:
-      - path: "{{.ConfigDir}}/config.json"
-        owner: root
-        group: root
-        mode: 0644
-        atomic: true
-        content: |
-          {{.GatewayConfigJSON}}
+  # Installs only binaries from the staged package into {{.Prefix}}/bin.
+  # Config/systemd/spec are still installed from this spec because package payload files are copied verbatim (no templating).
+  - id: install-gateway-bin
+    type: install_package_payload
+    install_bins: true
+    install_config: false
+    install_spec: false
+    install_systemd: false
 
   - id: install-gateway-service
     type: install_services
@@ -60,7 +61,7 @@ steps:
         atomic: true
         content: |
           [Unit]
-          Description=Globular API Gateway
+          Description=Globular Gateway (embedded)
           After=network-online.target
           Wants=network-online.target
 
@@ -68,12 +69,11 @@ steps:
           Type=simple
           User=globular
           Group=globular
-          CapabilityBoundingSet=CAP_NET_BIND_SERVICE
-          AmbientCapabilities=CAP_NET_BIND_SERVICE
           WorkingDirectory={{.StateDir}}
-          ExecStart={{.Prefix}}/bin/globular-gateway --config {{.ConfigDir}}/config.json
+          ExecStart={{.Prefix}}/bin/gateway
           Restart=on-failure
           RestartSec=2
+          LimitNOFILE=524288
 
           [Install]
           WantedBy=multi-user.target
@@ -82,8 +82,11 @@ steps:
     type: start_services
     services:
       - globular-gateway.service
-    restart_on_files:
-      globular-gateway.service:
-        - "{{.ConfigDir}}/config.json"
     binaries:
       globular-gateway.service: globular-gateway
+
+  - id: health-gateway
+    type: health_checks
+    services:
+      - globular-gateway.service
+

@@ -39,10 +39,22 @@ steps:
         group: root
         mode: 0755
 
-  # Copies embedded assets/bin/* into {{.Prefix}}/bin
-  # Must include the etcd binary at internal/assets/bin/etcd
-  - id: install-binaries
-    type: install_binaries
+  # Stages the service package (created with `globular-cli pkg build`) into the installer staging directory.
+  # NOTE: pass --version to globular-installer so {{.Version}} matches the package filename.
+  - id: stage-etcd-package
+    type: stage_package
+    path: "internal/assets/packages/service.etcd_{{.Version}}_linux_amd64.tgz"
+    require_platform_match: true
+    require_type_service: true
+
+  # Installs only binaries from the staged package into {{.Prefix}}/bin.
+  # Config/systemd/spec are still installed from this spec because package payload files are copied verbatim (no templating).
+  - id: install-etcd-bin
+    type: install_package_payload
+    install_bins: true
+    install_config: false
+    install_spec: false
+    install_systemd: false
 
   # Writes the etcd config file.
   - id: install-etcd-config
@@ -54,7 +66,6 @@ steps:
         mode: 0644
         atomic: true
         content: |
-          # REPLACE THIS WITH YOUR internal/assets/config/etcd/etcd.yaml CONTENT (kept in-sync by installer)
           name: "globular-etcd"
           data-dir: "{{.StateDir}}/etcd"
 
