@@ -1,0 +1,37 @@
+{
+  "service": {
+    "name": "globular-node-agent",
+    "listen_port": 11000,
+    "state_path": "/var/lib/globular/nodeagent/state.json",
+    "advertise_addr": "",
+    "labels": {
+      "role": "worker"
+    }
+  },
+  "cluster": {
+    "etcd_mode": "managed",
+    "controller_endpoint": "",
+    "join_token": "",
+    "bootstrap_token": ""
+  },
+  "security": {
+    "insecure": true,
+    "tls_cert": "",
+    "tls_key": "",
+    "tls_ca": "",
+    "controller_ca": "",
+    "controller_sni": "",
+    "controller_use_system_roots": false
+  },
+  "bootstrap": {
+    "plan_path": "/etc/globular/node-agent/bootstrap-plan.json",
+    "plan": [
+      "etcd",
+      "xds",
+      "gateway",
+      "envoy",
+      "minio"
+    ]
+  }
+}
+

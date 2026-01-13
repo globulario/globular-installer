@@ -116,6 +116,10 @@ func buildStep(ctx *Context, ss spec.StepSpec) (Step, error) {
 			return nil, err
 		}
 		return step, nil
+	case "stage_package":
+		return buildStagePackageStep(ss)
+	case "install_package_payload":
+		return buildInstallPackagePayloadStep(ss)
 	case "fetch_file":
 		step, err := buildFetchFileStep(ss)
 		if err != nil {
@@ -262,6 +266,37 @@ func buildInstallPackagesStep(ss spec.StepSpec) (Step, error) {
 	}
 	step.Manager = manager
 	step.Packages = pkgs
+	return step, nil
+}
+
+func buildStagePackageStep(ss spec.StepSpec) (Step, error) {
+	path := getStringParam(ss.Params, "path", "")
+	if path == "" {
+		return nil, fmt.Errorf("stage_package step %q missing path", ss.ID)
+	}
+	step := &StagePackageStep{
+		Path:                 path,
+		VerifySHA256:         getStringParam(ss.Params, "verify_sha256", ""),
+		CacheDir:             getStringParam(ss.Params, "cache_dir", "/var/lib/globular/cache/packages"),
+		StagingRoot:          getStringParam(ss.Params, "staging_root", "/var/lib/globular/staging/packages"),
+		RequirePlatformMatch: getBoolParam(ss.Params, "require_platform_match", true),
+		RequireTypeService:   getBoolParam(ss.Params, "require_type_service", true),
+	}
+	return step, nil
+}
+
+func buildInstallPackagePayloadStep(ss spec.StepSpec) (Step, error) {
+	step := &InstallPackagePayloadStep{
+		Prefix:          getStringParam(ss.Params, "prefix", ""),
+		InstallBins:     getBoolParam(ss.Params, "install_bins", false),
+		InstallConfig:   getBoolParam(ss.Params, "install_config", true),
+		InstallSpec:     getBoolParam(ss.Params, "install_spec", true),
+		InstallSystemd:  getBoolParam(ss.Params, "install_systemd", true),
+		ConfigDestRoot:  getStringParam(ss.Params, "config_dest_root", "/etc/globular/config"),
+		SpecDestRoot:    getStringParam(ss.Params, "spec_dest_root", "/etc/globular/specs"),
+		SystemdDestRoot: getStringParam(ss.Params, "systemd_dest_root", "/etc/systemd/system"),
+		ReloadSystemd:   getBoolParam(ss.Params, "reload_systemd", true),
+	}
 	return step, nil
 }
 

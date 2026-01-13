@@ -1,0 +1,139 @@
+version: 1
+steps:
+  - id: ensure-dirs
+    type: ensure_dirs
+    dirs:
+      - path: "{{.Prefix}}"
+        owner: root
+        group: root
+        mode: 0755
+      - path: "{{.Prefix}}/bin"
+        owner: root
+        group: root
+        mode: 0755
+
+      - path: "{{.StateDir}}"
+        owner: root
+        group: root
+        mode: 0755
+      - path: "{{.StateDir}}/clustercontroller"
+        owner: root
+        group: root
+        mode: 0750
+
+      - path: "{{.ConfigDir}}"
+        owner: root
+        group: root
+        mode: 0755
+      - path: "{{.ConfigDir}}/clustercontroller"
+        owner: root
+        group: root
+        mode: 0755
+
+  # Copies embedded assets/bin/* into {{.Prefix}}/bin
+  - id: install-binaries
+    type: install_binaries
+
+  - id: install-cluster-controller-config
+    type: install_files
+    files:
+      # cluster controller config (read by --config)
+      - path: "{{.ConfigDir}}/clustercontroller/config.json"
+        owner: root
+        group: root
+        mode: 0600
+        atomic: true
+        content: |
+          {
+            "port": 12000,
+            "join_token": "",
+            "cluster_domain": "",
+            "admin_email": "",
+            "bootstrap_token": "",
+            "bootstrapped": false,
+            "default_profiles": ["core"]
+          }
+
+      # env file used by systemd (env overrides + other operational knobs)
+      - path: "{{.ConfigDir}}/clustercontroller/clustercontroller.env"
+        owner: root
+        group: root
+        mode: 0644
+        atomic: true
+        content: |
+          # Optional overrides (take precedence over config.json)
+          # CLUSTER_PORT=12000
+          # CLUSTER_JOIN_TOKEN=
+          # CLUSTER_DOMAIN=
+          # CLUSTER_ADMIN_EMAIL=
+          # CLUSTER_BOOTSTRAP_TOKEN=
+
+          # State path override (otherwise --state default is used)
+          CLUSTER_STATE_PATH={{.StateDir}}/clustercontroller/state.json
+
+          # Node-agent gRPC dialing policy (controller -> node-agent)
+          # If true, use plaintext gRPC to agents.
+          CLUSTER_INSECURE_AGENT_GRPC=true
+
+          # If CLUSTER_INSECURE_AGENT_GRPC=false, you must set:
+          # CLUSTER_AGENT_CA=/etc/globular/tls/ca.pem
+          # Optional server name override for TLS
+          # CLUSTER_AGENT_SERVER_NAME=node-agent.globular
+
+          # Repository address for UpgradeGlobular artifact staging
+          # (defaults to localhost:10101 if empty)
+          # REPOSITORY_ADDRESS=127.0.0.1:10101
+
+  - id: install-cluster-controller-service
+    type: install_services
+    units:
+      - name: globular-cluster-controller.service
+        owner: root
+        group: root
+        mode: 0644
+        atomic: true
+        content: |
+          [Unit]
+          Description=Globular Cluster Controller
+          After=network-online.target
+          Wants=network-online.target
+
+          # Optional: if etcd is present, cluster-controller will use it for plan store
+          After=globular-etcd.service
+          Wants=globular-etcd.service
+
+          [Service]
+          Type=simple
+          User=root
+          Group=root
+          WorkingDirectory={{.StateDir}}/clustercontroller
+
+          EnvironmentFile={{.ConfigDir}}/clustercontroller/clustercontroller.env
+
+          ExecStart={{.Prefix}}/bin/clustercontroller_server \
+            --config {{.ConfigDir}}/cluster-controller/config.json \
+            --state {{.StateDir}}/cluster-controller/state.json
+
+          Restart=on-failure
+          RestartSec=2
+          LimitNOFILE=524288
+
+          [Install]
+          WantedBy=multi-user.target
+
+  - id: start-cluster-controller
+    type: start_services
+    services:
+      - globular-cluster-controller.service
+    restart_on_files:
+      globular-cluster-controller.service:
+        - "{{.ConfigDir}}/clustercontroller/config.json"
+        - "{{.ConfigDir}}/clustercontroller/clustercontroller.env"
+    binaries:
+      globular-cluster-controller.service: clustercontroller_server
+
+  - id: health-cluster-controller
+    type: health_checks
+    services:
+      - globular-cluster-controller.service
+

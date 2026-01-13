@@ -1,0 +1,13 @@
+{
+  "type": "minio",
+  "endpoint": "127.0.0.1:9000",
+  "bucket": "users",
+  "prefix": "users",
+  "secure": false,
+  "caBundlePath": "",
+  "auth": {
+    "mode": "file",
+    "credFile": "/etc/globular/minio/credentials.json"
+  }
+}
+

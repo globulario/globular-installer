@@ -19,9 +19,13 @@ const (
 )
 
 type RuntimeState struct {
-	ChangedBinaries map[string]bool
-	ChangedUnits    map[string]bool
-	ChangedFiles    map[string]bool
+	ChangedBinaries       map[string]bool
+	ChangedUnits          map[string]bool
+	ChangedFiles          map[string]bool
+	StagedPackageName     string
+	StagedPackageVersion  string
+	StagedPackagePlatform string
+	StagedPackagePath     string
 }
 
 type Context struct {
