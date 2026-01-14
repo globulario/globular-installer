@@ -16,6 +16,7 @@ const (
 	DefaultPrefix    = "/usr/lib/globular"
 	DefaultStateDir  = "/var/lib/globular"
 	DefaultConfigDir = "/etc/globular"
+	DefaultLogDir    = "/var/log/globular"
 )
 
 type RuntimeState struct {
@@ -33,6 +34,7 @@ type Context struct {
 	Prefix         string
 	StateDir       string
 	ConfigDir      string
+	LogDir         string
 	NonInteractive bool
 	DryRun         bool
 	Logger         Logger
@@ -64,6 +66,10 @@ func (c *Context) ConfigDirPath() string {
 	return c.ConfigDir
 }
 
+func (c *Context) LogDirPath() string {
+	return c.LogDir
+}
+
 func NewContext(opts Options) (*Context, error) {
 	opts = opts.Normalized()
 
@@ -79,11 +85,16 @@ func NewContext(opts Options) (*Context, error) {
 	if configDir == "" {
 		configDir = DefaultConfigDir
 	}
+	logDir := opts.LogDir
+	if logDir == "" {
+		logDir = DefaultLogDir
+	}
 
 	for name, value := range map[string]string{
 		"prefix":    prefix,
 		"stateDir":  stateDir,
 		"configDir": configDir,
+		"logDir":    logDir,
 	} {
 		if !filepath.IsAbs(value) {
 			return nil, fmt.Errorf("%s %q must be absolute", name, value)
@@ -127,6 +138,7 @@ func NewContext(opts Options) (*Context, error) {
 		"Prefix":            prefix,
 		"StateDir":          stateDir,
 		"ConfigDir":         configDir,
+		"LogDir":            logDir,
 		"Version":           opts.Version,
 		"XDSConfigJSON":     string(xdsWatcherConfig),
 		"GatewayConfigJSON": string(gatewayConfig),
@@ -153,6 +165,7 @@ func NewContext(opts Options) (*Context, error) {
 		Prefix:         prefix,
 		StateDir:       stateDir,
 		ConfigDir:      configDir,
+		LogDir:         logDir,
 		StagingDir:     opts.StagingDir,
 		NonInteractive: opts.NonInteractive,
 		DryRun:         opts.DryRun,
@@ -173,8 +186,8 @@ func NewContext(opts Options) (*Context, error) {
 	}
 
 	if logger != nil {
-		logger.Infof("context: version=%q prefix=%q stateDir=%q configDir=%q dryRun=%v nonInteractive=%v",
-			ctx.Version, ctx.Prefix, ctx.StateDir, ctx.ConfigDir, ctx.DryRun, ctx.NonInteractive)
+		logger.Infof("context: version=%q prefix=%q stateDir=%q configDir=%q logDir=%q dryRun=%v nonInteractive=%v",
+			ctx.Version, ctx.Prefix, ctx.StateDir, ctx.ConfigDir, ctx.LogDir, ctx.DryRun, ctx.NonInteractive)
 		logger.Infof("using spec %s", specDesc)
 	}
 

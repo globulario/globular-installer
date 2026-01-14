@@ -1,0 +1,115 @@
+version: 1
+
+metadata:
+  name: dns
+
+service:
+  name: dns
+  exec: dns_server
+
+steps:
+  # Stages the service package (created with `globular-cli pkg build`) into the installer staging directory.
+  # NOTE: pass --version to globular-installer so {{.Version}} matches the package filename.
+  - id: stage-dns-package
+    type: stage_package
+    path: "internal/assets/packages/service.dns_{{.Version}}_linux_amd64.tgz"
+    require_platform_match: true
+    require_type_service: true
+
+  - id: ensure-user-group
+    type: ensure_user_group
+    user: globular
+    group: globular
+    home: "{{.StateDir}}"
+    shell: /usr/sbin/nologin
+    system: true
+
+  - id: ensure-dirs
+    type: ensure_dirs
+    dirs:
+      - path: "{{.Prefix}}"
+        owner: root
+        group: root
+        mode: 0755
+      - path: "{{.Prefix}}/bin"
+        owner: root
+        group: root
+        mode: 0755
+
+      - path: "{{.StateDir}}"
+        owner: globular
+        group: globular
+        mode: 0750
+      - path: "{{.StateDir}}/dns"
+        owner: globular
+        group: globular
+        mode: 0750
+
+      - path: "{{.ConfigDir}}"
+        owner: root
+        group: root
+        mode: 0755
+      - path: "{{.ConfigDir}}/dns"
+        owner: root
+        group: root
+        mode: 0755
+
+  - id: install-dns-config
+    type: install_files
+    files:
+      - path: "{{.ConfigDir}}/dns/config.json"
+        owner: root
+        group: root
+        mode: 0644
+        atomic: true
+        # NOTE: this is intended to be replaced by node-agent/controller later.
+        # It is seeded from 'dns_server --describe'.
+        content: |
+
+
+  - id: install-dns-service
+    type: install_services
+    units:
+      - name: globular-dns.service
+        owner: root
+        group: root
+        mode: 0644
+        atomic: true
+        content: |
+          [Unit]
+          Description=Globular dns
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          User=globular
+          Group=globular
+          WorkingDirectory={{.StateDir}}/dns
+          ExecStart={{.Prefix}}/bin/dns_server
+          Restart=on-failure
+          RestartSec=2
+          LimitNOFILE=524288
+
+          [Install]
+          WantedBy=multi-user.target
+
+  - id: enable-dns
+    type: enable_services
+    services:
+      - globular-dns.service
+
+  - id: start-dns
+    type: start_services
+    services:
+      - globular-dns.service
+    restart_on_files:
+      globular-dns.service:
+        - "{{.ConfigDir}}/dns/config.json"
+    binaries:
+      globular-dns.service: dns_server
+
+  - id: health-dns
+    type: health_checks
+    services:
+      - globular-dns.service

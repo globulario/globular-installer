@@ -3,14 +3,22 @@ package installer
 import (
 	"context"
 	"fmt"
+	"time"
+
+	"github.com/globulario/globular-installer/internal/platform"
 )
 
 type HealthChecksStep struct {
 	Services []string
+	Timeout  time.Duration
+	Interval time.Duration
 }
 
 func NewHealthChecksStep() *HealthChecksStep {
-	return &HealthChecksStep{}
+	return &HealthChecksStep{
+		Timeout:  60 * time.Second,
+		Interval: 2 * time.Second,
+	}
 }
 
 func (s *HealthChecksStep) Name() string {
@@ -36,16 +44,8 @@ func (s *HealthChecksStep) Check(ctx *Context) (StepStatus, error) {
 		return StatusUnknown, fmt.Errorf("service manager unavailable")
 	}
 	for _, unit := range s.serviceList(ctx) {
-		active, err := sm.IsActive(context.Background(), unit)
-		if err != nil {
-			return StatusUnknown, fmt.Errorf("is-active %s: %w", unit, err)
-		}
-		if !active {
-			status, serr := sm.Status(context.Background(), unit)
-			if serr != nil {
-				return StatusFailed, fmt.Errorf("status %s: %w", unit, serr)
-			}
-			return StatusFailed, fmt.Errorf("service %s not active (state=%v detail=%s)", unit, status.State, status.Detail)
+		if err := s.waitForActive(sm, unit); err != nil {
+			return StatusFailed, err
 		}
 	}
 	return StatusOK, nil
@@ -72,4 +72,37 @@ func (s *HealthChecksStep) Apply(ctx *Context) error {
 
 func (s *HealthChecksStep) serviceList(ctx *Context) []string {
 	return s.Services
+}
+
+func (s *HealthChecksStep) waitForActive(sm platform.ServiceManager, unit string) error {
+	timeout := s.Timeout
+	interval := s.Interval
+	if timeout <= 0 {
+		timeout = 60 * time.Second
+	}
+	if interval <= 0 {
+		interval = 2 * time.Second
+	}
+	deadline := time.Now().Add(timeout)
+	var lastState platform.ServiceStatus
+	for {
+		active, err := sm.IsActive(context.Background(), unit)
+		if err != nil {
+			return fmt.Errorf("is-active %s: %w", unit, err)
+		}
+		status, serr := sm.Status(context.Background(), unit)
+		if serr == nil {
+			lastState = status
+		}
+		if active {
+			return nil
+		}
+		if status.State == platform.ServiceFailed {
+			return fmt.Errorf("service %s failed (state=%v detail=%s)", unit, status.State, status.Detail)
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("service %s not active after %s (state=%v detail=%s)", unit, timeout, lastState.State, lastState.Detail)
+		}
+		time.Sleep(interval)
+	}
 }

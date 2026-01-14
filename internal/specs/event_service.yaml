@@ -1,0 +1,115 @@
+version: 1
+
+metadata:
+  name: event
+
+service:
+  name: event
+  exec: event_server
+
+steps:
+  # Stages the service package (created with `globular-cli pkg build`) into the installer staging directory.
+  # NOTE: pass --version to globular-installer so {{.Version}} matches the package filename.
+  - id: stage-event-package
+    type: stage_package
+    path: "internal/assets/packages/service.event_{{.Version}}_linux_amd64.tgz"
+    require_platform_match: true
+    require_type_service: true
+
+  - id: ensure-user-group
+    type: ensure_user_group
+    user: globular
+    group: globular
+    home: "{{.StateDir}}"
+    shell: /usr/sbin/nologin
+    system: true
+
+  - id: ensure-dirs
+    type: ensure_dirs
+    dirs:
+      - path: "{{.Prefix}}"
+        owner: root
+        group: root
+        mode: 0755
+      - path: "{{.Prefix}}/bin"
+        owner: root
+        group: root
+        mode: 0755
+
+      - path: "{{.StateDir}}"
+        owner: globular
+        group: globular
+        mode: 0750
+      - path: "{{.StateDir}}/event"
+        owner: globular
+        group: globular
+        mode: 0750
+
+      - path: "{{.ConfigDir}}"
+        owner: root
+        group: root
+        mode: 0755
+      - path: "{{.ConfigDir}}/event"
+        owner: root
+        group: root
+        mode: 0755
+
+  - id: install-event-config
+    type: install_files
+    files:
+      - path: "{{.ConfigDir}}/event/config.json"
+        owner: root
+        group: root
+        mode: 0644
+        atomic: true
+        # NOTE: this is intended to be replaced by node-agent/controller later.
+        # It is seeded from 'event_server --describe'.
+        content: |
+
+
+  - id: install-event-service
+    type: install_services
+    units:
+      - name: globular-event.service
+        owner: root
+        group: root
+        mode: 0644
+        atomic: true
+        content: |
+          [Unit]
+          Description=Globular event
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          User=globular
+          Group=globular
+          WorkingDirectory={{.StateDir}}/event
+          ExecStart={{.Prefix}}/bin/event_server
+          Restart=on-failure
+          RestartSec=2
+          LimitNOFILE=524288
+
+          [Install]
+          WantedBy=multi-user.target
+
+  - id: enable-event
+    type: enable_services
+    services:
+      - globular-event.service
+
+  - id: start-event
+    type: start_services
+    services:
+      - globular-event.service
+    restart_on_files:
+      globular-event.service:
+        - "{{.ConfigDir}}/event/config.json"
+    binaries:
+      globular-event.service: event_server
+
+  - id: health-event
+    type: health_checks
+    services:
+      - globular-event.service

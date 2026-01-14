@@ -7,6 +7,7 @@ type Options struct {
 	Prefix         string
 	StateDir       string
 	ConfigDir      string
+	LogDir         string
 	FeaturesCSV    string
 	NonInteractive bool
 	DryRun         bool
@@ -22,6 +23,7 @@ func (o Options) Normalized() Options {
 	o.Prefix = strings.TrimSpace(o.Prefix)
 	o.StateDir = strings.TrimSpace(o.StateDir)
 	o.ConfigDir = strings.TrimSpace(o.ConfigDir)
+	o.LogDir = strings.TrimSpace(o.LogDir)
 	o.FeaturesCSV = strings.TrimSpace(o.FeaturesCSV)
 	o.StagingDir = strings.TrimSpace(o.StagingDir)
 	o.SpecPath = strings.TrimSpace(o.SpecPath)

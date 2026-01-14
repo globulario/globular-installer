@@ -50,6 +50,7 @@ func runCommand(prog, cmd string, args []string) int {
 	prefix := fs.String("prefix", "", "installation prefix")
 	stateDir := fs.String("state-dir", "", "state directory")
 	configDir := fs.String("config-dir", "", "configuration directory")
+	logDir := fs.String("log-dir", "", "log directory")
 	features := fs.String("features", "", "comma-separated feature list")
 	stagingDir := fs.String("staging-dir", "", "staging directory for binaries")
 	specPath := fs.String("spec", "", "path to YAML/JSON install spec")
@@ -73,11 +74,14 @@ func runCommand(prog, cmd string, args []string) int {
 		return 0
 	}
 
+	remaining := fs.Args()
+
 	opts := installer.Options{
 		Version:        *version,
 		Prefix:         *prefix,
 		StateDir:       *stateDir,
 		ConfigDir:      *configDir,
+		LogDir:         *logDir,
 		FeaturesCSV:    *features,
 		StagingDir:     *stagingDir,
 		SpecPath:       *specPath,
@@ -86,6 +90,22 @@ func runCommand(prog, cmd string, args []string) int {
 		NonInteractive: *nonInteractive,
 		Verbose:        *verbose,
 		Purge:          *purge,
+	}
+
+	// If a package path is provided as a positional argument and no spec or staging
+	// dir is set, extract the package to a temp staging directory for default installs,
+	// but only when the argument looks like a package archive.
+	if cmd == "install" && opts.SpecPath == "" && opts.SpecInline == "" && opts.StagingDir == "" && len(remaining) > 0 {
+		arg := remaining[0]
+		lower := strings.ToLower(arg)
+		if strings.HasSuffix(lower, ".tgz") || strings.HasSuffix(lower, ".tar.gz") {
+			stagingDir, err := installer.ExtractPackageToTemp(arg)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error staging package %s: %v\n", arg, err)
+				return 1
+			}
+			opts.StagingDir = stagingDir
+		}
 	}
 
 	ctx, err := installer.NewContext(opts)
@@ -128,6 +148,7 @@ func printCommandUsage(w io.Writer, prog, cmd string) {
 	fmt.Fprintln(w, "  --prefix string          installation prefix")
 	fmt.Fprintln(w, "  --state-dir string       state directory")
 	fmt.Fprintln(w, "  --config-dir string      configuration directory")
+	fmt.Fprintln(w, "  --log-dir string         log directory")
 	fmt.Fprintln(w, "  --features string        feature list (csv or enable:prefix)")
 	fmt.Fprintln(w, "  --staging-dir string     staging directory with bin/ artifacts")
 	fmt.Fprintln(w, "  --spec string            path to YAML/JSON install spec")

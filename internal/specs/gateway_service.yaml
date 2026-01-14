@@ -83,7 +83,7 @@ steps:
     services:
       - globular-gateway.service
     binaries:
-      globular-gateway.service: globular-gateway
+      globular-gateway.service: gateway
 
   - id: health-gateway
     type: health_checks

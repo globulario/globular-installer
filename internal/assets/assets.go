@@ -8,7 +8,6 @@ import (
 
 var (
 	//go:embed bin/*
-	//go:embed config/*/*
 	embedded embed.FS
 )
 
@@ -25,7 +24,8 @@ func BinFS() fs.FS {
 func ConfigFS() fs.FS {
 	sub, err := fs.Sub(embedded, "config")
 	if err != nil {
-		panic(err)
+		// No embedded config; return empty FS.
+		return embed.FS{}
 	}
 	return sub
 }

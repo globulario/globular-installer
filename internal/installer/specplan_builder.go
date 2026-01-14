@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/globulario/globular-installer/internal/installer/spec"
 	"github.com/globulario/globular-installer/internal/platform"
@@ -51,30 +52,43 @@ func buildStep(ctx *Context, ss spec.StepSpec) (Step, error) {
 	case "install_files":
 		step := NewInstallFilesStep()
 		val, ok := ss.Params["files"]
-		if !ok {
-			return nil, fmt.Errorf("install_files step %q missing files definition", ss.ID)
+		if ok {
+			files, err := parseFileSpecs(val)
+			if err != nil {
+				return nil, err
+			}
+			if len(files) == 0 {
+				return nil, fmt.Errorf("install_files step %q defined empty files list", ss.ID)
+			}
+			step.Files = files
+			return step, nil
 		}
-		files, err := parseFileSpecs(val)
+		files, _, _, err := deriveInstallArtifacts(ctx.StagingDir, ctx.Prefix, ctx.ConfigDir, ctx.StateDir)
 		if err != nil {
 			return nil, err
 		}
 		if len(files) == 0 {
-			return nil, fmt.Errorf("install_files step %q defined empty files list", ss.ID)
+			return nil, fmt.Errorf("install_files step %q missing files definition and no installable payload found", ss.ID)
 		}
 		step.Files = files
 		return step, nil
 	case "install_services":
 		step := NewInstallServicesStep()
 		val, ok := ss.Params["units"]
-		if !ok {
-			return nil, fmt.Errorf("install_services step %q missing units definition", ss.ID)
+		if ok {
+			units, err := parseUnitSpecs(val)
+			if err != nil {
+				return nil, err
+			}
+			if len(units) == 0 {
+				return nil, fmt.Errorf("install_services step %q defined empty units list", ss.ID)
+			}
+			step.Units = units
+			return step, nil
 		}
-		units, err := parseUnitSpecs(val)
+		_, units, _, err := deriveInstallArtifacts(ctx.StagingDir, ctx.Prefix, ctx.ConfigDir, ctx.StateDir)
 		if err != nil {
 			return nil, err
-		}
-		if len(units) == 0 {
-			return nil, fmt.Errorf("install_services step %q defined empty units list", ss.ID)
 		}
 		step.Units = units
 		return step, nil
@@ -83,6 +97,13 @@ func buildStep(ctx *Context, ss spec.StepSpec) (Step, error) {
 		services, err := getStringSliceParam(ss.Params, "services")
 		if err != nil {
 			return nil, err
+		}
+		if len(services) == 0 {
+			_, _, derivedServices, derr := deriveInstallArtifacts(ctx.StagingDir, ctx.Prefix, ctx.ConfigDir, ctx.StateDir)
+			if derr != nil {
+				return nil, derr
+			}
+			services = derivedServices
 		}
 		if len(services) == 0 {
 			return nil, fmt.Errorf("start_services step %q must declare services", ss.ID)
@@ -106,7 +127,38 @@ func buildStep(ctx *Context, ss spec.StepSpec) (Step, error) {
 			return nil, err
 		}
 		if len(services) == 0 {
+			_, _, derivedServices, derr := deriveInstallArtifacts(ctx.StagingDir, ctx.Prefix, ctx.ConfigDir, ctx.StateDir)
+			if derr != nil {
+				return nil, derr
+			}
+			services = derivedServices
+		}
+		if len(services) == 0 {
 			return nil, fmt.Errorf("health_checks step %q must declare services", ss.ID)
+		}
+		step.Services = services
+		if d, err := getDurationParam(ss.Params, "timeout"); err == nil && d > 0 {
+			step.Timeout = d
+		}
+		if d, err := getDurationParam(ss.Params, "interval"); err == nil && d > 0 {
+			step.Interval = d
+		}
+		return step, nil
+	case "enable_services":
+		step := NewEnableServicesStep()
+		services, err := getStringSliceParam(ss.Params, "services")
+		if err != nil {
+			return nil, err
+		}
+		if len(services) == 0 {
+			_, _, derivedServices, derr := deriveInstallArtifacts(ctx.StagingDir, ctx.Prefix, ctx.ConfigDir, ctx.StateDir)
+			if derr != nil {
+				return nil, derr
+			}
+			services = derivedServices
+		}
+		if len(services) == 0 {
+			return nil, fmt.Errorf("enable_services step %q must declare services", ss.ID)
 		}
 		step.Services = services
 		return step, nil
@@ -609,5 +661,21 @@ func getStringSliceParam(params map[string]any, key string) ([]string, error) {
 		return out, nil
 	default:
 		return nil, fmt.Errorf("%s must be a list of strings", key)
+	}
+}
+
+func getDurationParam(params map[string]any, key string) (time.Duration, error) {
+	if params == nil {
+		return 0, nil
+	}
+	raw, ok := params[key]
+	if !ok || raw == nil {
+		return 0, nil
+	}
+	switch v := raw.(type) {
+	case string:
+		return time.ParseDuration(v)
+	default:
+		return 0, fmt.Errorf("%s must be a duration string", key)
 	}
 }
