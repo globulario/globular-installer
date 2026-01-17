@@ -153,7 +153,9 @@ func buildEmbeddedSpecs(ctx *Context) ([]platform.FileSpec, error) {
 			return nil, err
 		}
 		data, err := io.ReadAll(f)
-		f.Close()
+		if closeErr := f.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
 		if err != nil {
 			return nil, err
 		}

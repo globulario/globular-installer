@@ -45,7 +45,19 @@ func ExtractPackageToTemp(pkgPath string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("read tar: %w", err)
 		}
-		target := filepath.Join(dst, filepath.Clean(hdr.Name))
+
+		// Validate path to prevent directory traversal attacks
+		cleaned := filepath.Clean(hdr.Name)
+		if filepath.IsAbs(cleaned) || filepath.HasPrefix(cleaned, "..") {
+			return "", fmt.Errorf("invalid tar entry: %s contains absolute or parent path", hdr.Name)
+		}
+
+		target := filepath.Join(dst, cleaned)
+		// Double-check the final path is still within destination
+		if !filepath.HasPrefix(target, dst) {
+			return "", fmt.Errorf("invalid tar entry: %s escapes destination directory", hdr.Name)
+		}
+
 		switch hdr.Typeflag {
 		case tar.TypeDir:
 			if err := os.MkdirAll(target, os.FileMode(hdr.Mode)); err != nil {

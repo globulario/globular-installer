@@ -12,10 +12,12 @@ var (
 )
 
 // BinFS exposes the embedded bin/ directory.
+// Returns empty FS if bin/ directory is not embedded.
 func BinFS() fs.FS {
 	sub, err := fs.Sub(embedded, "bin")
 	if err != nil {
-		panic(err)
+		// No embedded bin directory; return empty FS
+		return embed.FS{}
 	}
 	return sub
 }

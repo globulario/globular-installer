@@ -104,7 +104,8 @@ func Save(path string, m *Manifest) error {
 	}
 	success = true
 
-	if err := os.Chmod(path, 0o644); err != nil {
+	// Manifest may contain sensitive installation metadata - restrict to owner only
+	if err := os.Chmod(path, 0o600); err != nil {
 		return err
 	}
 	return nil
