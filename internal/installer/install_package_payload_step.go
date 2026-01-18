@@ -52,7 +52,7 @@ func (s *InstallPackagePayloadStep) Check(ctx *Context) (StepStatus, error) {
 	}
 	specRoot := s.SpecDestRoot
 	if specRoot == "" {
-		specRoot = "/etc/globular/specs"
+		specRoot = "/var/lib/globular/specs"
 	}
 	systemdRoot := s.SystemdDestRoot
 	if systemdRoot == "" {
@@ -155,7 +155,7 @@ func (s *InstallPackagePayloadStep) Apply(ctx *Context) error {
 	}
 	specRoot := s.SpecDestRoot
 	if specRoot == "" {
-		specRoot = "/etc/globular/specs"
+		specRoot = "/var/lib/globular/specs"
 	}
 	systemdRoot := s.SystemdDestRoot
 	if systemdRoot == "" {

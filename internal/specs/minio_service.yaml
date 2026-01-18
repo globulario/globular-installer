@@ -24,6 +24,10 @@ steps:
         owner: globular
         group: globular
         mode: 0750
+      - path: "{{.StateDir}}/services"
+        owner: globular
+        group: globular
+        mode: 0750
       - path: "{{.StateDir}}/minio"
         owner: globular
         group: globular
@@ -33,25 +37,12 @@ steps:
         group: globular
         mode: 0750
 
-      - path: "{{.ConfigDir}}"
-        owner: root
-        group: root
-        mode: 0755
-      - path: "{{.ConfigDir}}/minio"
-        owner: root
-        group: root
-        mode: 0755
-
-  # Stages the service package (created with `globular-cli pkg build`) into the installer staging directory.
-  # NOTE: pass --version to globular-installer so {{.Version}} matches the package filename.
   - id: stage-minio-package
     type: stage_package
     path: "internal/assets/packages/service.minio_{{.Version}}_linux_amd64.tgz"
     require_platform_match: true
     require_type_service: true
 
-  # Installs only binaries from the staged package into {{.Prefix}}/bin.
-  # Config/systemd/spec are still installed from this spec because package payload files are copied verbatim (no templating).
   - id: install-minio-bin
     type: install_package_payload
     install_bins: true
@@ -59,10 +50,11 @@ steps:
     install_spec: false
     install_systemd: false
 
+  # minio uses its own config format
   - id: install-minio-config
     type: install_files
     files:
-      - path: "{{.ConfigDir}}/minio/minio.env"
+      - path: "{{.StateDir}}/minio/minio.env"
         owner: root
         group: root
         mode: 0644
@@ -92,7 +84,7 @@ steps:
           User=globular
           Group=globular
           WorkingDirectory={{.StateDir}}/minio
-          EnvironmentFile={{.ConfigDir}}/minio/minio.env
+          EnvironmentFile={{.StateDir}}/minio/minio.env
           ExecStart={{.Prefix}}/bin/minio server $MINIO_OPTS $MINIO_VOLUMES
           Restart=on-failure
           RestartSec=2
@@ -107,7 +99,7 @@ steps:
       - globular-minio.service
     restart_on_files:
       globular-minio.service:
-        - "{{.ConfigDir}}/minio/minio.env"
+        - "{{.StateDir}}/minio/minio.env"
     binaries:
       globular-minio.service: minio
 
@@ -115,4 +107,3 @@ steps:
     type: health_checks
     services:
       - globular-minio.service
-

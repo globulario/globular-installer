@@ -24,19 +24,14 @@ steps:
         owner: globular
         group: globular
         mode: 0750
+      - path: "{{.StateDir}}/services"
+        owner: globular
+        group: globular
+        mode: 0750
       - path: "{{.StateDir}}/cluster-controller"
         owner: globular
         group: globular
         mode: 0750
-
-      - path: "{{.ConfigDir}}"
-        owner: root
-        group: root
-        mode: 0755
-      - path: "{{.ConfigDir}}/cluster-controller"
-        owner: root
-        group: root
-        mode: 0755
 
   - id: stage-cluster-controller-package
     type: stage_package
@@ -47,7 +42,7 @@ steps:
   - id: install-cluster-controller-payload
     type: install_package_payload
     install_bins: true
-    install_config: true     # <-- IMPORTANT: install config/cluster-controller/config.json from package
+    install_config: false
     install_spec: false
     install_systemd: false
 
@@ -70,9 +65,9 @@ steps:
           User=root
           Group=root
           WorkingDirectory={{.StateDir}}/cluster-controller
+          Environment=GLOBULAR_SERVICES_DIR={{.StateDir}}/services
 
           ExecStart={{.Prefix}}/bin/cluster_controller \
-            --config {{.ConfigDir}}/cluster-controller/config.json \
             --state {{.StateDir}}/cluster-controller/state.json
 
           Restart=on-failure
@@ -86,9 +81,6 @@ steps:
     type: start_services
     services:
       - globular-cluster-controller.service
-    restart_on_files:
-      globular-cluster-controller.service:
-        - "{{.ConfigDir}}/cluster-controller/config.json"
     binaries:
       globular-cluster-controller.service: cluster_controller
 
@@ -96,4 +88,3 @@ steps:
     type: health_checks
     services:
       - globular-cluster-controller.service
-

@@ -8,8 +8,6 @@ service:
   exec: file_server
 
 steps:
-  # Stages the service package (created with `globular-cli pkg build`) into the installer staging directory.
-  # NOTE: pass --version to globular-installer so {{.Version}} matches the package filename.
   - id: stage-file-package
     type: stage_package
     path: "internal/assets/packages/service.file_{{.Version}}_linux_amd64.tgz"
@@ -40,32 +38,14 @@ steps:
         owner: globular
         group: globular
         mode: 0750
+      - path: "{{.StateDir}}/services"
+        owner: globular
+        group: globular
+        mode: 0750
       - path: "{{.StateDir}}/file"
         owner: globular
         group: globular
         mode: 0750
-
-      - path: "{{.ConfigDir}}"
-        owner: root
-        group: root
-        mode: 0755
-      - path: "{{.ConfigDir}}/file"
-        owner: root
-        group: root
-        mode: 0755
-
-  - id: install-file-config
-    type: install_files
-    files:
-      - path: "{{.ConfigDir}}/file/config.json"
-        owner: root
-        group: root
-        mode: 0644
-        atomic: true
-        # NOTE: this is intended to be replaced by node-agent/controller later.
-        # It is seeded from 'file_server --describe'.
-        content: |
-
 
   - id: install-file-service
     type: install_services
@@ -86,6 +66,7 @@ steps:
           User=globular
           Group=globular
           WorkingDirectory={{.StateDir}}/file
+          Environment=GLOBULAR_SERVICES_DIR={{.StateDir}}/services
           ExecStart={{.Prefix}}/bin/file_server
           Restart=on-failure
           RestartSec=2
@@ -103,9 +84,6 @@ steps:
     type: start_services
     services:
       - globular-file.service
-    restart_on_files:
-      globular-file.service:
-        - "{{.ConfigDir}}/file/config.json"
     binaries:
       globular-file.service: file_server
 

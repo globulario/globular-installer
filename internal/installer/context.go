@@ -13,10 +13,11 @@ import (
 )
 
 const (
-	DefaultPrefix    = "/usr/lib/globular"
-	DefaultStateDir  = "/var/lib/globular"
-	DefaultConfigDir = "/etc/globular"
-	DefaultLogDir    = "/var/log/globular"
+	DefaultPrefix      = "/usr/lib/globular"
+	DefaultStateDir    = "/var/lib/globular"
+	DefaultConfigDir   = "/var/lib/globular/services" // Services store configs as <uuid>.json
+	DefaultServicesDir = "/var/lib/globular/services" // Alias for clarity
+	DefaultLogDir      = "/var/log/globular"
 )
 
 type RuntimeState struct {

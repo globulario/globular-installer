@@ -24,31 +24,21 @@ steps:
         owner: globular
         group: globular
         mode: 0750
-
+      - path: "{{.StateDir}}/services"
+        owner: globular
+        group: globular
+        mode: 0750
       - path: "{{.StateDir}}/etcd"
         owner: globular
         group: globular
         mode: 0750
 
-      - path: "{{.ConfigDir}}"
-        owner: root
-        group: root
-        mode: 0755
-      - path: "{{.ConfigDir}}/etcd"
-        owner: root
-        group: root
-        mode: 0755
-
-  # Stages the service package (created with `globular-cli pkg build`) into the installer staging directory.
-  # NOTE: pass --version to globular-installer so {{.Version}} matches the package filename.
   - id: stage-etcd-package
     type: stage_package
     path: "internal/assets/packages/service.etcd_{{.Version}}_linux_amd64.tgz"
     require_platform_match: true
     require_type_service: true
 
-  # Installs only binaries from the staged package into {{.Prefix}}/bin.
-  # Config/systemd/spec are still installed from this spec because package payload files are copied verbatim (no templating).
   - id: install-etcd-bin
     type: install_package_payload
     install_bins: true
@@ -56,11 +46,11 @@ steps:
     install_spec: false
     install_systemd: false
 
-  # Writes the etcd config file.
+  # etcd uses its own config format
   - id: install-etcd-config
     type: install_files
     files:
-      - path: "{{.ConfigDir}}/etcd/etcd.yaml"
+      - path: "{{.StateDir}}/etcd/etcd.yaml"
         owner: root
         group: root
         mode: 0644
@@ -88,7 +78,6 @@ steps:
           auto-compaction-retention: "1h"
           quota-backend-bytes: 0
 
-  # Installs the systemd unit for etcd.
   - id: install-etcd-service
     type: install_services
     units:
@@ -108,7 +97,7 @@ steps:
           User=globular
           Group=globular
           WorkingDirectory={{.StateDir}}/etcd
-          ExecStart={{.Prefix}}/bin/etcd --config-file {{.ConfigDir}}/etcd/etcd.yaml
+          ExecStart={{.Prefix}}/bin/etcd --config-file {{.StateDir}}/etcd/etcd.yaml
           Restart=on-failure
           RestartSec=2
           LimitNOFILE=524288
@@ -122,7 +111,7 @@ steps:
       - globular-etcd.service
     restart_on_files:
       globular-etcd.service:
-        - "{{.ConfigDir}}/etcd/etcd.yaml"
+        - "{{.StateDir}}/etcd/etcd.yaml"
     binaries:
       globular-etcd.service: etcd
 
@@ -130,4 +119,3 @@ steps:
     type: health_checks
     services:
       - globular-etcd.service
-

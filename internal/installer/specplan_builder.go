@@ -344,8 +344,8 @@ func buildInstallPackagePayloadStep(ss spec.StepSpec) (Step, error) {
 		InstallConfig:   getBoolParam(ss.Params, "install_config", true),
 		InstallSpec:     getBoolParam(ss.Params, "install_spec", true),
 		InstallSystemd:  getBoolParam(ss.Params, "install_systemd", true),
-		ConfigDestRoot:  getStringParam(ss.Params, "config_dest_root", "/etc/globular/config"),
-		SpecDestRoot:    getStringParam(ss.Params, "spec_dest_root", "/etc/globular/specs"),
+		ConfigDestRoot:  getStringParam(ss.Params, "config_dest_root", "/var/lib/globular/services"),
+		SpecDestRoot:    getStringParam(ss.Params, "spec_dest_root", "/var/lib/globular/specs"),
 		SystemdDestRoot: getStringParam(ss.Params, "systemd_dest_root", "/etc/systemd/system"),
 		ReloadSystemd:   getBoolParam(ss.Params, "reload_systemd", true),
 	}
