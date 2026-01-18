@@ -30,3 +30,4 @@ vendor/
 
 # Local package artifacts
 internal/assets/packages/
+internal/assets/bin/
