@@ -11,6 +11,17 @@ die() { echo "[minio-contract] ERROR: $*" >&2; exit 1; }
 MINIO_ENDPOINT="${MINIO_ENDPOINT:-127.0.0.1:9000}"
 MINIO_BUCKET="${MINIO_BUCKET:-globular}"
 MINIO_SECURE="${MINIO_SECURE:-false}"
+
+# Try to read real credentials from MinIO's environment file if not provided
+if [ -z "${MINIO_ACCESS_KEY}" ] && [ -f "/var/lib/globular/minio/minio.env" ]; then
+    MINIO_ACCESS_KEY=$(grep MINIO_ROOT_USER /var/lib/globular/minio/minio.env 2>/dev/null | cut -d= -f2 | tr -d ' ')
+    MINIO_SECRET_KEY=$(grep MINIO_ROOT_PASSWORD /var/lib/globular/minio/minio.env 2>/dev/null | cut -d= -f2 | tr -d ' ')
+    if [ -n "$MINIO_ACCESS_KEY" ] && [ -n "$MINIO_SECRET_KEY" ]; then
+        log "Using credentials from MinIO environment file"
+    fi
+fi
+
+# Fallback to defaults if still not found
 MINIO_ACCESS_KEY="${MINIO_ACCESS_KEY:-minioadmin}"
 MINIO_SECRET_KEY="${MINIO_SECRET_KEY:-minioadmin}"
 
