@@ -1,12 +1,14 @@
 package installer
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"text/template"
 
 	"github.com/globulario/globular-installer/internal/platform"
 )
@@ -209,7 +211,7 @@ func (s *InstallPackagePayloadStep) Apply(ctx *Context) error {
 
 	if s.InstallSystemd {
 		systemdDir := filepath.Join(ctx.StagingDir, "systemd")
-		unitSpecs, err := collectServiceUnitSpecs(systemdDir, systemdRoot)
+		unitSpecs, err := collectServiceUnitSpecs(systemdDir, systemdRoot, ctx)
 		if err != nil {
 			return err
 		}
@@ -277,7 +279,7 @@ func collectFileSpecs(srcRoot, destRoot string, mode fs.FileMode) ([]platform.Fi
 	return specs, err
 }
 
-func collectServiceUnitSpecs(systemdDir, destRoot string) ([]platform.FileSpec, error) {
+func collectServiceUnitSpecs(systemdDir, destRoot string, ctx *Context) ([]platform.FileSpec, error) {
 	specs := []platform.FileSpec{}
 	info, err := os.Stat(systemdDir)
 	if err != nil {
@@ -305,9 +307,18 @@ func collectServiceUnitSpecs(systemdDir, destRoot string) ([]platform.FileSpec, 
 		if err != nil {
 			return nil, err
 		}
+		// Expand template variables if context is available
+		expandedData := data
+		if ctx != nil && ctx.TemplateVars != nil {
+			expanded, err := expandTemplateString(string(data), ctx.TemplateVars)
+			if err != nil {
+				return nil, fmt.Errorf("expand templates in %s: %w", name, err)
+			}
+			expandedData = []byte(expanded)
+		}
 		specs = append(specs, platform.FileSpec{
 			Path:   filepath.Join(destRoot, name),
-			Data:   data,
+			Data:   expandedData,
 			Owner:  "root",
 			Group:  "root",
 			Mode:   0o644,
@@ -315,4 +326,18 @@ func collectServiceUnitSpecs(systemdDir, destRoot string) ([]platform.FileSpec, 
 		})
 	}
 	return specs, nil
+}
+
+// expandTemplateString expands Go template variables in a string using the provided vars map.
+// This uses the same template expansion logic as the spec loader.
+func expandTemplateString(input string, vars map[string]string) (string, error) {
+	tmpl, err := template.New("").Option("missingkey=error").Parse(input)
+	if err != nil {
+		return "", err
+	}
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, vars); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
 }

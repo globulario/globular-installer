@@ -156,7 +156,7 @@ install_list() {
 }
 
 BOOTSTRAP_PKGS=(
-  "service.etcd_3.5.13_linux_amd64.tgz"
+  "service.etcd_3.5.14_linux_amd64.tgz"
   "service.minio_0.0.1_linux_amd64.tgz"
   "service.xds_0.0.1_linux_amd64.tgz"
   "service.envoy_1.35.3_linux_amd64.tgz"
@@ -185,6 +185,13 @@ OPTIONAL_WORKLOAD_PKGS=(
 
 log "Installing bootstrap layer..."
 install_list "${BOOTSTRAP_PKGS[@]}"
+
+log "Setting up MinIO buckets and webroot..."
+if [[ -x "$SCRIPT_DIR/setup-minio.sh" ]]; then
+  "$SCRIPT_DIR/setup-minio.sh" || log "Warning: MinIO setup failed, continuing..."
+else
+  log "Warning: setup-minio.sh not found or not executable, skipping MinIO setup"
+fi
 
 log "Installing Day-0 control plane..."
 install_list "${CONTROL_PLANE_PKGS[@]}"
