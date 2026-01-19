@@ -186,6 +186,13 @@ OPTIONAL_WORKLOAD_PKGS=(
 log "Installing bootstrap layer..."
 install_list "${BOOTSTRAP_PKGS[@]}"
 
+log "Setting up MinIO contract file..."
+if [[ -x "$SCRIPT_DIR/setup-minio-contract.sh" ]]; then
+  "$SCRIPT_DIR/setup-minio-contract.sh" || log "Warning: MinIO contract setup failed, continuing..."
+else
+  log "Warning: setup-minio-contract.sh not found or not executable"
+fi
+
 log "Setting up MinIO buckets and webroot..."
 if [[ -x "$SCRIPT_DIR/setup-minio.sh" ]]; then
   "$SCRIPT_DIR/setup-minio.sh" || log "Warning: MinIO setup failed, continuing..."
