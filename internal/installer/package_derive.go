@@ -1,11 +1,13 @@
 package installer
 
 import (
+	"bytes"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"text/template"
 
 	"github.com/globulario/globular-installer/internal/platform"
 )
@@ -52,11 +54,23 @@ func deriveInstallArtifacts(root, prefix, configDir, stateDir string) ([]platfor
 	}
 
 	// config/
+	// For config/, install each subdirectory to stateDir/{subdir}
+	// e.g., config/etcd/ -> /var/lib/globular/etcd/
+	//       config/minio/ -> /var/lib/globular/minio/
 	cfgDir := filepath.Join(root, "config")
-	if cfgFiles, err := collectPayloadFiles(cfgDir, configDir, 0o644); err != nil {
-		return nil, nil, nil, err
-	} else if len(cfgFiles) > 0 {
-		files = append(files, cfgFiles...)
+	if entries, err := os.ReadDir(cfgDir); err == nil {
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			srcPath := filepath.Join(cfgDir, entry.Name())
+			destPath := filepath.Join(stateDir, entry.Name())
+			if cfgFiles, err := collectPayloadFiles(srcPath, destPath, 0o644); err != nil {
+				return nil, nil, nil, err
+			} else if len(cfgFiles) > 0 {
+				files = append(files, cfgFiles...)
+			}
+		}
 	}
 
 	// state/
@@ -78,6 +92,11 @@ func deriveInstallArtifacts(root, prefix, configDir, stateDir string) ([]platfor
 	// systemd units
 	systemdDir := filepath.Join(root, "systemd")
 	if entries, err := os.ReadDir(systemdDir); err == nil {
+		templateVars := map[string]string{
+			"Prefix":    prefix,
+			"ConfigDir": configDir,
+			"StateDir":  stateDir,
+		}
 		for _, entry := range entries {
 			if entry.IsDir() {
 				continue
@@ -87,13 +106,20 @@ func deriveInstallArtifacts(root, prefix, configDir, stateDir string) ([]platfor
 				continue
 			}
 			src := filepath.Join(systemdDir, name)
-			data, err := os.ReadFile(src)
+			raw, err := os.ReadFile(src)
 			if err != nil {
 				return nil, nil, nil, fmt.Errorf("read systemd %s: %w", src, err)
 			}
+			rendered, err := renderTemplateString(string(raw), templateVars)
+			if err != nil {
+				return nil, nil, nil, fmt.Errorf("render systemd %s: %w", src, err)
+			}
+			if strings.Contains(rendered, "{{") {
+				return nil, nil, nil, fmt.Errorf("systemd unit %s contains unresolved template placeholders", src)
+			}
 			units = append(units, platform.FileSpec{
 				Path:   filepath.Join("/etc/systemd/system", name),
-				Data:   data,
+				Data:   []byte(rendered),
 				Owner:  "root",
 				Group:  "root",
 				Mode:   0o644,
@@ -144,4 +170,16 @@ func collectPayloadFiles(srcRoot, destRoot string, mode fs.FileMode) ([]platform
 		return nil
 	})
 	return specs, err
+}
+
+func renderTemplateString(input string, vars map[string]string) (string, error) {
+	tmpl, err := template.New("").Option("missingkey=error").Parse(input)
+	if err != nil {
+		return "", err
+	}
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, vars); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
 }

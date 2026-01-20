@@ -155,9 +155,12 @@ install_list() {
   done
 }
 
-BOOTSTRAP_PKGS=(
+BOOTSTRAP_MINIO_PKGS=(
   "service.etcd_3.5.14_linux_amd64.tgz"
   "service.minio_0.0.1_linux_amd64.tgz"
+)
+
+BOOTSTRAP_REST_PKGS=(
   "service.xds_0.0.1_linux_amd64.tgz"
   "service.envoy_1.35.3_linux_amd64.tgz"
   "service.gateway_0.0.1_linux_amd64.tgz"
@@ -183,22 +186,41 @@ OPTIONAL_WORKLOAD_PKGS=(
   "service.file_0.0.1_linux_amd64.tgz"
 )
 
-log "Installing bootstrap layer..."
-install_list "${BOOTSTRAP_PKGS[@]}"
+log "Installing bootstrap layer (etcd + minio)..."
+install_list "${BOOTSTRAP_MINIO_PKGS[@]}"
 
 log "Setting up MinIO contract file..."
 if [[ -x "$SCRIPT_DIR/setup-minio-contract.sh" ]]; then
-  "$SCRIPT_DIR/setup-minio-contract.sh" || log "Warning: MinIO contract setup failed, continuing..."
+  "$SCRIPT_DIR/setup-minio-contract.sh"
 else
-  log "Warning: setup-minio-contract.sh not found or not executable"
+  die "setup-minio-contract.sh not found or not executable"
+fi
+
+MINIO_UNIT="/etc/systemd/system/globular-minio.service"
+if [[ ! -f "$MINIO_UNIT" ]]; then
+  die "MinIO unit not installed at $MINIO_UNIT"
+fi
+if grep -q "{{" "$MINIO_UNIT"; then
+  die "MinIO unit contains unrendered template placeholders: $MINIO_UNIT"
+fi
+if ! systemd-analyze verify "$MINIO_UNIT"; then
+  die "MinIO unit failed systemd verification: $MINIO_UNIT"
+fi
+systemctl daemon-reload
+systemctl show -p FragmentPath globular-minio.service || true
+if ! systemctl is-active --quiet globular-minio.service; then
+  systemctl start globular-minio.service || die "Failed to start globular-minio.service"
 fi
 
 log "Setting up MinIO buckets and webroot..."
 if [[ -x "$SCRIPT_DIR/setup-minio.sh" ]]; then
-  "$SCRIPT_DIR/setup-minio.sh" || log "Warning: MinIO setup failed, continuing..."
+  "$SCRIPT_DIR/setup-minio.sh"
 else
-  log "Warning: setup-minio.sh not found or not executable, skipping MinIO setup"
+  die "setup-minio.sh not found or not executable"
 fi
+
+log "Installing remaining bootstrap services..."
+install_list "${BOOTSTRAP_REST_PKGS[@]}"
 
 log "Installing Day-0 control plane..."
 install_list "${CONTROL_PLANE_PKGS[@]}"

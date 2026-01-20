@@ -36,27 +36,28 @@ steps:
         owner: globular
         group: globular
         mode: 0750
+      - path: "{{.StateDir}}/objectstore"
+        owner: globular
+        group: globular
+        mode: 0750
+      - path: "{{.StateDir}}/webroot"
+        owner: globular
+        group: globular
+        mode: 0755
 
-  - id: stage-minio-package
-    type: stage_package
-    path: "internal/assets/packages/service.minio_{{.Version}}_linux_amd64.tgz"
-    require_platform_match: true
-    require_type_service: true
-
-  - id: install-minio-bin
+  - id: install-minio-binaries
     type: install_package_payload
     install_bins: true
     install_config: false
     install_spec: false
     install_systemd: false
 
-  # minio uses its own config format
   - id: install-minio-config
     type: install_files
     files:
       - path: "{{.StateDir}}/minio/minio.env"
-        owner: root
-        group: root
+        owner: globular
+        group: globular
         mode: 0644
         atomic: true
         content: |
@@ -64,6 +65,18 @@ steps:
           MINIO_ROOT_PASSWORD=globularadmin
           MINIO_VOLUMES={{.StateDir}}/minio/data
           MINIO_OPTS=--address 127.0.0.1:9000 --console-address 127.0.0.1:9001
+
+  # Standard credentials file for clients (node-agent, gateway, etc.)
+  - id: install-minio-credentials
+    type: install_files
+    files:
+      - path: "{{.StateDir}}/minio/credentials"
+        owner: globular
+        group: globular
+        mode: 0600
+        atomic: true
+        content: |
+          globular:globularadmin
 
   - id: install-minio-service
     type: install_services
@@ -75,7 +88,7 @@ steps:
         atomic: true
         content: |
           [Unit]
-          Description=Globular MinIO (embedded)
+          Description=Globular MinIO
           After=network-online.target
           Wants=network-online.target
 
@@ -83,15 +96,24 @@ steps:
           Type=simple
           User=globular
           Group=globular
-          WorkingDirectory={{.StateDir}}/minio
-          EnvironmentFile={{.StateDir}}/minio/minio.env
-          ExecStart={{.Prefix}}/bin/minio server $MINIO_OPTS $MINIO_VOLUMES
+          ExecStartPre=+/usr/bin/mkdir -p {{.StateDir}}/minio {{.StateDir}}/minio/data
+          ExecStartPre=+/usr/bin/chown -R globular:globular {{.StateDir}}/minio
+          ExecStartPre=+/usr/bin/chmod 0700 {{.StateDir}}/minio
+          ExecStartPre=+/usr/bin/chmod 0700 {{.StateDir}}/minio/data
+          ExecStartPre=/usr/bin/test -w {{.StateDir}}/minio/data
+          EnvironmentFile=-{{.StateDir}}/minio/minio.env
+          ExecStart={{.Prefix}}/bin/minio server {{.StateDir}}/minio/data --address 127.0.0.1:9000 --console-address 127.0.0.1:9001
           Restart=on-failure
           RestartSec=2
           LimitNOFILE=524288
 
           [Install]
           WantedBy=multi-user.target
+
+  - id: enable-minio
+    type: enable_services
+    services:
+      - globular-minio.service
 
   - id: start-minio
     type: start_services

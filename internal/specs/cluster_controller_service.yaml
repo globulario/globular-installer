@@ -33,18 +33,8 @@ steps:
         group: globular
         mode: 0750
 
-  - id: stage-cluster-controller-package
-    type: stage_package
-    path: "internal/assets/packages/service.cluster-controller_{{.Version}}_linux_amd64.tgz"
-    require_platform_match: true
-    require_type_service: true
-
-  - id: install-cluster-controller-payload
-    type: install_package_payload
-    install_bins: true
-    install_config: false
-    install_spec: false
-    install_systemd: false
+  - id: install-cluster-controller-bin
+    type: install_binaries
 
   - id: install-cluster-controller-service
     type: install_services
@@ -56,7 +46,7 @@ steps:
         atomic: true
         content: |
           [Unit]
-          Description=Globular Cluster Controller (embedded)
+          Description=Globular Cluster Controller
           After=network-online.target
           Wants=network-online.target
 
@@ -66,16 +56,18 @@ steps:
           Group=root
           WorkingDirectory={{.StateDir}}/cluster-controller
           Environment=GLOBULAR_SERVICES_DIR={{.StateDir}}/services
-
-          ExecStart={{.Prefix}}/bin/cluster_controller \
-            --state {{.StateDir}}/cluster-controller/state.json
-
+          ExecStart={{.Prefix}}/bin/cluster_controller --state {{.StateDir}}/cluster-controller/state.json
           Restart=on-failure
           RestartSec=2
           LimitNOFILE=524288
 
           [Install]
           WantedBy=multi-user.target
+
+  - id: enable-cluster-controller
+    type: enable_services
+    services:
+      - globular-cluster-controller.service
 
   - id: start-cluster-controller
     type: start_services

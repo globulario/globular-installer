@@ -29,22 +29,20 @@ create_dirs() {
     fi
 }
 
-# Verify credentials file exists (created by MinIO package)
+# Verify credentials file exists (created by MinIO package, or create if missing)
 verify_credentials() {
     log "Verifying credentials file..."
 
     if [ ! -f "$CRED_FILE" ]; then
-        log "ERROR: Credentials file not found at $CRED_FILE"
-        log "The MinIO package should have created this file during installation."
-        log ""
-        log "To fix manually:"
-        log "  echo 'globular:globularadmin' | sudo tee $CRED_FILE"
-        log "  sudo chmod 600 $CRED_FILE"
-        log "  sudo chown globular:globular $CRED_FILE"
-        die "Credentials file missing"
+        log "Warning: Credentials file not found, creating it..."
+        sudo mkdir -p "$(dirname "$CRED_FILE")"
+        echo "globular:globularadmin" | sudo tee "$CRED_FILE" > /dev/null
     fi
 
-    log "Found credentials file at $CRED_FILE"
+    sudo chown globular:globular "$CRED_FILE" || log "Warning: Could not chown $CRED_FILE"
+    sudo chmod 0600 "$CRED_FILE" || log "Warning: Could not chmod $CRED_FILE"
+
+    log "Credentials file ready at $CRED_FILE"
 }
 
 # Create contract file
@@ -71,9 +69,9 @@ EOF
 
     if ! mv "$temp_contract" "$CONTRACT_FILE" 2>/dev/null; then
         sudo mv "$temp_contract" "$CONTRACT_FILE" || die "Failed to create $CONTRACT_FILE"
-        sudo chown globular:globular "$CONTRACT_FILE" || log "Warning: Could not chown $CONTRACT_FILE"
-        sudo chmod 644 "$CONTRACT_FILE" || log "Warning: Could not chmod $CONTRACT_FILE"
     fi
+    sudo chown globular:globular "$CONTRACT_FILE" || log "Warning: Could not chown $CONTRACT_FILE"
+    sudo chmod 0644 "$CONTRACT_FILE" || log "Warning: Could not chmod $CONTRACT_FILE"
 
     log "Created contract file at $CONTRACT_FILE"
 }
@@ -106,6 +104,7 @@ main() {
     log "Endpoint: $MINIO_ENDPOINT"
     log "Bucket: $MINIO_BUCKET"
     log "Secure: $MINIO_SECURE"
+    log "Contract file: $CONTRACT_FILE"
     log "Credentials source: $CRED_FILE (provided by MinIO package)"
 
     create_dirs

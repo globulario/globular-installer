@@ -4,13 +4,15 @@ The `setup-minio.sh` script is automatically called during the Day-0 installatio
 
 ## What it does
 
-1. **Waits for MinIO to be ready** - Retries connection for up to 60 seconds
-2. **Creates two buckets:**
-   - `webroot` - Public read access for web content (HTML, images, etc.)
-   - `users` - Private access for user files
-3. **Uploads web assets to webroot:**
-   - `index.html` - Globular cluster status and welcome page
-   - `logo.png` - Globular logo
+1. Waits for MinIO to be ready (up to 60 seconds)
+2. Reads the MinIO contract (`/var/lib/globular/objectstore/minio.json` by default)
+3. Creates the single contract bucket (default: `globular`)
+4. Creates domain-scoped prefixes and sentinels:
+   - `<domain>/webroot/.keep`
+   - `<domain>/users/.keep`
+5. Uploads web assets to `<domain>/webroot/`:
+   - `index.html`
+   - `logo.png`
 
 ## Automatic Execution
 
@@ -18,22 +20,15 @@ The setup runs automatically during `install-day0.sh` after the bootstrap layer 
 
 ## Configuration
 
-The script can be configured via environment variables:
+Key inputs:
 
-```bash
-export MINIO_ENDPOINT="127.0.0.1:9000"          # MinIO endpoint
-export MINIO_ACCESS_KEY="minioadmin"            # MinIO access key
-export MINIO_SECRET_KEY="minioadmin"            # MinIO secret key
-export MINIO_USE_SSL="false"                    # Use SSL/TLS
-```
+- Contract: `GLOBULAR_MINIO_CONTRACT_PATH` (default `/var/lib/globular/objectstore/minio.json`)
+- Domain prefix: `GLOBULAR_DOMAIN` (default `localhost`)
+- Credentials file: `/var/lib/globular/minio/credentials`
 
-## Setup Methods
+## Setup Method
 
-The script tries multiple methods in order:
-
-1. **MinIO Client (mc)** - Preferred method if `mc` is available on PATH
-2. **Python boto3** - Falls back to Python if available
-3. **Curl** - Limited functionality fallback (logs warning)
+The script **requires MinIO Client (`mc`)** on PATH. If `mc` is missing, Day-0 fails fast with an explicit error.
 
 ### Installing MinIO Client (Recommended)
 
@@ -47,27 +42,12 @@ sudo mv mc /usr/local/bin/
 brew install minio/stable/mc
 ```
 
-### Installing Python boto3
-
-```bash
-pip3 install boto3
-```
-
 ## Manual Execution
 
 To run the setup manually:
 
 ```bash
 cd /path/to/globular-installer/scripts
-./setup-minio.sh
-```
-
-Or with custom configuration:
-
-```bash
-MINIO_ENDPOINT="minio.example.com:9000" \
-MINIO_ACCESS_KEY="admin" \
-MINIO_SECRET_KEY="secret123" \
 ./setup-minio.sh
 ```
 
@@ -111,7 +91,7 @@ http://<gateway-endpoint>/
 - Ensure MinIO admin credentials are properly configured
 
 ### Buckets not created
-- Install MinIO Client (mc) or Python boto3
+- Install MinIO Client (`mc`) and ensure it is on PATH
 - Check the script output for specific error messages
 - Manually verify MinIO is accessible: `curl http://localhost:9000/minio/health/live`
 
@@ -126,7 +106,6 @@ If you need to skip the MinIO setup during installation, you can:
 
 1. Remove or rename the `setup-minio.sh` script
 2. Remove execute permission: `chmod -x scripts/setup-minio.sh`
-3. Set `SKIP_MINIO_SETUP=1` environment variable (if supported)
 
 The installer will log a warning and continue without setting up MinIO.
 

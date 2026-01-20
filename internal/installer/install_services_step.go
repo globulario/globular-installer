@@ -68,7 +68,6 @@ func (s *InstallServicesStep) Apply(ctx *Context) error {
 		return nil
 	}
 
-	changedCount := 0
 	if installerWithResult, ok := ctx.Platform.(platform.FileInstallerWithResult); ok {
 		result, err := installerWithResult.InstallFilesWithResult(context.Background(), files)
 		if err != nil {
@@ -83,12 +82,10 @@ func (s *InstallServicesStep) Apply(ctx *Context) error {
 				ctx.Runtime.ChangedUnits[filepath.Base(path)] = true
 			}
 		}
-		changedCount = len(result.Changed)
 	} else {
 		if err := ctx.Platform.InstallFiles(context.Background(), files); err != nil {
 			return fmt.Errorf("install services: %w", err)
 		}
-		changedCount = len(files)
 		if ctx.Runtime != nil {
 			ensureRuntimeMaps(ctx.Runtime)
 			for _, spec := range files {
@@ -98,16 +95,22 @@ func (s *InstallServicesStep) Apply(ctx *Context) error {
 		}
 	}
 
+	for _, spec := range files {
+		data, err := os.ReadFile(spec.Path)
+		if err != nil {
+			return fmt.Errorf("read installed unit %s: %w", spec.Path, err)
+		}
+		if bytes.Contains(data, []byte("{{")) {
+			return fmt.Errorf("installed unit %s still contains template placeholders", spec.Path)
+		}
+	}
+
 	sm := ctx.Platform.ServiceManager()
 	if sm == nil {
 		return fmt.Errorf("service manager unavailable")
 	}
-	if changedCount > 0 {
-		if err := sm.DaemonReload(context.Background()); err != nil {
-			return fmt.Errorf("daemon-reload: %w", err)
-		}
-	} else if ctx.Logger != nil {
-		ctx.Logger.Infof("install-services: no unit changes; skipping daemon-reload")
+	if err := sm.DaemonReload(context.Background()); err != nil {
+		return fmt.Errorf("daemon-reload: %w", err)
 	}
 
 	return nil
