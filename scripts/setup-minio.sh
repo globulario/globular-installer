@@ -177,6 +177,14 @@ setup_with_mc() {
         die "logo.png not found at $ASSETS_WEBROOT/logo.png"
     fi
 
+    if [[ -f "$ASSETS_WEBROOT/style.css" ]]; then
+        log "Uploading style.css..."
+        cat "$ASSETS_WEBROOT/style.css" | run_mc pipe "${base}/webroot/style.css" || die "Failed to upload style.css"
+        log "Uploaded style.css to ${base}/webroot/style.css"
+    else
+        die "style.css not found at $ASSETS_WEBROOT/style.css"
+    fi
+
     run_mc ls "local/${MINIO_BUCKET}" >/dev/null 2>&1 || die "Bucket $MINIO_BUCKET not reachable after creation"
     run_mc stat "${base}/webroot/index.html" >/dev/null 2>&1 || die "index.html missing at ${base}/webroot/index.html"
 }
