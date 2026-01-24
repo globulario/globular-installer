@@ -9,7 +9,10 @@ ASSET_BIN_DIR ?= $(CURDIR)/internal/assets/bin
 BUNDLE_SRC_BIN ?= $(CURDIR)/../globular/bin
 BUNDLE_BINS ?= gateway xds
 
-.PHONY: all build test fmt tidy clean ensure-cache bin bundle bundle-stage
+SPEC_SRC_DIR ?= $(CURDIR)/../packages/specs
+SPEC_DEST_DIR ?= $(CURDIR)/internal/specs
+
+.PHONY: all build test fmt tidy clean ensure-cache bin bundle bundle-stage sync-specs
 
 all: build
 
@@ -20,7 +23,7 @@ ensure-cache:
 	mkdir -p $(CACHE_DIR)
 
 # Build the installer binary (the main package lives under cmd/globular-installer)
-build: ensure-cache bin
+build: ensure-cache bin sync-specs
 	go build -o $(BIN) $(CMD_PKG)
 
 # Optional: build all packages (useful for catching compile errors across the repo)
@@ -51,3 +54,10 @@ bundle-stage:
 	done
 
 bundle: bundle-stage build
+
+sync-specs:
+	@if [ ! -d "$(SPEC_SRC_DIR)" ]; then \
+		echo "spec source $(SPEC_SRC_DIR) not found" >&2; exit 1; \
+	fi
+	mkdir -p "$(SPEC_DEST_DIR)"
+	cp -f $(SPEC_SRC_DIR)/*_service.yaml "$(SPEC_DEST_DIR)"/

@@ -62,9 +62,10 @@ steps:
         content: |
           [Unit]
           Description=Globular Envoy Proxy
-          After=network-online.target
-          Wants=network-online.target
-          ConditionPathExists=/run/globular/envoy/envoy-bootstrap.json
+          After=network-online.target globular-xds.service
+          Wants=network-online.target globular-xds.service
+          Requires=globular-xds.service
+          PartOf=globular-xds.service
 
           [Service]
           Type=simple

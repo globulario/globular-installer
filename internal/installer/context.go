@@ -126,6 +126,7 @@ func NewContext(opts Options) (*Context, error) {
 		specObj  *spec.InstallSpec
 		specDesc string
 	)
+	specPath := opts.SpecPath
 	xdsWatcherConfig := []byte("{}")
 	if b, err := assets.ReadConfigAsset("xds/config.json"); err == nil && len(b) > 0 {
 		xdsWatcherConfig = b
@@ -144,18 +145,35 @@ func NewContext(opts Options) (*Context, error) {
 		"XDSConfigJSON":     string(xdsWatcherConfig),
 		"GatewayConfigJSON": string(gatewayConfig),
 	}
+	if specPath == "" && opts.SpecInline == "" && opts.StagingDir != "" {
+		manifestPath := filepath.Join(opts.StagingDir, "package.json")
+		if mf, err := loadPackageManifest(manifestPath); err == nil && mf.Defaults.Spec != "" {
+			if filepath.IsAbs(mf.Defaults.Spec) {
+				if logger != nil {
+					logger.Infof("ignoring absolute spec path %s in package", mf.Defaults.Spec)
+				}
+			} else {
+				candidate := filepath.Join(opts.StagingDir, filepath.Clean(mf.Defaults.Spec))
+				if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+					specPath = candidate
+				} else if err != nil && logger != nil && !errors.Is(err, os.ErrNotExist) {
+					logger.Infof("unable to use package spec %s: %v", candidate, err)
+				}
+			}
+		}
+	}
 	if opts.SpecInline != "" {
 		specObj, err = spec.LoadInline(opts.SpecInline, templateVars)
 		if err != nil {
 			return nil, fmt.Errorf("load spec inline: %w", err)
 		}
 		specDesc = "inline"
-	} else if opts.SpecPath != "" {
-		specObj, err = spec.Load(opts.SpecPath, templateVars)
+	} else if specPath != "" {
+		specObj, err = spec.Load(specPath, templateVars)
 		if err != nil {
-			return nil, fmt.Errorf("load spec %s: %w", opts.SpecPath, err)
+			return nil, fmt.Errorf("load spec %s: %w", specPath, err)
 		}
-		specDesc = fmt.Sprintf("path=%s", opts.SpecPath)
+		specDesc = fmt.Sprintf("path=%s", specPath)
 	} else {
 		specObj = spec.DefaultInstallSpec(templateVars)
 		specDesc = "default"
@@ -177,7 +195,7 @@ func NewContext(opts Options) (*Context, error) {
 			ChangedFiles:    make(map[string]bool),
 		},
 		Spec:         specObj,
-		SpecPath:     opts.SpecPath,
+		SpecPath:     specPath,
 		SpecInline:   opts.SpecInline,
 		TemplateVars: templateVars,
 		Platform:     plat,

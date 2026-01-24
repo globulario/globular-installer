@@ -1,0 +1,56 @@
+diff --git a/services/proto/node_agent.proto b/services/proto/node_agent.proto
+index 0000000..0000000 100644
+--- a/services/proto/node_agent.proto
++++ b/services/proto/node_agent.proto
+@@
+ syntax = "proto3";
+ 
+ package nodeagent;
+ 
+ option go_package = "github.com/globulario/services/golang/nodeagent/nodeagentpb;nodeagentpb";
+ 
+ import "google/protobuf/timestamp.proto";
+ import "clustercontroller.proto";
+ import "plan.proto";
+@@
+ message ApplyPlanRequest {
+   clustercontroller.NodePlan plan = 1;
+   string operation_id = 2;
+ }
+ message ApplyPlanResponse {
+   string operation_id = 1;
+ }
+ 
+ message ApplyPlanV1Request {
+   globular.plan.v1.NodePlan plan = 1;
+   string operation_id = 2; // optional; server will generate if empty
+ }
+ message ApplyPlanV1Response {
+   string operation_id = 1; // always non-empty; if client omitted, server returns plan_id or generated id
+   string plan_id = 2;      // always echoed from plan.plan_id (generated if absent)
+   uint64 plan_generation = 3;
+ }
+ 
+ message GetPlanStatusV1Request {
+   string node_id = 1; // optional: if empty, server uses its own node id
+ }
+ message GetPlanStatusV1Response {
+   globular.plan.v1.NodePlanStatus status = 1;
+ }
+ 
+ message WatchPlanStatusV1Request {
+   string node_id = 1; // optional
+ }
+ 
+ message WatchOperationRequest { string operation_id = 1; }
+@@
+ service NodeAgentService {
+   rpc JoinCluster(JoinClusterRequest) returns (JoinClusterResponse);
+   rpc GetInventory(GetInventoryRequest) returns (GetInventoryResponse);
+   rpc ApplyPlan(ApplyPlanRequest) returns (ApplyPlanResponse);
+   rpc ApplyPlanV1(ApplyPlanV1Request) returns (ApplyPlanV1Response);
+   rpc GetPlanStatusV1(GetPlanStatusV1Request) returns (GetPlanStatusV1Response);
+   rpc WatchPlanStatusV1(WatchPlanStatusV1Request) returns (stream globular.plan.v1.NodePlanStatus);
+   rpc WatchOperation(WatchOperationRequest) returns (stream OperationEvent);
+   rpc BootstrapFirstNode(BootstrapFirstNodeRequest) returns (BootstrapFirstNodeResponse);
+ }

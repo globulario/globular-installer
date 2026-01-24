@@ -1,0 +1,156 @@
+diff --git a/services/golang/nodeagent/nodeagent_server/server_applyplanv1_test.go b/services/golang/nodeagent/nodeagent_server/server_applyplanv1_test.go
+index 0000000..0000000 100644
+--- a/services/golang/nodeagent/nodeagent_server/server_applyplanv1_test.go
++++ b/services/golang/nodeagent/nodeagent_server/server_applyplanv1_test.go
+@@
++package main
++
++import (
++	"context"
++	"testing"
++
++	nodeagentpb "github.com/globulario/services/golang/nodeagent/nodeagentpb"
++	"github.com/globulario/services/golang/plan/planpb"
++)
++
++type fakePlanStore struct {
++	plan    *planpb.NodePlan
++	status  *planpb.NodePlanStatus
++	history []*planpb.NodePlan
++}
++
++func (f *fakePlanStore) PutCurrentPlan(_ context.Context, _ string, plan *planpb.NodePlan) error {
++	f.plan = plan
++	return nil
++}
++func (f *fakePlanStore) GetCurrentPlan(_ context.Context, _ string) (*planpb.NodePlan, error) {
++	return f.plan, nil
++}
++func (f *fakePlanStore) PutStatus(_ context.Context, _ string, status *planpb.NodePlanStatus) error {
++	f.status = status
++	return nil
++}
++func (f *fakePlanStore) GetStatus(_ context.Context, _ string) (*planpb.NodePlanStatus, error) {
++	return f.status, nil
++}
++func (f *fakePlanStore) AppendHistory(_ context.Context, _ string, plan *planpb.NodePlan) error {
++	f.history = append(f.history, plan)
++	return nil
++}
++
++func TestApplyPlanV1ReturnsCorrelation(t *testing.T) {
++	ps := &fakePlanStore{}
++	srv := &NodeAgentServer{
++		planStore: ps,
++		nodeID:    "node-1",
++		state:     newNodeAgentState(),
++	}
++	req := &nodeagentpb.ApplyPlanV1Request{
++		Plan: &planpb.NodePlan{
++			NodeId: "node-1",
++		},
++	}
++	resp, err := srv.ApplyPlanV1(context.Background(), req)
++	if err != nil {
++		t.Fatalf("ApplyPlanV1 error: %v", err)
++	}
++	if resp.GetOperationId() == "" {
++		t.Fatalf("expected non-empty operation_id")
++	}
++	if resp.GetPlanId() == "" {
++		t.Fatalf("expected plan_id to be set")
++	}
++	if resp.GetPlanGeneration() == 0 {
++		t.Fatalf("expected plan_generation to be set")
++	}
++	if ps.plan == nil {
++		t.Fatalf("expected plan persisted")
++	}
++	if ps.plan.GetPlanId() != resp.GetPlanId() {
++		t.Fatalf("plan_id mismatch: plan=%s resp=%s", ps.plan.GetPlanId(), resp.GetPlanId())
++	}
++}
+diff --git a/services/golang/nodeagent/nodeagent_server/internal/planexec/planexec_test.go b/services/golang/nodeagent/nodeagent_server/internal/planexec/planexec_test.go
+index 0000000..0000000 100644
+--- a/services/golang/nodeagent/nodeagent_server/internal/planexec/planexec_test.go
++++ b/services/golang/nodeagent/nodeagent_server/internal/planexec/planexec_test.go
+@@
++package planexec
++
++import (
++	"context"
++	"os"
++	"path/filepath"
++	"testing"
++
++	"github.com/globulario/services/golang/nodeagent/nodeagent_server/internal/actions"
++	"github.com/globulario/services/golang/plan/planpb"
++	"google.golang.org/protobuf/types/known/structpb"
++)
++
++type okProbe struct{}
++
++func (okProbe) Name() string { return "test.ok" }
++func (okProbe) Validate(*structpb.Struct) error { return nil }
++func (okProbe) Apply(context.Context, *structpb.Struct) (string, error) { return "ok", nil }
++
++func TestReconcileQuickSuccess(t *testing.T) {
++	actions.Register(okProbe{})
++	r := NewRunner("node-1", func(context.Context, *planpb.NodePlanStatus) {})
++	plan := &planpb.NodePlan{
++		NodeId: "node-1",
++		PlanId: "p1",
++		Spec: &planpb.PlanSpec{
++			SuccessProbes: []*planpb.Probe{
++				{Type: "test.ok"},
++			},
++		},
++	}
++	status, err := r.ReconcilePlan(context.Background(), plan, nil)
++	if err != nil {
++		t.Fatalf("reconcile error: %v", err)
++	}
++	if status.GetState() != planpb.PlanState_PLAN_SUCCEEDED {
++		t.Fatalf("expected PLAN_SUCCEEDED, got %v", status.GetState())
++	}
++}
++
++func TestDesiredServiceVersionCheck(t *testing.T) {
++	tmp := t.TempDir()
++	restoreRoot := overrideVersionMarkerRoot(tmp)
++	defer restoreRoot()
++	restoreActive := overrideIsServiceActive(func(context.Context, string) (bool, error) { return true, nil })
++	defer restoreActive()
++
++	serviceDir := filepath.Join(tmp, "globular-gateway")
++	if err := os.MkdirAll(serviceDir, 0o755); err != nil {
++		t.Fatalf("mkdir: %v", err)
++	}
++	if err := os.WriteFile(filepath.Join(serviceDir, "version"), []byte("1.2.3\n"), 0o644); err != nil {
++		t.Fatalf("write version: %v", err)
++	}
++
++	services := []*planpb.DesiredService{
++		{Name: "gateway", Unit: "globular-gateway.service", Version: "1.2.3"},
++	}
++	if err := checkDesiredServices(context.Background(), services); err != nil {
++		t.Fatalf("expected version match, got error: %v", err)
++	}
++
++	services[0].Version = "9.9.9"
++	if err := checkDesiredServices(context.Background(), services); err == nil {
++		t.Fatalf("expected version mismatch error")
++	}
++}
++
++func overrideVersionMarkerRoot(root string) func() {
++	old := versionMarkerRoot
++	versionMarkerRoot = root
++	return func() { versionMarkerRoot = old }
++}
++
++func overrideIsServiceActive(fn func(context.Context, string) (bool, error)) func() {
++	old := isServiceActive
++	isServiceActive = fn
++	return func() { isServiceActive = old }
++}
