@@ -60,6 +60,14 @@ steps:
           xds_config_json: '{}'
           gateway_config_json: '{}'
 
+  # Install binaries/config from packaged payload when available.
+  - id: install-xds-binary
+    type: install_package_payload
+    install_bins: true
+    install_config: true
+    install_spec: false
+    install_systemd: false
+
   - id: install-xds-service
     type: install_services
     units:

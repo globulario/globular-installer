@@ -29,6 +29,13 @@ steps:
         group: globular
         mode: 0750
 
+  - id: install-node-agent-binary
+    type: install_package_payload
+    install_bins: true
+    install_config: false
+    install_spec: false
+    install_systemd: false
+
   - id: install-node-agent-service
     type: install_services
     units:

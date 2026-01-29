@@ -15,15 +15,17 @@ DOMAIN="${GLOBULAR_DOMAIN:-${DOMAIN:-localhost}}"
 
 # MinIO client binary location (try installed location first, then PATH)
 PREFIX="${PREFIX:-/usr/lib/globular}"
+# Resolve mc in priority order:
+# 1) PREFIX/bin (installed path)
+# 2) packages/bin (dev path alongside this repo)
+# 3) PATH
+MC_BIN=""
 if [[ -x "${PREFIX}/bin/mc" ]]; then
     MC_BIN="${PREFIX}/bin/mc"
-elif [[ -x "/home/dave/Documents/github.com/globulario/packages/bin/mc" ]]; then
-    # Fallback to development location
-    MC_BIN="/home/dave/Documents/github.com/globulario/packages/bin/mc"
+elif [[ -x "${INSTALLER_ROOT}/../packages/bin/mc" ]]; then
+    MC_BIN="${INSTALLER_ROOT}/../packages/bin/mc"
 elif command -v mc >/dev/null 2>&1; then
     MC_BIN="$(command -v mc)"
-else
-    MC_BIN=""
 fi
 
 MAX_RETRIES=30

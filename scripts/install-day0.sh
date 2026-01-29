@@ -186,6 +186,11 @@ OPTIONAL_WORKLOAD_PKGS=(
   "service.file_0.0.1_linux_amd64.tgz"
 )
 
+CMDS_PKGS=(
+  "service.mc-cmd_0.0.1_linux_amd64.tgz"
+  "service.globular-cli-cmd_0.0.1_linux_amd64.tgz"
+)
+
 log "Installing bootstrap layer (etcd + minio)..."
 install_list "${BOOTSTRAP_MINIO_PKGS[@]}"
 
@@ -211,6 +216,9 @@ systemctl show -p FragmentPath globular-minio.service || true
 if ! systemctl is-active --quiet globular-minio.service; then
   systemctl start globular-minio.service || die "Failed to start globular-minio.service"
 fi
+
+log "Installing command/tooling packages..."
+install_list "${CMDS_PKGS[@]}"
 
 log "Setting up MinIO buckets and webroot..."
 if [[ -x "$SCRIPT_DIR/setup-minio.sh" ]]; then

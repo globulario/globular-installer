@@ -178,6 +178,27 @@ func buildStep(ctx *Context, ss spec.StepSpec) (Step, error) {
 			return nil, err
 		}
 		return step, nil
+	case "ensure_service_config":
+		step := &EnsureServiceConfigStep{
+			ServiceName:         getStringParam(ss.Params, "service_name", ""),
+			Exec:                getStringParam(ss.Params, "exec", ""),
+			Domain:              getStringParam(ss.Params, "domain", ""),
+			AddressHost:         getStringParam(ss.Params, "address_host", "localhost"),
+			Owner:               getStringParam(ss.Params, "owner", "globular"),
+			Group:               getStringParam(ss.Params, "group", "globular"),
+			RewriteIfOutOfRange: getBoolParam(ss.Params, "rewrite_if_out_of_range", true),
+		}
+		if mv, ok := ss.Params["mode"]; ok {
+			mode, err := parseMode(mv)
+			if err != nil {
+				return nil, fmt.Errorf("ensure_service_config step %q invalid mode: %w", ss.ID, err)
+			}
+			step.Mode = uint32(mode)
+		}
+		if step.Exec == "" {
+			return nil, fmt.Errorf("ensure_service_config step %q missing exec", ss.ID)
+		}
+		return step, nil
 	case "noop":
 		name := ss.ID
 		if name == "" {

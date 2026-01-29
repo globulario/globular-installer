@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 
 	"github.com/globulario/globular-installer/internal/assets"
 	"github.com/globulario/globular-installer/internal/installer/manifest"
@@ -36,6 +38,8 @@ type Context struct {
 	StateDir       string
 	ConfigDir      string
 	LogDir         string
+	PortRangeStart int
+	PortRangeEnd   int
 	NonInteractive bool
 	DryRun         bool
 	Logger         Logger
@@ -49,6 +53,7 @@ type Context struct {
 	Manifest       *manifest.Manifest
 	ManifestPath   string
 	Purge          bool
+	Ports          *PortAllocator
 }
 
 func (c *Context) PlatformBackend() platform.Platform {
@@ -105,6 +110,19 @@ func NewContext(opts Options) (*Context, error) {
 		return nil, fmt.Errorf("stagingDir %q must be absolute", opts.StagingDir)
 	}
 
+	portRange := opts.ServicePortRange
+	if portRange == "" {
+		portRange = "10000-11000"
+	}
+	rangeStart, rangeEnd, err := parsePortRange(portRange)
+	if err != nil {
+		return nil, fmt.Errorf("port-range %q: %w", portRange, err)
+	}
+	portAllocator, err := NewPortAllocator(rangeStart, rangeEnd)
+	if err != nil {
+		return nil, fmt.Errorf("init port allocator: %w", err)
+	}
+
 	logger := NewStdLogger(opts.Verbose)
 
 	plat, err := platform.Detect()
@@ -142,6 +160,8 @@ func NewContext(opts Options) (*Context, error) {
 		"ConfigDir":         configDir,
 		"LogDir":            logDir,
 		"Version":           opts.Version,
+		"PortRangeStart":    strconv.Itoa(rangeStart),
+		"PortRangeEnd":      strconv.Itoa(rangeEnd),
 		"XDSConfigJSON":     string(xdsWatcherConfig),
 		"GatewayConfigJSON": string(gatewayConfig),
 	}
@@ -194,14 +214,17 @@ func NewContext(opts Options) (*Context, error) {
 			ChangedUnits:    make(map[string]bool),
 			ChangedFiles:    make(map[string]bool),
 		},
-		Spec:         specObj,
-		SpecPath:     specPath,
-		SpecInline:   opts.SpecInline,
-		TemplateVars: templateVars,
-		Platform:     plat,
-		Manifest:     m,
-		ManifestPath: mpath,
-		Purge:        opts.Purge,
+		PortRangeStart: rangeStart,
+		PortRangeEnd:   rangeEnd,
+		Ports:          portAllocator,
+		Spec:           specObj,
+		SpecPath:       specPath,
+		SpecInline:     opts.SpecInline,
+		TemplateVars:   templateVars,
+		Platform:       plat,
+		Manifest:       m,
+		ManifestPath:   mpath,
+		Purge:          opts.Purge,
 	}
 
 	if logger != nil {
@@ -234,4 +257,28 @@ func (c *Context) LoadSpec(strict bool) (*spec.InstallSpec, error) {
 		return spec.LoadWithMode(c.SpecPath, c.TemplateVars, strict)
 	}
 	return spec.DefaultInstallSpec(c.TemplateVars), nil
+}
+
+func parsePortRange(val string) (int, int, error) {
+	parts := strings.FieldsFunc(val, func(r rune) bool {
+		return r == '-' || r == ':' || r == ','
+	})
+	if len(parts) != 2 {
+		return 0, 0, fmt.Errorf("expected start-end")
+	}
+	start, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, 0, fmt.Errorf("invalid start port: %w", err)
+	}
+	end, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return 0, 0, fmt.Errorf("invalid end port: %w", err)
+	}
+	if start <= 0 || end <= 0 || start > 65535 || end > 65535 {
+		return 0, 0, fmt.Errorf("ports must be between 1 and 65535")
+	}
+	if start >= end {
+		return 0, 0, fmt.Errorf("start must be less than end")
+	}
+	return start, end, nil
 }

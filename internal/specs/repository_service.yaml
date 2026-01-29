@@ -75,6 +75,13 @@ steps:
           [Install]
           WantedBy=multi-user.target
 
+  - id: ensure-repository-config
+    type: ensure_service_config
+    service_name: repository
+    exec: repository_server
+    address_host: localhost
+    rewrite_if_out_of_range: true
+
   - id: enable-repository
     type: enable_services
     services:

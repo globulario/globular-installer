@@ -12,6 +12,7 @@ func TestBuildUninstallPlanFromEnvoySpec(t *testing.T) {
 		"Prefix":    DefaultPrefix,
 		"StateDir":  DefaultStateDir,
 		"ConfigDir": DefaultConfigDir,
+		"LogDir":    DefaultLogDir,
 		"Version":   "0.0.0",
 	}
 	sp, err := spec.Load(filepath.Join("..", "specs", "envoy_service.yaml"), vars)
@@ -22,7 +23,9 @@ func TestBuildUninstallPlanFromEnvoySpec(t *testing.T) {
 		Prefix:    vars["Prefix"],
 		StateDir:  vars["StateDir"],
 		ConfigDir: vars["ConfigDir"],
+		LogDir:    vars["LogDir"],
 		Version:   vars["Version"],
+		Ports:     mustPortAllocatorForTest(),
 	}
 	plan, err := BuildUninstallPlan(ctx, sp)
 	if err != nil {
@@ -59,5 +62,45 @@ func TestBuildUninstallPlanFromEnvoySpec(t *testing.T) {
 	expectedBin := filepath.Join(vars["Prefix"], "bin", "envoy")
 	if len(uninstallBins.Paths) != 1 || uninstallBins.Paths[0] != expectedBin {
 		t.Fatalf("expected bin %q, got %v", expectedBin, uninstallBins.Paths)
+	}
+}
+
+func mustPortAllocatorForTest() *PortAllocator {
+	pa, err := NewPortAllocator(10000, 10100)
+	if err != nil {
+		panic(err)
+	}
+	return pa
+}
+
+func TestRbacSpecIncludesPayloadBeforeService(t *testing.T) {
+	vars := map[string]string{
+		"Prefix":    DefaultPrefix,
+		"StateDir":  DefaultStateDir,
+		"ConfigDir": DefaultConfigDir,
+		"LogDir":    DefaultLogDir,
+		"Version":   "0.0.0",
+	}
+	sp, err := spec.Load(filepath.Join("..", "specs", "rbac_service.yaml"), vars)
+	if err != nil {
+		t.Fatalf("load spec: %v", err)
+	}
+	steps := sp.Steps
+	find := func(id string) int {
+		for i, st := range steps {
+			if st.ID == id {
+				return i
+			}
+		}
+		return -1
+	}
+	payloadIdx := find("install-rbac-binary")
+	configIdx := find("ensure-rbac-config")
+	serviceIdx := find("install-rbac-service")
+	if payloadIdx == -1 || serviceIdx == -1 || configIdx == -1 {
+		t.Fatalf("missing expected steps: payload=%d config=%d service=%d", payloadIdx, configIdx, serviceIdx)
+	}
+	if !(payloadIdx < configIdx && configIdx < serviceIdx) {
+		t.Fatalf("expected payload < config < service, got %d < %d < %d", payloadIdx, configIdx, serviceIdx)
 	}
 }

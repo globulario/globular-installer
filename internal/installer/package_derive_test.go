@@ -24,7 +24,7 @@ func TestDeriveInstallArtifacts(t *testing.T) {
 
 	expectPaths := map[string]bool{
 		"/opt/glob/bin/foo":               false,
-		"/etc/glob/app/cfg.yaml":          false,
+		"/var/glob/app/cfg.yaml":          false,
 		"/var/glob/data.txt":              false,
 		"/opt/glob/assets/a.txt":          false,
 		"/etc/systemd/system/foo.service": true,

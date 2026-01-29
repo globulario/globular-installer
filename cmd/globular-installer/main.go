@@ -55,6 +55,7 @@ func runCommand(prog, cmd string, args []string) int {
 	stagingDir := fs.String("staging-dir", "", "staging directory for binaries")
 	specPath := fs.String("spec", "", "path to YAML/JSON install spec")
 	specInline := fs.String("spec-inline", "", "inline spec content (YAML/JSON)")
+	portRange := fs.String("port-range", "10000-11000", "service port range (start-end)")
 	dryRun := fs.Bool("dry-run", false, "perform a dry run")
 	purge := fs.Bool("purge", false, "remove config/state dirs when uninstalling")
 	nonInteractive := fs.Bool("non-interactive", false, "run without prompts")
@@ -77,19 +78,20 @@ func runCommand(prog, cmd string, args []string) int {
 	remaining := fs.Args()
 
 	opts := installer.Options{
-		Version:        *version,
-		Prefix:         *prefix,
-		StateDir:       *stateDir,
-		ConfigDir:      *configDir,
-		LogDir:         *logDir,
-		FeaturesCSV:    *features,
-		StagingDir:     *stagingDir,
-		SpecPath:       *specPath,
-		SpecInline:     *specInline,
-		DryRun:         *dryRun,
-		NonInteractive: *nonInteractive,
-		Verbose:        *verbose,
-		Purge:          *purge,
+		Version:          *version,
+		Prefix:           *prefix,
+		StateDir:         *stateDir,
+		ConfigDir:        *configDir,
+		LogDir:           *logDir,
+		ServicePortRange: *portRange,
+		FeaturesCSV:      *features,
+		StagingDir:       *stagingDir,
+		SpecPath:         *specPath,
+		SpecInline:       *specInline,
+		DryRun:           *dryRun,
+		NonInteractive:   *nonInteractive,
+		Verbose:          *verbose,
+		Purge:            *purge,
 	}
 
 	// If a package path is provided as a positional argument and no spec or staging
@@ -149,6 +151,7 @@ func printCommandUsage(w io.Writer, prog, cmd string) {
 	fmt.Fprintln(w, "  --state-dir string       state directory")
 	fmt.Fprintln(w, "  --config-dir string      configuration directory")
 	fmt.Fprintln(w, "  --log-dir string         log directory")
+	fmt.Fprintln(w, "  --port-range string      service port range (start-end)")
 	fmt.Fprintln(w, "  --features string        feature list (csv or enable:prefix)")
 	fmt.Fprintln(w, "  --staging-dir string     staging directory with bin/ artifacts")
 	fmt.Fprintln(w, "  --spec string            path to YAML/JSON install spec")

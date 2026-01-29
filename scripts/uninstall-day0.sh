@@ -29,6 +29,12 @@ detect_uninstall_cmd() {
 
 UNINSTALL_MODE="$(detect_uninstall_cmd)"
 TOLERATE_NOT_INSTALLED="${TOLERATE_NOT_INSTALLED:-1}"
+UNINSTALL_TIMEOUT="${UNINSTALL_TIMEOUT:-120}"
+TIMEOUT_BIN="${TIMEOUT_BIN:-$(command -v timeout || true)}"
+log "timeout command: ${TIMEOUT_BIN:-<none>}"
+if [[ -z "$TIMEOUT_BIN" ]]; then
+  die "timeout command not found; install coreutils (timeout) or set TIMEOUT_BIN"
+fi
 FAILED=0
 
 log "Using installer: $INSTALLER_BIN"
@@ -118,8 +124,16 @@ run_uninstall() {
 
   set +e
   case "$UNINSTALL_MODE" in
-    uninstall_flag)     try_cmd "$INSTALLER_BIN" uninstall --package "$pkgfile" ;;
-    uninstall_arg)      try_cmd "$INSTALLER_BIN" uninstall "$pkgfile" ;;
+    uninstall_flag)
+      if [[ -n "$TIMEOUT_BIN" ]]; then
+        try_cmd "$TIMEOUT_BIN" "$UNINSTALL_TIMEOUT" "$INSTALLER_BIN" --non-interactive uninstall --package "$pkgfile"
+      else
+        try_cmd "$INSTALLER_BIN" --non-interactive uninstall --package "$pkgfile"
+      fi
+      ;;
+    uninstall_arg)
+      try_cmd "$TIMEOUT_BIN" "$UNINSTALL_TIMEOUT" "$INSTALLER_BIN" --non-interactive uninstall "$pkgfile"
+      ;;
     *) out="Unknown uninstall mode: $UNINSTALL_MODE"; rc=2 ;;
   esac
   set -e
@@ -160,6 +174,19 @@ REMOVE_ORDER=(
   "service.log_0.0.1_linux_amd64.tgz"
   "service.event_0.0.1_linux_amd64.tgz"
 
+  "service.blog_0.0.1_linux_amd64.tgz"
+  "service.catalog_0.0.1_linux_amd64.tgz"
+  "service.conversation_0.0.1_linux_amd64.tgz"
+  "service.echo_0.0.1_linux_amd64.tgz"
+  "service.media_0.0.1_linux_amd64.tgz"
+  "service.monitoring_0.0.1_linux_amd64.tgz"
+  "service.persistence_0.0.1_linux_amd64.tgz"
+  "service.search_0.0.1_linux_amd64.tgz"
+  "service.sql_0.0.1_linux_amd64.tgz"
+  "service.storage_0.0.1_linux_amd64.tgz"
+  "service.title_0.0.1_linux_amd64.tgz"
+  "service.torrent_0.0.1_linux_amd64.tgz"
+
   "service.dns_0.0.1_linux_amd64.tgz"
   "service.repository_0.0.1_linux_amd64.tgz"
   "service.discovery_0.0.1_linux_amd64.tgz"
@@ -167,13 +194,16 @@ REMOVE_ORDER=(
   "service.rbac_0.0.1_linux_amd64.tgz"
   "service.resource_0.0.1_linux_amd64.tgz"
 
+  "service.globular-cli-cmd_0.0.1_linux_amd64.tgz"
+  "service.mc-cmd_0.0.1_linux_amd64.tgz"
+
   "service.cluster-controller_0.0.1_linux_amd64.tgz"
   "service.node-agent_0.0.1_linux_amd64.tgz"
   "service.gateway_0.0.1_linux_amd64.tgz"
   "service.xds_0.0.1_linux_amd64.tgz"
   "service.envoy_1.35.3_linux_amd64.tgz"
   "service.minio_0.0.1_linux_amd64.tgz"
-  "service.etcd_3.5.13_linux_amd64.tgz"
+  "service.etcd_3.5.14_linux_amd64.tgz"
 )
 
 for f in "${REMOVE_ORDER[@]}"; do
@@ -182,6 +212,7 @@ for f in "${REMOVE_ORDER[@]}"; do
     log "Skipping (not found): $f"
     continue
   fi
+  log "Uninstalling package: $f"
   run_uninstall "$pkg_path"
 done
 
