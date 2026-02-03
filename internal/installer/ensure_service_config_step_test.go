@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/globulario/globular-installer/internal/platform"
@@ -128,6 +129,111 @@ func TestEnsureServiceConfig_CheckOKWhenInRange(t *testing.T) {
 	}
 }
 
+func TestEnsureServiceConfig_CheckDescribeFailureIsOK(t *testing.T) {
+	root := t.TempDir()
+	bin := makeFailBinaryEsc(t, root, 2)
+	ctx := &Context{
+		Prefix:    root,
+		ConfigDir: root,
+		Ports:     mustPortAllocator(t, 55000, 55010),
+	}
+	step := &EnsureServiceConfigStep{Exec: bin}
+	status, err := step.Check(ctx)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if status != StatusOK {
+		t.Fatalf("expected ok, got %v", status)
+	}
+}
+
+func TestEnsureServiceConfig_ApplyKeepsExistingInRange(t *testing.T) {
+	root := t.TempDir()
+	bin := makeFakeDescribeBinary(t, root, "svc-keep", "localhost:20000")
+	cfg := filepath.Join(root, "svc-keep.json")
+	writeJSONConfig(t, cfg, map[string]any{
+		"Address": "localhost:55003",
+		"Port":    55003,
+		"Foo":     "bar",
+	})
+	fp := &configPlatform{}
+	ctx := &Context{
+		Prefix:    root,
+		ConfigDir: root,
+		Ports:     mustPortAllocator(t, 55000, 55010),
+		Platform:  fp,
+	}
+	step := &EnsureServiceConfigStep{Exec: bin, RewriteIfOutOfRange: true}
+	if err := step.Apply(ctx); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	data, _ := os.ReadFile(cfg)
+	var out map[string]any
+	json.Unmarshal(data, &out)
+	if out["Foo"] != "bar" || int(out["Port"].(float64)) != 55003 {
+		t.Fatalf("config was modified unexpectedly: %v", out)
+	}
+	if len(fp.files) != 0 {
+		t.Fatalf("expected no writes, got %d", len(fp.files))
+	}
+}
+
+func TestEnsureServiceConfig_ApplyRewritesOnlyAddressPort(t *testing.T) {
+	root := t.TempDir()
+	bin := makeFakeDescribeBinary(t, root, "svc-fix", "localhost:20000")
+	cfg := filepath.Join(root, "svc-fix.json")
+	writeJSONConfig(t, cfg, map[string]any{
+		"Address": "localhost:9999",
+		"Port":    9999,
+		"Foo":     "bar",
+		"Bar":     123,
+	})
+	fp := &configPlatform{}
+	ctx := &Context{
+		Prefix:    root,
+		ConfigDir: root,
+		Ports:     mustPortAllocator(t, 10000, 10100),
+		Platform:  fp,
+	}
+	step := &EnsureServiceConfigStep{Exec: bin, RewriteIfOutOfRange: true, AddressHost: "localhost"}
+	if err := step.Apply(ctx); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if len(fp.files) != 1 {
+		t.Fatalf("expected one write")
+	}
+	var out map[string]any
+	json.Unmarshal(fp.files[0].Data, &out)
+	if out["Foo"] != "bar" || int(out["Bar"].(float64)) != 123 {
+		t.Fatalf("unexpected field changes: %v", out)
+	}
+	port := int(out["Port"].(float64))
+	if port < 10000 || port > 10100 || out["Address"] == "localhost:9999" {
+		t.Fatalf("port not rewritten: %v", out)
+	}
+}
+
+func TestEnsureServiceConfig_ApplyDescribeFailureNoConfigDoesNothing(t *testing.T) {
+	root := t.TempDir()
+	bin := makeFailBinaryEsc(t, root, 2)
+	ctx := &Context{
+		Prefix:    root,
+		ConfigDir: root,
+		Ports:     mustPortAllocator(t, 10000, 10100),
+		Platform:  &configPlatform{},
+	}
+	step := &EnsureServiceConfigStep{Exec: bin}
+	if err := step.Apply(ctx); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	entries, _ := os.ReadDir(root)
+	for _, e := range entries {
+		if e.Name() != "fail.sh" {
+			t.Fatalf("unexpected file created: %s", e.Name())
+		}
+	}
+}
+
 // Helpers
 
 func makeFakeDescribeBinary(t *testing.T, dir, id, addr string) string {
@@ -175,3 +281,13 @@ func (p *configPlatform) InstallFiles(ctx context.Context, files []platform.File
 	return nil
 }
 func (p *configPlatform) ServiceManager() platform.ServiceManager { return nil }
+
+func makeFailBinaryEsc(t *testing.T, dir string, exitCode int) string {
+	t.Helper()
+	path := filepath.Join(dir, "fail.sh")
+	content := "#!/bin/sh\nexit " + strconv.Itoa(exitCode) + "\n"
+	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
+		t.Fatalf("write fail bin: %v", err)
+	}
+	return path
+}

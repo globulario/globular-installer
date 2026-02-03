@@ -179,7 +179,10 @@ func startTimeEnsureFreePort(ctx *Context, unit string, binName string) error {
 
 	id, err := describeServiceID(binPath)
 	if err != nil {
-		return fmt.Errorf("describe %s for %s: %w", binPath, unit, err)
+		if ctx.Logger != nil {
+			ctx.Logger.Infof("start: describe failed for %s; skipping port preflight for %s: %v", binPath, unit, err)
+		}
+		return nil
 	}
 
 	cfgPath := filepath.Join(ctx.ConfigDir, id+".json")

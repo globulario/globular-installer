@@ -74,6 +74,24 @@ func TestStartServicesStepAutoHealsPortClash(t *testing.T) {
 	}
 }
 
+func TestStartTimeEnsureFreePortDescribeFailureIsBestEffort(t *testing.T) {
+	tmp := t.TempDir()
+	binDir := filepath.Join(tmp, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	failBin := makeFailBinary(t, binDir, 2)
+	ctx := &Context{
+		Prefix:    tmp,
+		ConfigDir: tmp,
+		Platform:  &startFakePlatform{sm: &startFakeServiceManager{}},
+		Ports:     mustPortAllocator(t, 10000, 10010),
+	}
+	if err := startTimeEnsureFreePort(ctx, "globular-fail.service", filepath.Base(failBin)); err != nil {
+		t.Fatalf("expected nil, got %v", err)
+	}
+}
+
 func TestStartServicesStepDryRunNoRestartWhenActive(t *testing.T) {
 	mgr := &startFakeServiceManager{
 		active: map[string]bool{"svc.service": true},
@@ -152,3 +170,13 @@ func (p *startFakePlatform) InstallFiles(ctx context.Context, files []platform.F
 	return nil
 }
 func (p *startFakePlatform) ServiceManager() platform.ServiceManager { return p.sm }
+
+func makeFailBinary(t *testing.T, dir string, exitCode int) string {
+	t.Helper()
+	path := filepath.Join(dir, "fail.sh")
+	content := "#!/bin/sh\nexit " + strconv.Itoa(exitCode) + "\n"
+	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
+		t.Fatalf("write fail bin: %v", err)
+	}
+	return path
+}
