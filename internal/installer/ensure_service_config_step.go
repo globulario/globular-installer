@@ -3,6 +3,7 @@ package installer
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net"
@@ -174,10 +175,7 @@ func (s *EnsureServiceConfigStep) Apply(ctx *Context) error {
 		return nil
 	}
 
-	host := s.AddressHost
-	if host == "" {
-		host = "localhost"
-	}
+	host := resolveAddressHost(s.AddressHost)
 	desc["Address"] = fmt.Sprintf("%s:%d", host, port)
 	desc["Port"] = port
 	if s.Domain != "" {
@@ -248,7 +246,19 @@ func (s *EnsureServiceConfigStep) writeConfig(ctx *Context, cfgPath string, data
 	return nil
 }
 
-func portOKInRange(cfg map[string]any, pa *PortAllocator) bool {
+// infraReservedPorts lists ports that must not be allocated to services (e.g., Scylla).
+var infraReservedPorts = map[int]string{
+	10000: "scylla-admin",
+	9042:  "scylla-cql",
+	9142:  "scylla-cql-tls",
+	19042: "scylla-alt",
+}
+
+// portIsValid checks if a port in the config is acceptable:
+// - Must be within the allocator's range
+// - Must not be in infraReservedPorts
+// - Must not be currently in use (checked via TCP bind test)
+func portIsValid(cfg map[string]any, pa *PortAllocator) bool {
 	if pa == nil {
 		return true
 	}
@@ -257,8 +267,65 @@ func portOKInRange(cfg map[string]any, pa *PortAllocator) bool {
 	if err != nil || port == 0 {
 		return false
 	}
+
+	// Check 1: Port out of range
 	start, end := pa.Range()
-	return port >= start && port <= end
+	if port < start || port > end {
+		return false
+	}
+
+	// Check 2: Port in reserved list
+	if _, reserved := infraReservedPorts[port]; reserved {
+		return false
+	}
+
+	// Check 3: Port in use (TCP bind test)
+	if !portFree(port) {
+		return false
+	}
+
+	return true
+}
+
+// portFree checks if a port is available by attempting to bind on both IPv4 and IPv6.
+func portFree(port int) bool {
+	// Try IPv4
+	addr4 := fmt.Sprintf("0.0.0.0:%d", port)
+	if ln, err := net.Listen("tcp", addr4); err != nil {
+		if isAddrInUse(err) {
+			return false
+		}
+	} else {
+		ln.Close()
+	}
+
+	// Try IPv6
+	addr6 := fmt.Sprintf("[::]:%d", port)
+	if ln, err := net.Listen("tcp", addr6); err != nil {
+		if isAddrInUse(err) {
+			return false
+		}
+	} else {
+		ln.Close()
+	}
+
+	return true
+}
+
+// isAddrInUse detects "address already in use" errors.
+func isAddrInUse(err error) bool {
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		if strings.Contains(strings.ToLower(opErr.Err.Error()), "address already in use") {
+			return true
+		}
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "address already in use")
+}
+
+// Compatibility alias - old name
+func portOKInRange(cfg map[string]any, pa *PortAllocator) bool {
+	return portIsValid(cfg, pa)
 }
 
 func extractValidCandidate(desc map[string]any, start, end int) int {
@@ -285,6 +352,67 @@ func extractValidCandidate(desc map[string]any, start, end int) int {
 	return 0
 }
 
+// detectPrimaryIP returns the primary non-loopback IPv4 address of this node.
+func detectPrimaryIP() (string, error) {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return "", err
+	}
+
+	for _, iface := range ifaces {
+		// Skip loopback and down interfaces
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+
+		for _, addr := range addrs {
+			var ip net.IP
+			switch v := addr.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+
+			// Return first non-loopback IPv4
+			if ip != nil && ip.To4() != nil && !ip.IsLoopback() {
+				return ip.String(), nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("no primary IP found")
+}
+
+// resolveAddressHost resolves the address host value, handling "auto" detection.
+// If host is "auto", it detects the primary network interface IP.
+// If host is empty or any other value, it returns as-is or defaults to localhost.
+func resolveAddressHost(host string) string {
+	host = strings.TrimSpace(host)
+
+	// Handle "auto" - detect primary IP
+	if host == "auto" {
+		if ip, err := detectPrimaryIP(); err == nil {
+			return ip
+		}
+		// Fallback to localhost if detection fails
+		return "127.0.0.1"
+	}
+
+	// If empty, default to localhost
+	if host == "" {
+		return "localhost"
+	}
+
+	// Otherwise use as-is
+	return host
+}
+
 func hostFromAddress(addrVal any, fallback string) string {
 	addr, _ := addrVal.(string)
 	if h, _, err := net.SplitHostPort(strings.TrimSpace(addr)); err == nil && h != "" {
@@ -293,10 +421,8 @@ func hostFromAddress(addrVal any, fallback string) string {
 	if idx := strings.LastIndex(addr, ":"); idx > 0 {
 		return addr[:idx]
 	}
-	if fallback != "" {
-		return fallback
-	}
-	return "localhost"
+	// Resolve fallback to handle "auto"
+	return resolveAddressHost(fallback)
 }
 
 func parsePort(address string) (int, error) {

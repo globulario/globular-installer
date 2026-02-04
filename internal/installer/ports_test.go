@@ -47,3 +47,16 @@ func TestPortAllocatorReservesUniqueAndSkipsInUse(t *testing.T) {
 		t.Fatalf("expected exhaustion error, got none")
 	}
 }
+
+func TestPortInUseDetectsWildcardListeners(t *testing.T) {
+	ln, err := net.Listen("tcp", "0.0.0.0:0")
+	if err != nil {
+		t.Skipf("could not bind wildcard: %v", err)
+	}
+	defer ln.Close()
+	port := ln.Addr().(*net.TCPAddr).Port
+
+	if !portInUse(port) {
+		t.Fatalf("expected portInUse to detect wildcard listener on port %d", port)
+	}
+}

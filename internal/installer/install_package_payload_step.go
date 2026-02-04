@@ -207,6 +207,74 @@ func (s *InstallPackagePayloadStep) Apply(ctx *Context) error {
 		if err := binStep.Apply(ctx); err != nil {
 			return fmt.Errorf("install binaries: %w", err)
 		}
+
+		// Canonicalize mc: ensure /usr/lib/globular/bin/mc exists and mc_cmd is removed
+		// This handles legacy packages that may have installed mc_cmd
+		if manifest.Name == "mc-cmd" {
+			binDir := filepath.Join(prefix, "bin")
+			legacy := filepath.Join(binDir, "mc_cmd")
+			canonical := filepath.Join(binDir, "mc")
+
+			legacyInfo, legacyErr := os.Stat(legacy)
+			canonicalInfo, canonicalErr := os.Stat(canonical)
+
+			legacyExists := legacyErr == nil && legacyInfo.Mode().IsRegular()
+			canonicalExists := canonicalErr == nil && canonicalInfo.Mode().IsRegular()
+
+			switch {
+			case legacyExists && !canonicalExists:
+				// Rename mc_cmd -> mc
+				if err := os.Rename(legacy, canonical); err != nil {
+					return fmt.Errorf("rename mc_cmd to mc: %w", err)
+				}
+			case legacyExists && canonicalExists:
+				// Both exist, remove mc_cmd
+				if err := os.Remove(legacy); err != nil {
+					return fmt.Errorf("remove legacy mc_cmd: %w", err)
+				}
+			}
+
+			// Ensure mc is executable
+			if _, err := os.Stat(canonical); err == nil {
+				if err := os.Chmod(canonical, 0755); err != nil {
+					return fmt.Errorf("chmod mc: %w", err)
+				}
+			}
+		}
+
+		// Canonicalize globularcli: ensure /usr/lib/globular/bin/globularcli exists and globular_cli_cmd is removed
+		// This handles legacy packages that may have installed globular_cli_cmd
+		if manifest.Name == "globular-cli-cmd" {
+			binDir := filepath.Join(prefix, "bin")
+			legacy := filepath.Join(binDir, "globular_cli_cmd")
+			canonical := filepath.Join(binDir, "globularcli")
+
+			legacyInfo, legacyErr := os.Stat(legacy)
+			canonicalInfo, canonicalErr := os.Stat(canonical)
+
+			legacyExists := legacyErr == nil && legacyInfo.Mode().IsRegular()
+			canonicalExists := canonicalErr == nil && canonicalInfo.Mode().IsRegular()
+
+			switch {
+			case legacyExists && !canonicalExists:
+				// Rename globular_cli_cmd -> globularcli
+				if err := os.Rename(legacy, canonical); err != nil {
+					return fmt.Errorf("rename globular_cli_cmd to globularcli: %w", err)
+				}
+			case legacyExists && canonicalExists:
+				// Both exist, remove globular_cli_cmd
+				if err := os.Remove(legacy); err != nil {
+					return fmt.Errorf("remove legacy globular_cli_cmd: %w", err)
+				}
+			}
+
+			// Ensure globularcli is executable
+			if _, err := os.Stat(canonical); err == nil {
+				if err := os.Chmod(canonical, 0755); err != nil {
+					return fmt.Errorf("chmod globularcli: %w", err)
+				}
+			}
+		}
 	}
 
 	if s.InstallSystemd {

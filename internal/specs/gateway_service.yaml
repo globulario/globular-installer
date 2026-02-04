@@ -32,6 +32,14 @@ steps:
   - id: install-gateway-bin
     type: install_binaries
 
+  # Install packaged payload (binary + config) produced by build.sh
+  - id: install-gateway-payload
+    type: install_package_payload
+    install_bins: true
+    install_config: true
+    install_spec: false
+    install_systemd: false
+
   - id: install-gateway-service
     type: install_services
     units:

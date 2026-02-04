@@ -1,7 +1,6 @@
 package installer
 
 import (
-	"errors"
 	"fmt"
 	"net"
 	"sort"
@@ -83,19 +82,30 @@ func (p *PortAllocator) SortedPorts() []int {
 }
 
 func portInUse(port int) bool {
-	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	l, err := net.Listen("tcp", addr)
+	// Prefer wildcard bind to catch listeners on any interface.
+	addr4 := fmt.Sprintf("0.0.0.0:%d", port)
+	l4, err := net.Listen("tcp", addr4)
 	if err != nil {
-		if errors.Is(err, net.ErrClosed) {
-			return true
-		}
 		if strings.Contains(strings.ToLower(err.Error()), "address already in use") {
 			return true
 		}
-		// For other errors (e.g., permission), assume free so installer can progress;
-		// the service start will still fail if the port is actually unusable.
+	} else {
+		_ = l4.Close()
 		return false
 	}
-	_ = l.Close()
+
+	// Optional IPv6 wildcard; ignore platforms without IPv6 support.
+	addr6 := fmt.Sprintf("[::]:%d", port)
+	l6, err := net.Listen("tcp", addr6)
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "address already in use") {
+			return true
+		}
+	} else {
+		_ = l6.Close()
+		return false
+	}
+
+	// If no listener claimed the port, assume free.
 	return false
 }

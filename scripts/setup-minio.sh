@@ -16,16 +16,21 @@ DOMAIN="${GLOBULAR_DOMAIN:-${DOMAIN:-localhost}}"
 # MinIO client binary location (try installed location first, then PATH)
 PREFIX="${PREFIX:-/usr/lib/globular}"
 # Resolve mc in priority order:
-# 1) PREFIX/bin (installed path)
-# 2) packages/bin (dev path alongside this repo)
-# 3) PATH
+# 1) PREFIX/bin/mc (canonical Globular install path)
+# 2) /usr/local/bin/mc (wrapper installed by mc-cmd package)
+# 3) PATH (best-effort)
+# 4) dev path (only if explicitly present AND requested)
 MC_BIN=""
+
 if [[ -x "${PREFIX}/bin/mc" ]]; then
     MC_BIN="${PREFIX}/bin/mc"
-elif [[ -x "${INSTALLER_ROOT}/../packages/bin/mc" ]]; then
-    MC_BIN="${INSTALLER_ROOT}/../packages/bin/mc"
+elif [[ -x "/usr/local/bin/mc" ]]; then
+    MC_BIN="/usr/local/bin/mc"
 elif command -v mc >/dev/null 2>&1; then
     MC_BIN="$(command -v mc)"
+elif [[ -x "${INSTALLER_ROOT}/../packages/bin/mc" ]]; then
+    # dev fallback; avoid relying on this in production installs
+    MC_BIN="${INSTALLER_ROOT}/../packages/bin/mc"
 fi
 
 MAX_RETRIES=30
