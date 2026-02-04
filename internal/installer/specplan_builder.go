@@ -199,6 +199,21 @@ func buildStep(ctx *Context, ss spec.StepSpec) (Step, error) {
 			return nil, fmt.Errorf("ensure_service_config step %q missing exec", ss.ID)
 		}
 		return step, nil
+	case "ensure_hosts_block":
+		step := NewEnsureHostsBlockStep()
+		step.HostsPath = getStringParam(ss.Params, "hosts_path", "/etc/hosts")
+		step.ClusterDomain = getStringParam(ss.Params, "cluster_domain", "")
+		step.NodeName = getStringParam(ss.Params, "node_name", "")
+		step.AdvertiseIP = getStringParam(ss.Params, "advertise_ip", "")
+		step.ControllerIP = getStringParam(ss.Params, "controller_ip", "")
+		step.GatewayIP = getStringParam(ss.Params, "gateway_ip", "")
+		step.Enabled = getBoolParam(ss.Params, "enabled", true)
+		return step, nil
+	case "remove_hosts_block":
+		step := NewRemoveHostsBlockStep()
+		step.HostsPath = getStringParam(ss.Params, "hosts_path", "/etc/hosts")
+		step.ClusterDomain = getStringParam(ss.Params, "cluster_domain", "")
+		return step, nil
 	case "noop":
 		name := ss.ID
 		if name == "" {
