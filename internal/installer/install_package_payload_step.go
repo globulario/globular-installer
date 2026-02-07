@@ -64,13 +64,14 @@ func (s *InstallPackagePayloadStep) Check(ctx *Context) (StepStatus, error) {
 	needsApply := false
 
 	if s.InstallBins {
-		dstBin := filepath.Join(prefix, filepath.Clean(manifest.Entrypoint))
-		if _, err := os.Stat(dstBin); err != nil {
-			if os.IsNotExist(err) {
-				needsApply = true
-			} else {
-				return StatusUnknown, err
-			}
+		// Check if binaries need installation/update by delegating to InstallBinariesStep
+		binStep := &InstallBinariesStep{}
+		status, err := binStep.Check(ctx)
+		if err != nil {
+			return StatusUnknown, err
+		}
+		if status == StatusNeedsApply {
+			needsApply = true
 		}
 	}
 

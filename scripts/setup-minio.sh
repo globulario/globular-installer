@@ -1,228 +1,286 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# MinIO Setup Script for Globular Installer
-# Uses the MinIO contract + credentials file to provision the single bucket with domain-scoped prefixes.
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INSTALLER_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-ASSETS_WEBROOT="$INSTALLER_ROOT/internal/assets/webroot"
-
-CONTRACT_FILE="/var/lib/globular/objectstore/minio.json"
-CRED_FILE="/var/lib/globular/minio/credentials"
-MC_CONFIG_DIR="/var/lib/globular/minio/mc"
+STATE_DIR="${STATE_DIR:-/var/lib/globular}"
+CONTRACT_DIR="${STATE_DIR}/objectstore"
+CONTRACT_FILE="${GLOBULAR_MINIO_CONTRACT_PATH:-${CONTRACT_DIR}/minio.json}"
+WEBROOT_DIR="${WEBROOT_DIR:-${STATE_DIR}/webroot}"
 DOMAIN="${GLOBULAR_DOMAIN:-${DOMAIN:-localhost}}"
 
-# MinIO client binary location (try installed location first, then PATH)
-PREFIX="${PREFIX:-/usr/lib/globular}"
-# Resolve mc in priority order:
-# 1) PREFIX/bin/mc (canonical Globular install path)
-# 2) /usr/local/bin/mc (wrapper installed by mc-cmd package)
-# 3) PATH (best-effort)
-# 4) dev path (only if explicitly present AND requested)
-MC_BIN=""
-
-if [[ -x "${PREFIX}/bin/mc" ]]; then
-    MC_BIN="${PREFIX}/bin/mc"
-elif [[ -x "/usr/local/bin/mc" ]]; then
-    MC_BIN="/usr/local/bin/mc"
-elif command -v mc >/dev/null 2>&1; then
-    MC_BIN="$(command -v mc)"
-elif [[ -x "${INSTALLER_ROOT}/../packages/bin/mc" ]]; then
-    # dev fallback; avoid relying on this in production installs
-    MC_BIN="${INSTALLER_ROOT}/../packages/bin/mc"
+if [[ ! -f "${CONTRACT_FILE}" ]]; then
+  echo "ERROR: Missing MinIO contract at ${CONTRACT_FILE}; run setup-minio-contract.sh after the package installs the directories." >&2
+  exit 1
 fi
 
-MAX_RETRIES=30
-RETRY_DELAY=2
+# Create webroot directory if it doesn't exist
+if [[ ! -d "${WEBROOT_DIR}" ]]; then
+  echo "[setup-minio] Creating ${WEBROOT_DIR}..."
+  mkdir -p "${WEBROOT_DIR}"
+fi
 
-log() { echo "[minio-setup] $*"; }
-die() { echo "[minio-setup] ERROR: $*" >&2; exit 1; }
+# Check if webroot has content
+if [[ -z "$(find "${WEBROOT_DIR}" -type f -mindepth 1 -print -quit 2>/dev/null)" ]]; then
+  echo "[setup-minio] WEBROOT_DIR (${WEBROOT_DIR}) is empty - skipping asset upload."
+  echo "[setup-minio] Add web assets (index.html, logo.png, etc.) to seed MinIO with content."
+  exit 0
+fi
 
-require_file() {
-    local path="$1" description="$2"
-    if [[ ! -f "$path" ]]; then
-        die "$description not found: $path"
-    fi
+# Warn about missing recommended assets (non-fatal for testing)
+for recommended in index.html logo.png; do
+  if [[ ! -f "${WEBROOT_DIR}/${recommended}" ]]; then
+    echo "[setup-minio] WARNING: Recommended asset ${WEBROOT_DIR}/${recommended} not found." >&2
+  fi
+done
+
+eval "$(
+  STATE_DIR="${STATE_DIR}" CONTRACT_FILE="${CONTRACT_FILE}" DOMAIN="${DOMAIN}" GLOBULAR_DOMAIN="${DOMAIN}" python3 - <<'PY'
+import json
+import os
+import shlex
+import sys
+from pathlib import Path
+
+contract_file = Path(os.environ["CONTRACT_FILE"])
+state_dir = os.environ["STATE_DIR"]
+
+if not contract_file.exists():
+    print(f"echo \"ERROR: Contract file not found at {contract_file}\" >&2")
+    print("exit 1")
+    sys.exit(0)
+
+default_domain = (
+    os.environ.get("GLOBULAR_DOMAIN")
+    or os.environ.get("DOMAIN")
+    or "localhost"
+)
+
+defaults = {
+    "type": "minio",
+    "endpoint": "127.0.0.1:9000",
+    "bucket": "globular",
+    "prefix": default_domain,
+    "secure": False,
+    "caBundlePath": "",
 }
 
-parse_contract_with_jq() {
-    local key="$1"
-    jq -r "$key // empty" "$CONTRACT_FILE" 2>/dev/null || true
+try:
+    with contract_file.open() as fh:
+        data = json.load(fh)
+except json.JSONDecodeError as exc:
+    print(f"echo \"ERROR: Invalid JSON in {contract_file}: {exc}\" >&2")
+    print("exit 1")
+    sys.exit(0)
+
+def pick(key: str, *env_keys: str):
+    for env_key in env_keys:
+        if env_key in os.environ:
+            val = os.environ[env_key]
+            if key == "secure":
+                return str(val).lower() in ("1", "true", "yes", "y", "on")
+            return val
+    if key in data:
+        return data[key]
+    return defaults[key]
+
+auth = data.get("auth", {})
+cred_file = os.environ.get(
+    "GLOBULAR_MINIO_CRED_FILE",
+    os.environ.get("MINIO_CRED_FILE", auth.get("credFile", os.path.join(state_dir, "minio", "credentials"))),
+)
+ca_bundle = pick("caBundlePath", "GLOBULAR_MINIO_CA_BUNDLE")
+if isinstance(ca_bundle, bool):
+    ca_bundle = "" if not ca_bundle else str(ca_bundle)
+if ca_bundle is None:
+    ca_bundle = ""
+
+values = {
+    "CONTRACT_ENDPOINT": pick("endpoint", "GLOBULAR_MINIO_ENDPOINT", "MINIO_ENDPOINT"),
+    "CONTRACT_BUCKET": pick("bucket", "GLOBULAR_MINIO_BUCKET", "MINIO_BUCKET"),
+    "CONTRACT_PREFIX": pick("prefix", "GLOBULAR_MINIO_PREFIX", "MINIO_PREFIX", "GLOBULAR_DOMAIN", "DOMAIN"),
+    "CONTRACT_SECURE": str(pick("secure", "GLOBULAR_MINIO_SECURE", "MINIO_SECURE")).lower(),
+    "CONTRACT_CA_BUNDLE": ca_bundle,
+    "CONTRACT_CRED_FILE": cred_file,
 }
 
-load_contract() {
-    require_file "$CONTRACT_FILE" "Contract file"
-    if ! command -v jq >/dev/null 2>&1; then
-        die "jq is required to read contract file $CONTRACT_FILE"
-    fi
+for key, value in values.items():
+    print(f"{key}={shlex.quote(str(value))}")
+PY
+)"
 
-    local bucket secure
-    bucket="$(parse_contract_with_jq '.bucket')"
-    secure="$(parse_contract_with_jq '.secure')"
+if [[ ! -f "${CONTRACT_CRED_FILE}" ]]; then
+  echo "ERROR: Credential file referenced by contract is missing: ${CONTRACT_CRED_FILE}" >&2
+  exit 1
+fi
 
-    MINIO_ENDPOINT="127.0.0.1:9000"
-    MINIO_BUCKET="${bucket:-${MINIO_BUCKET:-globular}}"
-    MINIO_SECURE="${secure:-${MINIO_SECURE:-false}}"
+if ! IFS=":" read -r MINIO_ACCESS_KEY MINIO_SECRET_KEY < "${CONTRACT_CRED_FILE}"; then
+  echo "ERROR: Unable to read credentials from ${CONTRACT_CRED_FILE} (expected 'access:secret' format)." >&2
+  exit 1
+fi
 
-    if [[ -z "$MINIO_BUCKET" ]]; then
-        die "Contract did not provide bucket (contract: $CONTRACT_FILE)"
-    fi
+if [[ -z "${MINIO_ACCESS_KEY}" || -z "${MINIO_SECRET_KEY}" ]]; then
+  echo "ERROR: Empty credentials in ${CONTRACT_CRED_FILE}." >&2
+  exit 1
+fi
+
+has_boto3() {
+  python3 - <<'PY' >/dev/null 2>&1
+import importlib.util
+import sys
+sys.exit(0 if importlib.util.find_spec("boto3") else 1)
+PY
 }
 
-wait_for_minio() {
-    local host port retries=0
-    host="${MINIO_ENDPOINT%%:*}"
-    port="${MINIO_ENDPOINT##*:}"
+prefix_base="${CONTRACT_PREFIX:-${DOMAIN}}"
+prefix_path="${prefix_base%/}/"
 
-    log "Waiting for MinIO to be ready at $MINIO_ENDPOINT..."
-    while [[ $retries -lt $MAX_RETRIES ]]; do
-        if nc -z -w2 "$host" "$port" 2>/dev/null; then
-            if curl -sf "http://${host}:${port}/minio/health/ready" >/dev/null 2>&1; then
-                log "MinIO health endpoint is responding"
+provision_with_mc() {
+  local alias="globular-minio"
+  local scheme="http"
+  [[ "${CONTRACT_SECURE}" == "true" ]] && scheme="https"
+  local endpoint_url="${scheme}://${CONTRACT_ENDPOINT}"
 
-                # Wait for IAM subsystem to initialize
-                local iam_retries=0
-                while [[ $iam_retries -lt 15 ]]; do
-                    if run_mc ls local 2>&1 | grep -qv "IAM sub-system not initialized"; then
-                        log "MinIO IAM subsystem is ready"
-                        return 0
-                    fi
-                    iam_retries=$((iam_retries + 1))
-                    log "Waiting for MinIO IAM subsystem... (attempt $iam_retries/15)"
-                    sleep 2
-                done
+  mc alias rm "${alias}" >/dev/null 2>&1 || true
+  mc alias set "${alias}" "${endpoint_url}" "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}" --api s3v4 >/dev/null
 
-                log "MinIO is healthy"
-                return 0
-            fi
-        fi
-        retries=$((retries + 1))
-        log "MinIO not ready yet (attempt $retries/$MAX_RETRIES)..."
-        sleep $RETRY_DELAY
-    done
+  if ! mc ls "${alias}/${CONTRACT_BUCKET}" >/dev/null 2>&1; then
+    mc mb "${alias}/${CONTRACT_BUCKET}"
+  fi
 
-    die "MinIO did not become ready after $MAX_RETRIES attempts"
+  local dest="${alias}/${CONTRACT_BUCKET}/${prefix_path}webroot/"
+  mc mirror --overwrite "${WEBROOT_DIR}/" "${dest}" >/dev/null
+
+  printf 'keep\n' | mc pipe "${alias}/${CONTRACT_BUCKET}/${prefix_path}webroot/.keep" >/dev/null
+  printf 'keep\n' | mc pipe "${alias}/${CONTRACT_BUCKET}/${prefix_path}users/.keep" >/dev/null
+
+  mc stat "${alias}/${CONTRACT_BUCKET}" >/dev/null
+  mc stat "${alias}/${CONTRACT_BUCKET}/${prefix_path}webroot/.keep" >/dev/null
+  mc stat "${alias}/${CONTRACT_BUCKET}/${prefix_path}users/.keep" >/dev/null
+  mc stat "${alias}/${CONTRACT_BUCKET}/${prefix_path}webroot/index.html" >/dev/null
 }
 
-run_mc() {
-    sudo -u globular bash -lc '
-        set -euo pipefail
-        MC_BIN="$1"; CRED_FILE="$2"; CONFIG_DIR="$3"; shift 3
-        if [[ ! -x "$MC_BIN" ]]; then
-            echo "[minio-setup] ERROR: mc binary not found or not executable: $MC_BIN" >&2
-            exit 1
-        fi
-        if [[ ! -f "$CRED_FILE" ]]; then
-            echo "[minio-setup] ERROR: credentials not found: $CRED_FILE" >&2
-            exit 1
-        fi
-        AK=$(cut -d: -f1 "$CRED_FILE")
-        SK=$(cut -d: -f2- "$CRED_FILE")
-        if [[ -z "$AK" || -z "$SK" ]]; then
-            echo "[minio-setup] ERROR: invalid credentials in $CRED_FILE" >&2
-            exit 1
-        fi
-        export MC_CONFIG_DIR="$CONFIG_DIR"
-        "$MC_BIN" alias set local "http://127.0.0.1:9000" "$AK" "$SK" --api S3v4 >/dev/null
-        "$MC_BIN" "$@"
-    ' bash "$MC_BIN" "$CRED_FILE" "$MC_CONFIG_DIR" "$@"
+provision_with_boto3() {
+  CONTRACT_ENDPOINT="${CONTRACT_ENDPOINT}" \
+  CONTRACT_BUCKET="${CONTRACT_BUCKET}" \
+  CONTRACT_PREFIX="${CONTRACT_PREFIX}" \
+  CONTRACT_SECURE="${CONTRACT_SECURE}" \
+  CONTRACT_CA_BUNDLE="${CONTRACT_CA_BUNDLE}" \
+  CONTRACT_CRED_FILE="${CONTRACT_CRED_FILE}" \
+  WEBROOT_DIR="${WEBROOT_DIR}" \
+  DOMAIN="${DOMAIN}" \
+  GLOBULAR_DOMAIN="${DOMAIN}" \
+  python3 - <<'PY'
+import mimetypes
+import os
+import sys
+from pathlib import Path
+
+try:
+    import boto3
+    from botocore import exceptions as boto_exc
+    from botocore.client import Config
+except ImportError:
+    print("ERROR: boto3 is required but not installed.", file=sys.stderr)
+    sys.exit(1)
+
+endpoint = os.environ["CONTRACT_ENDPOINT"]
+bucket = os.environ["CONTRACT_BUCKET"]
+domain = os.environ.get("DOMAIN") or os.environ.get("GLOBULAR_DOMAIN") or "localhost"
+prefix = os.environ.get("CONTRACT_PREFIX", "") or domain
+secure = os.environ.get("CONTRACT_SECURE", "false").lower() == "true"
+ca_bundle = os.environ.get("CONTRACT_CA_BUNDLE", "")
+cred_file = Path(os.environ["CONTRACT_CRED_FILE"])
+webroot_dir = Path(os.environ["WEBROOT_DIR"])
+
+if not bucket:
+    print("ERROR: Contract bucket is empty.", file=sys.stderr)
+    sys.exit(1)
+
+try:
+    creds = cred_file.read_text().strip()
+    access_key, secret_key = creds.split(":", 1)
+except (OSError, ValueError) as exc:
+    print(f"ERROR: Unable to read credentials from {cred_file}: {exc}", file=sys.stderr)
+    sys.exit(1)
+
+scheme = "https" if secure else "http"
+endpoint_url = f"{scheme}://{endpoint}"
+verify = ca_bundle if ca_bundle else secure
+
+session = boto3.session.Session()
+config = Config(signature_version="s3v4", s3={"addressing_style": "path"})
+client = session.client(
+    "s3",
+    endpoint_url=endpoint_url,
+    aws_access_key_id=access_key,
+    aws_secret_access_key=secret_key,
+    verify=verify,
+    config=config,
+)
+s3 = session.resource(
+    "s3",
+    endpoint_url=endpoint_url,
+    aws_access_key_id=access_key,
+    aws_secret_access_key=secret_key,
+    verify=verify,
+    config=config,
+)
+
+bucket_obj = s3.Bucket(bucket)
+try:
+    client.head_bucket(Bucket=bucket)
+except boto_exc.ClientError as exc:
+    code = exc.response.get("Error", {}).get("Code", "")
+    if code in ("404", "NoSuchBucket", "NotFound", "BucketNotFound"):
+        bucket_obj.create()
+    else:
+        print(f"ERROR: Failed to access bucket {bucket}: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+def object_key(subpath: Path) -> str:
+    key_parts = []
+    if prefix:
+        key_parts.append(prefix.strip("/"))
+    key_parts.extend(subpath.parts)
+    return "/".join(key_parts)
+
+for path in webroot_dir.rglob("*"):
+    if not path.is_file():
+        continue
+    rel = path.relative_to(webroot_dir)
+    key = object_key(Path("webroot") / rel)
+    content_type, _ = mimetypes.guess_type(path.as_posix())
+    extra = {"ContentType": content_type} if content_type else {}
+    bucket_obj.upload_file(path.as_posix(), key, ExtraArgs=extra)
+
+bucket_obj.put_object(Key=object_key(Path("webroot") / ".keep"), Body=b"keep", ContentType="text/plain")
+bucket_obj.put_object(Key=object_key(Path("users") / ".keep"), Body=b"keep", ContentType="text/plain")
+
+try:
+    client.head_bucket(Bucket=bucket)
+    client.head_object(Bucket=bucket, Key=object_key(Path("webroot") / ".keep"))
+    client.head_object(Bucket=bucket, Key=object_key(Path("users") / ".keep"))
+    client.head_object(Bucket=bucket, Key=object_key(Path("webroot") / "index.html"))
+except boto_exc.ClientError as exc:
+    print(f"ERROR: Post-provision verification failed: {exc}", file=sys.stderr)
+    sys.exit(1)
+PY
 }
 
-ensure_bucket() {
-    local attempts=0 max_attempts=20
-    while [[ $attempts -lt $max_attempts ]]; do
-        if run_mc ls "local/${MINIO_BUCKET}" >/dev/null 2>&1; then
-            log "Bucket '$MINIO_BUCKET' already exists"
-            return 0
-        fi
-        attempts=$((attempts + 1))
-        if out="$(run_mc mb "local/${MINIO_BUCKET}" 2>&1)"; then
-            log "Created bucket '$MINIO_BUCKET'"
-            return 0
-        fi
-        log "Bucket create attempt ${attempts}/${max_attempts} failed: $out"
-        sleep 2
-    done
-    die "Failed to create bucket $MINIO_BUCKET after ${max_attempts} attempts"
-}
+if [[ -n "${CONTRACT_CA_BUNDLE}" ]] && has_boto3; then
+  echo "[setup-minio] Using boto3 path because CONTRACT_CA_BUNDLE is set."
+  provision_with_boto3
+elif [[ -n "${CONTRACT_CA_BUNDLE}" ]]; then
+  echo "ERROR: CONTRACT_CA_BUNDLE is set but boto3 is unavailable; install boto3 to honor TLS verification." >&2
+  exit 1
+elif command -v mc >/dev/null 2>&1; then
+  echo "[setup-minio] Using mc for provisioning."
+  provision_with_mc
+elif has_boto3; then
+  echo "[setup-minio] Using boto3 fallback for provisioning."
+  provision_with_boto3
+else
+  echo "ERROR: Neither 'mc' nor 'boto3' is available. Install MinIO Client (mc) or Python boto3." >&2
+  exit 1
+fi
 
-setup_with_mc() {
-    log "Using MinIO Client (mc) for setup"
-
-    # Create bucket first
-    ensure_bucket
-
-    # Quick writability probe after bucket is created
-    local probe="local/${MINIO_BUCKET}/${DOMAIN}/webroot/.writetest"
-    if ! printf '' | run_mc pipe "$probe" >/dev/null 2>&1; then
-        log "MinIO not writable at $probe; recent globular-minio logs:"
-        journalctl -u globular-minio --no-pager -n 50 || true
-        die "MinIO is not writable; check service permissions and storage"
-    else
-        run_mc rm "$probe" >/dev/null 2>&1 || true
-    fi
-
-    local base="local/${MINIO_BUCKET}/${DOMAIN}"
-    printf '' | run_mc pipe "${base}/webroot/.keep" >/dev/null || die "Failed to create sentinel ${base}/webroot/.keep"
-    printf '' | run_mc pipe "${base}/users/.keep" >/dev/null || die "Failed to create sentinel ${base}/users/.keep"
-
-    # Upload files: cat runs as root (can read files), pipe to mc running as globular
-    if [[ -f "$ASSETS_WEBROOT/index.html" ]]; then
-        log "Uploading index.html..."
-        cat "$ASSETS_WEBROOT/index.html" | run_mc pipe "${base}/webroot/index.html" || die "Failed to upload index.html"
-        log "Uploaded index.html to ${base}/webroot/index.html"
-    else
-        die "index.html not found at $ASSETS_WEBROOT/index.html"
-    fi
-
-    if [[ -f "$ASSETS_WEBROOT/logo.png" ]]; then
-        log "Uploading logo.png..."
-        cat "$ASSETS_WEBROOT/logo.png" | run_mc pipe "${base}/webroot/logo.png" || die "Failed to upload logo.png"
-        log "Uploaded logo.png to ${base}/webroot/logo.png"
-    else
-        die "logo.png not found at $ASSETS_WEBROOT/logo.png"
-    fi
-
-    if [[ -f "$ASSETS_WEBROOT/style.css" ]]; then
-        log "Uploading style.css..."
-        cat "$ASSETS_WEBROOT/style.css" | run_mc pipe "${base}/webroot/style.css" || die "Failed to upload style.css"
-        log "Uploaded style.css to ${base}/webroot/style.css"
-    else
-        die "style.css not found at $ASSETS_WEBROOT/style.css"
-    fi
-
-    run_mc ls "local/${MINIO_BUCKET}" >/dev/null 2>&1 || die "Bucket $MINIO_BUCKET not reachable after creation"
-    run_mc stat "${base}/webroot/index.html" >/dev/null 2>&1 || die "index.html missing at ${base}/webroot/index.html"
-}
-
-main() {
-    load_contract
-    require_file "$CRED_FILE" "Credentials file"
-
-    log "Starting MinIO setup..."
-    log "Endpoint: $MINIO_ENDPOINT (secure: $MINIO_SECURE)"
-    log "Bucket: $MINIO_BUCKET"
-    log "Domain prefix: $DOMAIN"
-    log "Contract file: $CONTRACT_FILE"
-    log "Credentials file: $CRED_FILE"
-    log "Assets directory: $ASSETS_WEBROOT"
-
-    mkdir -p "$MC_CONFIG_DIR"
-    chown globular:globular "$MC_CONFIG_DIR" || true
-    chmod 0700 "$MC_CONFIG_DIR" || true
-
-    wait_for_minio
-
-    if [[ -z "$MC_BIN" ]]; then
-        die "MinIO client 'mc' is required for Day-0 provisioning but not found.\nExpected at: ${PREFIX}/bin/mc\nEnsure the MinIO package includes the mc binary and has been properly installed."
-    fi
-
-    log "Using mc binary: $MC_BIN"
-    setup_with_mc
-
-    log "MinIO setup completed successfully"
-    log "Verify via: mc ls or curl http://${MINIO_ENDPOINT}/${MINIO_BUCKET}/${DOMAIN}/webroot/index.html"
-}
-
-main "$@"
+echo "[setup-minio] Provisioning complete."

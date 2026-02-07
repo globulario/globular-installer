@@ -45,6 +45,20 @@ steps:
         group: globular
         mode: 0755
 
+      # TLS directories (certificates must be provisioned by Day-0 bootstrap)
+      - path: "{{.StateDir}}/pki"
+        owner: globular
+        group: globular
+        mode: 0750
+      - path: "{{.StateDir}}/config/tls"
+        owner: globular
+        group: globular
+        mode: 0750
+      - path: "{{.StateDir}}/.minio/certs"
+        owner: globular
+        group: globular
+        mode: 0750
+
   - id: install-minio-binaries
     type: install_package_payload
     install_bins: true
@@ -64,6 +78,14 @@ steps:
           MINIO_ROOT_USER=globular
           MINIO_ROOT_PASSWORD=globularadmin
           MINIO_VOLUMES={{.StateDir}}/minio/data
+
+          # TLS Configuration - MinIO will use certificates from ${HOME}/.minio/certs
+          # For 'globular' user, this is {{.StateDir}}/.minio/certs
+          # Certificates must be named: public.crt and private.key
+          MINIO_CERT_FILE={{.StateDir}}/.minio/certs/public.crt
+          MINIO_KEY_FILE={{.StateDir}}/.minio/certs/private.key
+
+          # Bind addresses (will serve HTTPS when certs are present)
           MINIO_OPTS=--address 127.0.0.1:9000 --console-address 127.0.0.1:9001
 
   # Standard credentials file for clients (node-agent, gateway, etc.)

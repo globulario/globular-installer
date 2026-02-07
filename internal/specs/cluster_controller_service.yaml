@@ -33,6 +33,16 @@ steps:
         group: globular
         mode: 0750
 
+      # TLS directories (certificates must be provisioned by Day-0 bootstrap)
+      - path: "{{.StateDir}}/pki"
+        owner: globular
+        group: globular
+        mode: 0750
+      - path: "{{.StateDir}}/config/tls"
+        owner: globular
+        group: globular
+        mode: 0750
+
   - id: install-cluster-controller-bin
     type: install_binaries
 

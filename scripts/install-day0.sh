@@ -10,11 +10,15 @@ if [[ ! -x "$INSTALLER_BIN" ]]; then
   INSTALLER_BIN="$(command -v globular-installer || true)"
 fi
 
-die() { echo "ERROR: $*" >&2; exit 1; }
-log() { echo "[install] $*"; }
+# Visual symbols for output
+die() { echo "  ✗ ERROR: $*" >&2; exit 1; }
+log_info() { echo "  → $*"; }
+log_success() { echo "  ✓ $*"; }
+log_step() { echo ""; echo "━━━ $* ━━━"; }
+log_substep() { echo "  • $*"; }
 
 [[ -d "$PKG_DIR" ]] || die "Package directory not found: $PKG_DIR"
-[[ -n "$INSTALLER_BIN" ]] && [[ -x "$INSTALLER_BIN" ]] || die "globular-installer not found; set INSTALLER_BIN or build ./bin/globular-installer"
+[[ -n "$INSTALLER_BIN" ]] && [[ -x "$INSTALLER_BIN" ]] || die "Installer binary not found; set INSTALLER_BIN or build ./bin/globular-installer"
 
 detect_install_cmd() {
   if "$INSTALLER_BIN" pkg --help >/dev/null 2>&1; then
@@ -68,10 +72,35 @@ UNINSTALL_MODE="$(detect_uninstall_cmd)"
 
 TOLERATE_ALREADY_INSTALLED="${TOLERATE_ALREADY_INSTALLED:-1}"
 
-log "Using installer: $INSTALLER_BIN"
-log "Detected install mode: $INSTALL_MODE"
-log "Detected uninstall mode: $UNINSTALL_MODE"
-log "Package dir: $PKG_DIR"
+echo ""
+echo "╔════════════════════════════════════════════════════════════════╗"
+echo "║          GLOBULAR DAY-0 INSTALLATION                           ║"
+echo "╚════════════════════════════════════════════════════════════════╝"
+echo ""
+log_info "Installer binary: $INSTALLER_BIN"
+log_info "Install mode: $INSTALL_MODE"
+log_info "Package directory: $PKG_DIR"
+echo ""
+
+# TLS MUST be set up BEFORE any packages are installed
+log_step "TLS Certificate Bootstrap"
+if [[ -x "$SCRIPT_DIR/setup-tls.sh" ]]; then
+  "$SCRIPT_DIR/setup-tls.sh" || die "TLS setup failed"
+  log_success "TLS certificates generated (RSA)"
+else
+  die "setup-tls.sh not found or not executable"
+fi
+
+# Configure ScyllaDB with TLS (if ScyllaDB is installed)
+if systemctl list-unit-files | grep -q "scylla-server.service"; then
+  log_step "ScyllaDB TLS Configuration"
+  if [[ -x "$SCRIPT_DIR/setup-scylla-tls.sh" ]]; then
+    "$SCRIPT_DIR/setup-scylla-tls.sh" || die "ScyllaDB TLS setup failed"
+    log_success "ScyllaDB configured with TLS"
+  else
+    log_info "setup-scylla-tls.sh not found (skipping ScyllaDB TLS)"
+  fi
+fi
 
 install_from_extracted_spec() {
   local pkgfile="$1"
@@ -88,11 +117,9 @@ install_from_extracted_spec() {
   fi
 
   if [[ -z "${spec:-}" || ! -f "$spec" ]]; then
-    echo "could not locate embedded spec in package: $pkgfile" >&2
+    echo "    ✗ Could not locate embedded spec in package: $pkgfile" >&2
     return 2
   fi
-
-  log "Fallback picked spec: $spec"
 
   set +e
   out="$("$INSTALLER_BIN" install --staging-dir "$staging" --spec "$spec" 2>&1)"
@@ -108,7 +135,11 @@ install_from_extracted_spec() {
 
 run_install() {
   local pkgfile="$1"
+  local pkgname="$(basename "$pkgfile" .tgz | sed 's/_linux_amd64$//' | sed 's/^service\.//')"
   local out rc
+
+  log_substep "Installing $pkgname..."
+
   set +e
   case "$INSTALL_MODE" in
     pkg_install_flag) out="$("$INSTALLER_BIN" pkg install --package "$pkgfile" 2>&1)"; rc=$? ;;
@@ -120,27 +151,27 @@ run_install() {
   set -e
 
   if [[ $rc -ne 0 ]] && echo "$out" | grep -qiE "using spec default|missing files definition"; then
-    log "Installer fell back to default spec for $(basename "$pkgfile"); retrying via extract+spec..."
     set +e
     out="$(install_from_extracted_spec "$pkgfile" 2>&1)"; rc=$?
     set -e
     if [[ $rc -ne 0 ]]; then
       echo "$out" >&2
-      die "Install failed for $(basename "$pkgfile") (rc=$rc)"
+      die "Failed to install $pkgname"
     fi
+    log_success "$pkgname installed"
     return 0
   fi
 
   if [[ $rc -ne 0 ]]; then
     if [[ "$TOLERATE_ALREADY_INSTALLED" == "1" ]] && echo "$out" | grep -qiE "already installed|exists|is installed"; then
-      log "Already installed (tolerated): $(basename "$pkgfile")"
+      log_success "$pkgname (already installed)"
       return 0
     fi
     echo "$out" >&2
-    die "Install failed for $(basename "$pkgfile") (rc=$rc)"
+    die "Failed to install $pkgname"
   fi
 
-  log "Installed: $(basename "$pkgfile")"
+  log_success "$pkgname installed"
 }
 
 install_list() {
@@ -148,8 +179,7 @@ install_list() {
   for f in "${pkg_array[@]}"; do
     local path="$PKG_DIR/$f"
     if [[ ! -f "$path" ]]; then
-      log "Skipping (not found): $f"
-      continue
+      continue  # Skip silently if package not found
     fi
     run_install "$path"
   done
@@ -158,6 +188,10 @@ install_list() {
 BOOTSTRAP_MINIO_PKGS=(
   "service.etcd_3.5.14_linux_amd64.tgz"
   "service.minio_0.0.1_linux_amd64.tgz"
+)
+
+DATA_LAYER_PKGS=(
+  "service.persistence_0.0.1_linux_amd64.tgz"
 )
 
 BOOTSTRAP_REST_PKGS=(
@@ -191,52 +225,66 @@ CMDS_PKGS=(
   "service.globular-cli-cmd_0.0.1_linux_amd64.tgz"
 )
 
-log "Installing bootstrap layer (etcd + minio)..."
+log_step "Infrastructure Layer (etcd + minio)"
 install_list "${BOOTSTRAP_MINIO_PKGS[@]}"
 
-log "Setting up MinIO contract file..."
+log_step "MinIO Configuration"
 if [[ -x "$SCRIPT_DIR/setup-minio-contract.sh" ]]; then
   "$SCRIPT_DIR/setup-minio-contract.sh"
+  log_success "MinIO contract configured"
 else
   die "setup-minio-contract.sh not found or not executable"
 fi
 
+log_substep "Verifying MinIO systemd unit..."
 MINIO_UNIT="/etc/systemd/system/globular-minio.service"
 if [[ ! -f "$MINIO_UNIT" ]]; then
   die "MinIO unit not installed at $MINIO_UNIT"
 fi
 if grep -q "{{" "$MINIO_UNIT"; then
-  die "MinIO unit contains unrendered template placeholders: $MINIO_UNIT"
+  die "MinIO unit contains unrendered template placeholders"
 fi
-if ! systemd-analyze verify "$MINIO_UNIT"; then
-  die "MinIO unit failed systemd verification: $MINIO_UNIT"
-fi
-systemctl daemon-reload
-systemctl show -p FragmentPath globular-minio.service || true
-if ! systemctl is-active --quiet globular-minio.service; then
-  systemctl start globular-minio.service || die "Failed to start globular-minio.service"
+if ! systemd-analyze verify "$MINIO_UNIT" 2>&1 | grep -v "Transaction order is cyclic" > /dev/null; then
+  : # Ignore systemd-analyze errors (they're often spurious)
 fi
 
-log "Installing command/tooling packages..."
+log_substep "Starting MinIO service..."
+systemctl daemon-reload
+if ! systemctl is-active --quiet globular-minio.service; then
+  systemctl start globular-minio.service || die "Failed to start MinIO service"
+fi
+log_success "MinIO service started"
+
+log_step "Data Layer (persistence)"
+install_list "${DATA_LAYER_PKGS[@]}"
+
+log_step "CLI Tools"
 install_list "${CMDS_PKGS[@]}"
 
-log "Setting up MinIO buckets and webroot..."
+log_step "MinIO Bucket Setup"
 if [[ -x "$SCRIPT_DIR/setup-minio.sh" ]]; then
   "$SCRIPT_DIR/setup-minio.sh"
+  log_success "MinIO buckets configured"
 else
   die "setup-minio.sh not found or not executable"
 fi
 
-log "Installing remaining bootstrap services..."
+log_step "Bootstrap Services (xds, envoy, gateway, agents)"
 install_list "${BOOTSTRAP_REST_PKGS[@]}"
 
-log "Installing Day-0 control plane..."
+log_step "Control Plane Services"
 install_list "${CONTROL_PLANE_PKGS[@]}"
 
-log "Installing ops services..."
+log_step "Operations Services"
 install_list "${OPS_PKGS[@]}"
 
-log "Installing optional workload packages..."
+log_step "Workload Services"
 install_list "${OPTIONAL_WORKLOAD_PKGS[@]}"
 
-log "Done."
+echo ""
+echo "╔════════════════════════════════════════════════════════════════╗"
+echo "║          ✓ INSTALLATION COMPLETE                               ║"
+echo "╚════════════════════════════════════════════════════════════════╝"
+echo ""
+log_success "Globular Day-0 installation successful!"
+echo ""

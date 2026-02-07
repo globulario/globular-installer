@@ -8,12 +8,6 @@ service:
   exec: resource_server
 
 steps:
-  - id: stage-resource-package
-    type: stage_package
-    path: "internal/assets/packages/service.resource_{{.Version}}_linux_amd64.tgz"
-    require_platform_match: true
-    require_type_service: true
-
   - id: ensure-user-group
     type: ensure_user_group
     user: globular
@@ -47,10 +41,20 @@ steps:
         group: globular
         mode: 0750
 
-  - id: install-resource-binary
+      # TLS directories (certificates must be provisioned by Day-0 bootstrap)
+      - path: "{{.StateDir}}/pki"
+        owner: globular
+        group: globular
+        mode: 0750
+      - path: "{{.StateDir}}/config/tls"
+        owner: globular
+        group: globular
+        mode: 0750
+
+  - id: install-resource-payload
     type: install_package_payload
     install_bins: true
-    install_config: true
+    install_config: false
     install_spec: false
     install_systemd: false
 
@@ -58,7 +62,7 @@ steps:
     type: ensure_service_config
     service_name: resource
     exec: resource_server
-    address_host: localhost
+    address_host: auto
     rewrite_if_out_of_range: true
 
   - id: install-resource-service
@@ -72,8 +76,8 @@ steps:
         content: |
           [Unit]
           Description=Globular resource
-          After=network-online.target
-          Wants=network-online.target
+          After=network-online.target scylla-server.service
+          Wants=network-online.target scylla-server.service
 
           [Service]
           Type=simple
@@ -81,6 +85,8 @@ steps:
           Group=globular
           WorkingDirectory={{.StateDir}}/resource
           Environment=GLOBULAR_SERVICES_DIR={{.StateDir}}/services
+          Environment=GLOBULAR_BOOTSTRAP=1
+          ExecStartPre=/bin/sh -c 'for i in $(seq 1 90); do ss -lnt | grep -q ":9042 " && exit 0; sleep 1; done; echo "scylla 9042 not ready"; exit 1'
           ExecStart={{.Prefix}}/bin/resource_server
           Restart=on-failure
           RestartSec=2

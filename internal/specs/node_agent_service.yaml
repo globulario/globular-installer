@@ -29,6 +29,16 @@ steps:
         group: globular
         mode: 0750
 
+      # TLS directories (certificates must be provisioned by Day-0 bootstrap)
+      - path: "{{.StateDir}}/pki"
+        owner: globular
+        group: globular
+        mode: 0750
+      - path: "{{.StateDir}}/config/tls"
+        owner: globular
+        group: globular
+        mode: 0750
+
   - id: install-node-agent-binary
     type: install_package_payload
     install_bins: true
@@ -56,7 +66,9 @@ steps:
           Group=globular
           WorkingDirectory={{.StateDir}}/services
           Environment=GLOBULAR_SERVICES_DIR={{.StateDir}}/services
-          Environment=NODE_AGENT_INSECURE=true
+          Environment=NODE_AGENT_TLS_CERT={{.StateDir}}/config/tls/fullchain.pem
+          Environment=NODE_AGENT_TLS_KEY={{.StateDir}}/config/tls/privkey.pem
+          Environment=NODE_AGENT_TLS_CA={{.StateDir}}/pki/ca.pem
           Environment=NODE_AGENT_CONTROLLER_ENDPOINT=127.0.0.1:12000
           ExecStart={{.Prefix}}/bin/node_agent
           Restart=on-failure

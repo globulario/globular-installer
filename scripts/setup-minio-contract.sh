@@ -1,123 +1,101 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# MinIO Contract File Generator for Globular
-# Creates the MinIO contract file that node-agent and gateway use
+STATE_DIR="${STATE_DIR:-/var/lib/globular}"
+CRED_FILE="${STATE_DIR}/minio/credentials"
+CONTRACT_DIR="${STATE_DIR}/objectstore"
+CONTRACT_FILE="${GLOBULAR_MINIO_CONTRACT_PATH:-${CONTRACT_DIR}/minio.json}"
 
-log() { echo "[minio-contract] $*"; }
-die() { echo "[minio-contract] ERROR: $*" >&2; exit 1; }
+# Create objectstore directory if it doesn't exist
+if [[ ! -d "${CONTRACT_DIR}" ]]; then
+  echo "[setup-minio-contract] Creating ${CONTRACT_DIR}..."
+  mkdir -p "${CONTRACT_DIR}"
+fi
 
-# Configuration
-MINIO_ENDPOINT="${MINIO_ENDPOINT:-127.0.0.1:9000}"
-MINIO_BUCKET="${MINIO_BUCKET:-globular}"
-MINIO_SECURE="${MINIO_SECURE:-false}"
+if [[ ! -f "${CRED_FILE}" ]]; then
+  echo "[setup-minio-contract] Creating default credentials file at ${CRED_FILE}..."
+  mkdir -p "$(dirname "${CRED_FILE}")"
+  echo "globular:globularadmin" > "${CRED_FILE}"
+  chmod 600 "${CRED_FILE}"
+fi
 
-CONTRACT_DIR="/var/lib/globular/objectstore"
-CONTRACT_FILE="$CONTRACT_DIR/minio.json"
+if ! IFS=":" read -r MINIO_ACCESS_KEY MINIO_SECRET_KEY < "${CRED_FILE}"; then
+  echo "ERROR: Unable to read credentials from ${CRED_FILE} (expected 'access:secret' format)." >&2
+  exit 1
+fi
 
-# SINGLE SOURCE OF TRUTH: MinIO package creates this file
-# This script does NOT create credentials - it only references them
-CRED_FILE="/var/lib/globular/minio/credentials"
+if [[ -z "${MINIO_ACCESS_KEY}" || -z "${MINIO_SECRET_KEY}" ]]; then
+  echo "ERROR: Credentials in ${CRED_FILE} are empty; verify the minio package wrote valid contents." >&2
+  exit 1
+fi
 
-# Create directories
-create_dirs() {
-    log "Creating directories..."
+STATE_DIR="${STATE_DIR}" CRED_FILE="${CRED_FILE}" CONTRACT_FILE="${CONTRACT_FILE}" python3 - <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
 
-    if ! mkdir -p "$CONTRACT_DIR" 2>/dev/null; then
-        sudo mkdir -p "$CONTRACT_DIR" || die "Failed to create $CONTRACT_DIR"
-        sudo chown globular:globular "$CONTRACT_DIR" || log "Warning: Could not chown $CONTRACT_DIR"
-    fi
+contract_file = Path(os.environ["CONTRACT_FILE"])
+state_dir = os.environ["STATE_DIR"]
+cred_file_default = os.environ["CRED_FILE"]
+
+default_domain = (
+    os.environ.get("GLOBULAR_DOMAIN")
+    or os.environ.get("DOMAIN")
+    or "localhost"
+)
+
+defaults = {
+    "type": "minio",
+    "endpoint": "127.0.0.1:9000",
+    "bucket": "globular",
+    "prefix": default_domain,
+    "secure": True,  # TLS enabled by default
+    "caBundlePath": f"{state_dir}/pki/ca.pem",
 }
 
-# Verify credentials file exists (created by MinIO package, or create if missing)
-verify_credentials() {
-    log "Verifying credentials file..."
+existing = {}
+if contract_file.exists():
+    try:
+        with contract_file.open() as fh:
+            existing = json.load(fh)
+    except json.JSONDecodeError as exc:
+        print(f"ERROR: Failed to parse existing contract at {contract_file}: {exc}", file=sys.stderr)
+        sys.exit(1)
 
-    if [ ! -f "$CRED_FILE" ]; then
-        log "Warning: Credentials file not found, creating it..."
-        sudo mkdir -p "$(dirname "$CRED_FILE")"
-        echo "globular:globularadmin" | sudo tee "$CRED_FILE" > /dev/null
-    fi
+def pick(key: str, *env_keys: str):
+    for env_key in env_keys:
+        if env_key in os.environ:
+            val = os.environ[env_key]
+            if key == "secure":
+                return str(val).lower() in ("1", "true", "yes", "y", "on")
+            return val
+    if key in existing:
+        return existing[key]
+    return defaults[key]
 
-    sudo chown globular:globular "$CRED_FILE" || log "Warning: Could not chown $CRED_FILE"
-    sudo chmod 0600 "$CRED_FILE" || log "Warning: Could not chmod $CRED_FILE"
+auth = existing.get("auth", {})
+cred_file = os.environ.get(
+    "GLOBULAR_MINIO_CRED_FILE",
+    os.environ.get("MINIO_CRED_FILE", auth.get("credFile", cred_file_default)),
+)
 
-    log "Credentials file ready at $CRED_FILE"
+contract = {
+    "type": pick("type", "GLOBULAR_MINIO_TYPE", "MINIO_TYPE"),
+    "endpoint": pick("endpoint", "GLOBULAR_MINIO_ENDPOINT", "MINIO_ENDPOINT"),
+    "bucket": pick("bucket", "GLOBULAR_MINIO_BUCKET", "MINIO_BUCKET"),
+    "prefix": pick("prefix", "GLOBULAR_MINIO_PREFIX", "MINIO_PREFIX", "GLOBULAR_DOMAIN", "DOMAIN"),
+    "secure": pick("secure", "GLOBULAR_MINIO_SECURE", "MINIO_SECURE"),
+    "caBundlePath": pick("caBundlePath", "GLOBULAR_MINIO_CA_BUNDLE", "MINIO_CA_BUNDLE"),
+    "auth": {
+        "mode": "file",
+        "credFile": cred_file,
+    },
 }
 
-# Create contract file
-create_contract() {
-    log "Creating MinIO contract file..."
+tmp_path = contract_file.with_suffix(".tmp")
+tmp_path.write_text(json.dumps(contract, indent=2) + "\n")
+tmp_path.replace(contract_file)
 
-    local temp_contract
-    temp_contract="$(mktemp)"
-
-    cat > "$temp_contract" <<EOF
-{
-  "type": "minio",
-  "endpoint": "${MINIO_ENDPOINT}",
-  "bucket": "${MINIO_BUCKET}",
-  "prefix": "",
-  "secure": ${MINIO_SECURE},
-  "caBundlePath": "",
-  "auth": {
-    "mode": "file",
-    "credFile": "/var/lib/globular/minio/credentials"
-  }
-}
-EOF
-
-    if ! mv "$temp_contract" "$CONTRACT_FILE" 2>/dev/null; then
-        sudo mv "$temp_contract" "$CONTRACT_FILE" || die "Failed to create $CONTRACT_FILE"
-    fi
-    sudo chown globular:globular "$CONTRACT_FILE" || log "Warning: Could not chown $CONTRACT_FILE"
-    sudo chmod 0644 "$CONTRACT_FILE" || log "Warning: Could not chmod $CONTRACT_FILE"
-
-    log "Created contract file at $CONTRACT_FILE"
-}
-
-# Verify contract
-verify_contract() {
-    log "Verifying contract file..."
-
-    if [ ! -f "$CONTRACT_FILE" ]; then
-        die "Contract file not found at $CONTRACT_FILE"
-    fi
-
-    if [ ! -f "$CRED_FILE" ]; then
-        die "Credentials file not found at $CRED_FILE"
-    fi
-
-    # Validate JSON
-    if command -v jq >/dev/null 2>&1; then
-        if ! jq empty "$CONTRACT_FILE" 2>/dev/null; then
-            die "Contract file is not valid JSON"
-        fi
-    fi
-
-    log "Contract file verified successfully"
-}
-
-# Main
-main() {
-    log "Setting up MinIO contract for Globular..."
-    log "Endpoint: $MINIO_ENDPOINT"
-    log "Bucket: $MINIO_BUCKET"
-    log "Secure: $MINIO_SECURE"
-    log "Contract file: $CONTRACT_FILE"
-    log "Credentials source: $CRED_FILE (provided by MinIO package)"
-
-    create_dirs
-    verify_credentials
-    create_contract
-    verify_contract
-
-    log ""
-    log "MinIO contract setup completed successfully!"
-    log "Contract file: $CONTRACT_FILE"
-    log "Credentials: $CRED_FILE (owned by MinIO service)"
-    log ""
-    log "Node-agent will now automatically create domain-scoped buckets at Day-0"
-}
-
-main "$@"
+print(f"Wrote MinIO contract to {contract_file}")
+PY
