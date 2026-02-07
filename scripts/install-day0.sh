@@ -228,6 +228,18 @@ CMDS_PKGS=(
 log_step "Infrastructure Layer (etcd + minio)"
 install_list "${BOOTSTRAP_MINIO_PKGS[@]}"
 
+log_step "TLS Ownership Fix"
+log_substep "Setting TLS file ownership to globular user..."
+if id globular >/dev/null 2>&1; then
+  chown -R globular:globular /var/lib/globular/pki /var/lib/globular/config/tls /var/lib/globular/.minio 2>/dev/null || true
+  if [[ -d /var/lib/globular/tls/etcd ]]; then
+    chown -R globular:globular /var/lib/globular/tls/etcd
+  fi
+  log_success "TLS files ownership set to globular:globular"
+else
+  log_substep "Warning: globular user not found, skipping ownership fix"
+fi
+
 log_step "MinIO Configuration"
 if [[ -x "$SCRIPT_DIR/setup-minio-contract.sh" ]]; then
   "$SCRIPT_DIR/setup-minio-contract.sh"
