@@ -267,6 +267,14 @@ if ! systemctl is-active --quiet globular-minio.service; then
 fi
 log_success "MinIO service started"
 
+log_step "MinIO Bucket Provisioning"
+if [[ -x "$SCRIPT_DIR/ensure-minio-buckets.sh" ]]; then
+  "$SCRIPT_DIR/ensure-minio-buckets.sh"
+  log_success "MinIO buckets provisioned"
+else
+  log_substep "Warning: ensure-minio-buckets.sh not found, skipping bucket creation"
+fi
+
 log_step "Data Layer (persistence)"
 install_list "${DATA_LAYER_PKGS[@]}"
 
