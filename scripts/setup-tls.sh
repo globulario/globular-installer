@@ -174,10 +174,12 @@ setup_etcd_client_certs() {
 # Setup etcd client certs
 setup_etcd_client_certs
 
-# Set ownership if running as root
-if [[ $EUID -eq 0 ]]; then
+# Set ownership if running as root AND globular user exists
+if [[ $EUID -eq 0 ]] && id globular >/dev/null 2>&1; then
     chown -R globular:globular "${PKI_DIR}" "${TLS_DIR}" "${MINIO_CERTS_DIR}" "${STATE_DIR}/tls"
     echo "[setup-tls] ✓ Ownership set to globular:globular"
+elif [[ $EUID -eq 0 ]]; then
+    echo "[setup-tls] → globular user not yet created, ownership will be set during package installation"
 fi
 
 echo "[setup-tls] TLS bootstrap complete (RSA)"
