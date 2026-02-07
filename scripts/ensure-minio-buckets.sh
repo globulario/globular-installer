@@ -61,13 +61,15 @@ for i in $(seq 1 $MAX_RETRIES); do
     sleep 2
 done
 
-# Read bucket name from contract
+# Read bucket name and prefix from contract
 BUCKET_NAME="globular"
+PREFIX=""
 if [[ -f "${CONTRACT_FILE}" ]]; then
     BUCKET_FROM_CONTRACT=$(python3 -c "import json; print(json.load(open('${CONTRACT_FILE}'))['bucket'])" 2>/dev/null || echo "globular")
     if [[ -n "${BUCKET_FROM_CONTRACT}" ]]; then
         BUCKET_NAME="${BUCKET_FROM_CONTRACT}"
     fi
+    PREFIX=$(python3 -c "import json; print(json.load(open('${CONTRACT_FILE}'))['prefix'])" 2>/dev/null || echo "")
 fi
 
 echo "[ensure-minio-buckets] Ensuring bucket '${BUCKET_NAME}' exists..."
@@ -85,15 +87,22 @@ fi
 echo "[ensure-minio-buckets] Setting public read policy on '${BUCKET_NAME}'..."
 mc anonymous set download "local/${BUCKET_NAME}" >/dev/null 2>&1 || true
 
-# Create default webroot content if it doesn't exist
-echo "[ensure-minio-buckets] Checking webroot content..."
-if ! mc ls "local/${BUCKET_NAME}/webroot/index.html" >/dev/null 2>&1; then
-    echo "[ensure-minio-buckets] Creating default webroot/index.html..."
-    echo "<html><head><title>Welcome to Globular</title></head><body><h1>Welcome to Globular</h1><p>This is the default page served from MinIO object storage.</p></body></html>" | \
-        mc pipe "local/${BUCKET_NAME}/webroot/index.html"
-    echo "[ensure-minio-buckets] ✓ Default webroot created"
+# Determine correct webroot path based on prefix
+if [[ -n "${PREFIX}" ]]; then
+    WEBROOT_PATH="${PREFIX}/webroot"
 else
-    echo "[ensure-minio-buckets] webroot/index.html already exists"
+    WEBROOT_PATH="webroot"
+fi
+
+# Create default webroot content if it doesn't exist
+echo "[ensure-minio-buckets] Checking webroot content at: ${WEBROOT_PATH}/index.html..."
+if ! mc ls "local/${BUCKET_NAME}/${WEBROOT_PATH}/index.html" >/dev/null 2>&1; then
+    echo "[ensure-minio-buckets] Creating default ${WEBROOT_PATH}/index.html..."
+    echo "<html><head><title>Welcome to Globular</title></head><body><h1>Welcome to Globular</h1><p>This is the default page served from MinIO object storage.</p><p>Path: <code>${WEBROOT_PATH}/index.html</code></p></body></html>" | \
+        mc pipe "local/${BUCKET_NAME}/${WEBROOT_PATH}/index.html"
+    echo "[ensure-minio-buckets] ✓ Default webroot created at ${WEBROOT_PATH}/index.html"
+else
+    echo "[ensure-minio-buckets] ${WEBROOT_PATH}/index.html already exists"
 fi
 
 # Fix contract file permissions
