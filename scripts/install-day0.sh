@@ -20,6 +20,11 @@ log_substep() { echo "  • $*"; }
 [[ -d "$PKG_DIR" ]] || die "Package directory not found: $PKG_DIR"
 [[ -n "$INSTALLER_BIN" ]] && [[ -x "$INSTALLER_BIN" ]] || die "Installer binary not found; set INSTALLER_BIN or build ./bin/globular-installer"
 
+# Check for root privileges
+if [[ $EUID -ne 0 ]]; then
+  die "This script must be run as root (use sudo)"
+fi
+
 detect_install_cmd() {
   if "$INSTALLER_BIN" pkg --help >/dev/null 2>&1; then
     if "$INSTALLER_BIN" pkg install --help >/dev/null 2>&1; then
