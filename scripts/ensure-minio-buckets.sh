@@ -99,41 +99,44 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALLER_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 ASSETS_WEBROOT="${INSTALLER_ROOT}/internal/assets/webroot"
 
-# Upload default webroot content if it doesn't exist
-echo "[ensure-minio-buckets] Checking webroot content at: ${WEBROOT_PATH}/"
+# Upload webroot content (always upload to ensure clean state)
+echo "[ensure-minio-buckets] Uploading webroot content to: ${WEBROOT_PATH}/"
 
-if ! mc ls "local/${BUCKET_NAME}/${WEBROOT_PATH}/index.html" >/dev/null 2>&1; then
-    if [[ -d "${ASSETS_WEBROOT}" ]]; then
-        echo "[ensure-minio-buckets] Uploading webroot assets from ${ASSETS_WEBROOT}..."
+if [[ -d "${ASSETS_WEBROOT}" ]]; then
+    echo "[ensure-minio-buckets] Uploading webroot assets from ${ASSETS_WEBROOT}..."
 
-        # Upload index.html
-        if [[ -f "${ASSETS_WEBROOT}/index.html" ]]; then
-            mc cp "${ASSETS_WEBROOT}/index.html" "local/${BUCKET_NAME}/${WEBROOT_PATH}/index.html" >/dev/null 2>&1
-            echo "[ensure-minio-buckets]   ✓ index.html"
-        fi
-
-        # Upload style.css
-        if [[ -f "${ASSETS_WEBROOT}/style.css" ]]; then
-            mc cp "${ASSETS_WEBROOT}/style.css" "local/${BUCKET_NAME}/${WEBROOT_PATH}/style.css" >/dev/null 2>&1
-            echo "[ensure-minio-buckets]   ✓ style.css"
-        fi
-
-        # Upload logo.png
-        if [[ -f "${ASSETS_WEBROOT}/logo.png" ]]; then
-            mc cp "${ASSETS_WEBROOT}/logo.png" "local/${BUCKET_NAME}/${WEBROOT_PATH}/logo.png" >/dev/null 2>&1
-            echo "[ensure-minio-buckets]   ✓ logo.png"
-        fi
-
-        echo "[ensure-minio-buckets] ✓ Webroot assets uploaded to ${WEBROOT_PATH}/"
-    else
-        echo "[ensure-minio-buckets] Warning: Assets directory not found at ${ASSETS_WEBROOT}"
-        echo "[ensure-minio-buckets] Creating minimal default index.html..."
-        echo "<html><head><title>Welcome to Globular</title></head><body><h1>Welcome to Globular</h1><p>Your Globular cluster is running.</p></body></html>" | \
-            mc pipe "local/${BUCKET_NAME}/${WEBROOT_PATH}/index.html"
-        echo "[ensure-minio-buckets] ✓ Minimal webroot created"
+    # Upload index.html
+    if [[ -f "${ASSETS_WEBROOT}/index.html" ]]; then
+        mc cp "${ASSETS_WEBROOT}/index.html" "local/${BUCKET_NAME}/${WEBROOT_PATH}/index.html"
+        echo "[ensure-minio-buckets]   ✓ index.html"
     fi
+
+    # Upload style.css
+    if [[ -f "${ASSETS_WEBROOT}/style.css" ]]; then
+        mc cp "${ASSETS_WEBROOT}/style.css" "local/${BUCKET_NAME}/${WEBROOT_PATH}/style.css"
+        echo "[ensure-minio-buckets]   ✓ style.css"
+    fi
+
+    # Upload logo.png
+    if [[ -f "${ASSETS_WEBROOT}/logo.png" ]]; then
+        mc cp "${ASSETS_WEBROOT}/logo.png" "local/${BUCKET_NAME}/${WEBROOT_PATH}/logo.png"
+        echo "[ensure-minio-buckets]   ✓ logo.png"
+    fi
+
+    echo "[ensure-minio-buckets] ✓ Webroot assets uploaded to ${WEBROOT_PATH}/"
 else
-    echo "[ensure-minio-buckets] ${WEBROOT_PATH}/index.html already exists"
+    echo "[ensure-minio-buckets] Warning: Assets directory not found at ${ASSETS_WEBROOT}"
+    echo "[ensure-minio-buckets] Creating minimal default index.html..."
+    echo "<html><head><title>Welcome to Globular</title></head><body><h1>Welcome to Globular</h1><p>Your Globular cluster is running.</p></body></html>" | \
+        mc pipe "local/${BUCKET_NAME}/${WEBROOT_PATH}/index.html"
+    echo "[ensure-minio-buckets] ✓ Minimal webroot created"
+fi
+
+# Verify upload was successful
+if mc ls "local/${BUCKET_NAME}/${WEBROOT_PATH}/index.html" >/dev/null 2>&1; then
+    echo "[ensure-minio-buckets] ✓ Verified: index.html is accessible in bucket"
+else
+    echo "[ensure-minio-buckets] ⚠ Warning: Could not verify index.html in bucket"
 fi
 
 # Fix contract file permissions
