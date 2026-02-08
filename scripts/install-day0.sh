@@ -294,6 +294,14 @@ else
   die "setup-minio.sh not found or not executable"
 fi
 
+log_step "Globular Configuration (Protocol=https)"
+if [[ -x "$SCRIPT_DIR/setup-config.sh" ]]; then
+  "$SCRIPT_DIR/setup-config.sh"
+  log_success "Configuration set to HTTPS"
+else
+  log_substep "Warning: setup-config.sh not found (Protocol may default to HTTP)"
+fi
+
 log_step "Bootstrap Services (xds, envoy, gateway, agents)"
 install_list "${BOOTSTRAP_REST_PKGS[@]}"
 
