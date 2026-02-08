@@ -362,6 +362,25 @@ install_list "${OPS_PKGS[@]}"
 log_step "Workload Services"
 install_list "${OPTIONAL_WORKLOAD_PKGS[@]}"
 
+# Run conformance tests (warn-only mode)
+if [[ "${GLOBULAR_CONFORMANCE:-0}" == "1" ]]; then
+  log_step "Conformance Tests"
+  CONFORMANCE_SCRIPT="$SCRIPT_DIR/../tests/conformance/run.sh"
+  if [[ -x "$CONFORMANCE_SCRIPT" ]]; then
+    log_substep "Running v1.0 conformance checks..."
+    if "$CONFORMANCE_SCRIPT" 2>&1 | tee /tmp/globular-conformance.log; then
+      log_success "All conformance tests passed!"
+    else
+      # Warn-only mode: don't fail installation yet
+      log_info "⚠  Some conformance tests failed (see /tmp/globular-conformance.log)"
+      log_info "   Installation will continue, but please review failures"
+      log_info "   Run manually: sudo $CONFORMANCE_SCRIPT"
+    fi
+  else
+    log_substep "Conformance tests not found (skipping)"
+  fi
+fi
+
 echo ""
 echo "╔════════════════════════════════════════════════════════════════╗"
 echo "║          ✓ INSTALLATION COMPLETE                               ║"
