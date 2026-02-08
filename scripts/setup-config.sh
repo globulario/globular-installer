@@ -41,18 +41,29 @@ if [[ -f "${CONFIG_FILE}" ]]; then
 else
     echo "[setup-config] Creating new configuration file with HTTPS enabled"
 
-    # Create minimal config with HTTPS
-    cat > "${CONFIG_FILE}" << 'EOF'
+    # Determine domain - use globular.internal for cluster-capable setup
+    # Can be overridden with GLOBULAR_DOMAIN environment variable
+    DOMAIN="${GLOBULAR_DOMAIN:-globular.internal}"
+
+    # Determine address - try to get actual hostname/IP, fallback to 127.0.0.1
+    ADDRESS="${GLOBULAR_ADDRESS:-127.0.0.1}"
+
+    echo "[setup-config] → Domain: ${DOMAIN}"
+    echo "[setup-config] → Address: ${ADDRESS}"
+
+    # Create minimal config with HTTPS and cluster-capable domain
+    cat > "${CONFIG_FILE}" << EOF
 {
   "Protocol": "https",
-  "Domain": "localhost",
+  "Domain": "${DOMAIN}",
+  "Address": "${ADDRESS}",
   "PortHTTP": 8080,
   "PortHTTPS": 8443
 }
 EOF
 
     chmod 644 "${CONFIG_FILE}"
-    echo "[setup-config] ✓ Configuration file created with Protocol=https"
+    echo "[setup-config] ✓ Configuration file created with Protocol=https, Domain=${DOMAIN}"
 fi
 
 # Set ownership if running as root AND globular user exists
