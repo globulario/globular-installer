@@ -315,6 +315,22 @@ install_list "${BOOTSTRAP_REST_PKGS[@]}"
 log_step "Control Plane Services"
 install_list "${CONTROL_PLANE_PKGS[@]}"
 
+log_step "System Resolver Configuration (Day-0)"
+if [[ -x "$SCRIPT_DIR/configure-resolver.sh" ]]; then
+  "$SCRIPT_DIR/configure-resolver.sh"
+  log_success "System resolver configured for globular.internal"
+else
+  log_substep "Warning: configure-resolver.sh not found, DNS system resolver not configured"
+fi
+
+log_step "DNS Bootstrap (Day-0)"
+if [[ -x "$SCRIPT_DIR/bootstrap-dns.sh" ]]; then
+  "$SCRIPT_DIR/bootstrap-dns.sh"
+  log_success "DNS records initialized (n0, api)"
+else
+  log_substep "Warning: bootstrap-dns.sh not found, DNS records not initialized"
+fi
+
 log_step "Operations Services"
 install_list "${OPS_PKGS[@]}"
 
