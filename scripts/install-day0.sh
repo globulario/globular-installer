@@ -1,6 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Globular Day-0 Installation Script
+#
+# Environment Variables:
+#   PKG_DIR                  - Package directory (default: internal/assets/packages)
+#   INSTALLER_BIN            - Installer binary path (auto-detected)
+#   TOLERATE_ALREADY_INSTALLED - Allow already-installed packages (default: 1)
+#   GLOBULAR_CONFORMANCE     - Conformance test mode (default: warn)
+#                              warn: Run tests, log failures, continue installation
+#                              fail: Run tests, abort installation on any failure (v1 target)
+#                              off:  Skip conformance tests entirely
+#
+# Conformance tests validate v1.0 invariants:
+#   - DNS service reports correct port in metadata
+#   - User client certificates exist and are readable
+#   - TLS certificate symlinks (server.crt, server.key, ca.crt) exist
+#   - DNS service has CAP_NET_BIND_SERVICE for port 53
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALLER_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PKG_DIR="${PKG_DIR:-"$INSTALLER_ROOT/internal/assets/packages"}"
@@ -85,6 +102,7 @@ echo ""
 log_info "Installer binary: $INSTALLER_BIN"
 log_info "Install mode: $INSTALL_MODE"
 log_info "Package directory: $PKG_DIR"
+log_info "Conformance mode: ${GLOBULAR_CONFORMANCE:-warn}"
 echo ""
 
 # TLS MUST be set up BEFORE any packages are installed
@@ -362,23 +380,52 @@ install_list "${OPS_PKGS[@]}"
 log_step "Workload Services"
 install_list "${OPTIONAL_WORKLOAD_PKGS[@]}"
 
-# Run conformance tests (warn-only mode)
-if [[ "${GLOBULAR_CONFORMANCE:-0}" == "1" ]]; then
-  log_step "Conformance Tests"
+# Run conformance tests
+# GLOBULAR_CONFORMANCE=warn|fail|off (default: warn)
+CONFORMANCE_MODE="${GLOBULAR_CONFORMANCE:-warn}"
+
+if [[ "$CONFORMANCE_MODE" != "off" ]]; then
+  log_step "Conformance Tests (mode: $CONFORMANCE_MODE)"
   CONFORMANCE_SCRIPT="$SCRIPT_DIR/../tests/conformance/run.sh"
+
   if [[ -x "$CONFORMANCE_SCRIPT" ]]; then
     log_substep "Running v1.0 conformance checks..."
-    if "$CONFORMANCE_SCRIPT" 2>&1 | tee /tmp/globular-conformance.log; then
+
+    # Run conformance and capture exit code
+    CONFORMANCE_LOG="/tmp/globular-conformance-$(date +%Y%m%d-%H%M%S).log"
+    if "$CONFORMANCE_SCRIPT" 2>&1 | tee "$CONFORMANCE_LOG"; then
       log_success "All conformance tests passed!"
     else
-      # Warn-only mode: don't fail installation yet
-      log_info "⚠  Some conformance tests failed (see /tmp/globular-conformance.log)"
-      log_info "   Installation will continue, but please review failures"
-      log_info "   Run manually: sudo $CONFORMANCE_SCRIPT"
+      CONFORMANCE_EXIT=$?
+      echo ""
+      echo "╔════════════════════════════════════════════════════════════════╗"
+      echo "║          ⚠  CONFORMANCE FAILED                                 ║"
+      echo "╚════════════════════════════════════════════════════════════════╝"
+      echo ""
+      log_info "Some conformance tests failed (exit code: $CONFORMANCE_EXIT)"
+      log_info "Full log: $CONFORMANCE_LOG"
+      log_info "Run manually: sudo $CONFORMANCE_SCRIPT"
+      echo ""
+
+      if [[ "$CONFORMANCE_MODE" == "fail" ]]; then
+        die "Installation failed due to conformance violations (GLOBULAR_CONFORMANCE=fail)"
+      else
+        # warn mode: continue but alert user
+        log_info "⚠  Installation will continue (GLOBULAR_CONFORMANCE=warn)"
+        log_info "   Set GLOBULAR_CONFORMANCE=fail to enforce conformance before v1.0"
+        echo ""
+      fi
     fi
   else
-    log_substep "Conformance tests not found (skipping)"
+    log_substep "Conformance script not found: $CONFORMANCE_SCRIPT"
+    log_substep "Skipping conformance checks"
+
+    if [[ "$CONFORMANCE_MODE" == "fail" ]]; then
+      die "Conformance script missing but GLOBULAR_CONFORMANCE=fail (cannot enforce)"
+    fi
   fi
+else
+  log_substep "Conformance tests disabled (GLOBULAR_CONFORMANCE=off)"
 fi
 
 echo ""

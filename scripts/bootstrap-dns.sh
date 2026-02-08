@@ -12,23 +12,30 @@ STATE_DIR="${STATE_DIR:-/var/lib/globular}"
 
 echo "[bootstrap-dns] Waiting for DNS service to be ready..."
 
-# Wait for DNS service to respond
+# Wait for DNS service to be fully ready (both gRPC and port 53)
 MAX_WAIT=30
 DNS_READY=0
 for i in $(seq 1 $MAX_WAIT); do
-    if globular dns domains 2>/dev/null | grep -q "globular.internal"; then
-        DNS_READY=1
-        break
+    # Check 1: gRPC service responds (any response means it's up)
+    if globular dns domains >/dev/null 2>&1; then
+        # Check 2: Port 53 UDP listener is bound
+        if ss -ulnp 2>/dev/null | grep -qE ':53\s.*dns_server'; then
+            DNS_READY=1
+            break
+        fi
     fi
     sleep 1
 done
 
 if [[ $DNS_READY -eq 0 ]]; then
     echo "[bootstrap-dns] ERROR: DNS service not ready after ${MAX_WAIT}s" >&2
+    echo "[bootstrap-dns] Debug info:" >&2
+    echo "  gRPC status: $(globular dns domains 2>&1 | head -1)" >&2
+    echo "  Port 53 status: $(ss -ulnp 2>/dev/null | grep ':53\s' || echo 'not listening')" >&2
     exit 1
 fi
 
-echo "[bootstrap-dns] ✓ DNS service ready"
+echo "[bootstrap-dns] ✓ DNS service ready (gRPC + port 53)"
 
 # Determine node IP (prefer non-loopback)
 NODE_IP=$(hostname -I | awk '{print $1}')
@@ -50,9 +57,9 @@ echo "  ✓ n0.globular.internal. → $NODE_IP"
 globular dns a set api.globular.internal. "$NODE_IP" --ttl 300
 echo "  ✓ api.globular.internal. → $NODE_IP"
 
-# Optional: Add wildcard for all services (uncomment if desired)
-# globular dns a set "*.globular.internal." "$NODE_IP" --ttl 300
-# echo "  ✓ *.globular.internal. → $NODE_IP"
+# Wildcard for all undefined subdomains (catches service discovery)
+globular dns a set "*.globular.internal." "$NODE_IP" --ttl 300
+echo "  ✓ *.globular.internal. → $NODE_IP (wildcard)"
 
 echo ""
 echo "[bootstrap-dns] ✓ DNS bootstrap complete"

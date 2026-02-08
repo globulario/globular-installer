@@ -66,12 +66,22 @@ EOF
     echo "[setup-config] ✓ Configuration file created with Protocol=https, Domain=${DOMAIN}"
 fi
 
-# Set ownership if running as root AND globular user exists
-if [[ $EUID -eq 0 ]] && id globular >/dev/null 2>&1; then
-    chown globular:globular "${CONFIG_FILE}"
-    echo "[setup-config] ✓ Ownership set to globular:globular"
-elif [[ $EUID -eq 0 ]]; then
-    echo "[setup-config] → globular user not yet created, ownership will be set later"
+# Set ownership and permissions if running as root
+if [[ $EUID -eq 0 ]]; then
+    # Ensure state directory is accessible
+    chmod 755 "${STATE_DIR}"
+
+    # Config file should be world-readable (contains service discovery info, no secrets)
+    chmod 644 "${CONFIG_FILE}"
+
+    if id globular >/dev/null 2>&1; then
+        chown globular:globular "${CONFIG_FILE}"
+        echo "[setup-config] ✓ Ownership set to globular:globular"
+    else
+        echo "[setup-config] → globular user not yet created, ownership will be set later"
+    fi
+
+    echo "[setup-config] ✓ Permissions set (config.json: 644, state dir: 755)"
 fi
 
 echo "[setup-config] Configuration bootstrap complete"

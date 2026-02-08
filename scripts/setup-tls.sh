@@ -178,6 +178,26 @@ setup_etcd_client_certs
 if [[ $EUID -eq 0 ]] && id globular >/dev/null 2>&1; then
     chown -R globular:globular "${PKI_DIR}" "${TLS_DIR}" "${MINIO_CERTS_DIR}" "${STATE_DIR}/tls"
     echo "[setup-tls] ✓ Ownership set to globular:globular"
+
+    # Make CA certificates world-readable (public keys)
+    # Private keys remain accessible only to globular user
+    chmod 755 "${PKI_DIR}" "${TLS_DIR}"
+    chmod 644 "${PKI_DIR}/ca.pem" "${PKI_DIR}/ca.crt" 2>/dev/null || true
+    chmod 644 "${TLS_DIR}/ca.pem" "${TLS_DIR}/ca.crt" 2>/dev/null || true
+    chmod 644 "${TLS_DIR}/fullchain.pem" "${TLS_DIR}/server.crt" 2>/dev/null || true
+    chmod 400 "${PKI_DIR}/ca.key" 2>/dev/null || true
+    chmod 400 "${TLS_DIR}/privkey.pem" "${TLS_DIR}/server.key" 2>/dev/null || true
+
+    # Make etcd client certificates accessible (for service discovery)
+    chmod 755 "${STATE_DIR}/tls" 2>/dev/null || true
+    chmod 755 "${STATE_DIR}/tls/etcd" 2>/dev/null || true
+    chmod 644 "${STATE_DIR}/tls/etcd/ca.crt" 2>/dev/null || true
+    chmod 644 "${STATE_DIR}/tls/etcd/server.crt" 2>/dev/null || true
+    chmod 644 "${STATE_DIR}/tls/etcd/client.crt" 2>/dev/null || true
+    chmod 400 "${STATE_DIR}/tls/etcd/server.pem" 2>/dev/null || true
+    chmod 400 "${STATE_DIR}/tls/etcd/client.pem" 2>/dev/null || true
+
+    echo "[setup-tls] ✓ CA certificates set to world-readable"
 elif [[ $EUID -eq 0 ]]; then
     echo "[setup-tls] → globular user not yet created, ownership will be set during package installation"
 fi

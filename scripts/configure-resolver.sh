@@ -31,10 +31,65 @@ else
 fi
 
 echo ""
-echo "[configure-resolver] Step 2: Configure system DNS resolver..."
+echo "[configure-resolver] Step 2: Check for port 53 conflicts..."
 
-# Detect resolver system
-if systemctl is-active --quiet systemd-resolved; then
+# Check if another service is already using port 53
+if ss -ulnp 2>/dev/null | grep -E ':53\s' | grep -v dns_server >/dev/null; then
+    echo "  ⚠ WARNING: Another process is already listening on port 53"
+    echo ""
+    ss -ulnp 2>/dev/null | grep -E ':53\s' | grep -v dns_server
+    echo ""
+    echo "  Common conflicts and solutions:"
+    echo "    - dnsmasq:           sudo systemctl stop dnsmasq && sudo systemctl disable dnsmasq"
+    echo "    - systemd-resolved:  Edit /etc/systemd/resolved.conf, set DNSStubListener=no"
+    echo "    - bind9/named:       sudo systemctl stop bind9 && sudo systemctl disable bind9"
+    echo ""
+    echo "  Note: Globular DNS service may fail to start until port 53 is free"
+    echo ""
+fi
+
+echo ""
+echo "[configure-resolver] Step 3: Configure system DNS resolver..."
+
+# Detect resolver system (check NetworkManager FIRST - most common on Mint/Ubuntu Desktop)
+if command -v nmcli >/dev/null 2>&1 && systemctl is-active --quiet NetworkManager 2>/dev/null; then
+    echo "  → Using NetworkManager (split-DNS)"
+
+    # Get active connection(s)
+    ACTIVE_CONNS=$(nmcli -t -f NAME connection show --active 2>/dev/null)
+
+    if [[ -z "$ACTIVE_CONNS" ]]; then
+        echo "  ⚠ Warning: No active NetworkManager connections found"
+        echo "  Falling back to manual configuration instructions"
+    else
+        # Configure each active connection for split-DNS
+        while IFS= read -r CONN; do
+            if [[ -z "$CONN" ]]; then
+                continue
+            fi
+
+            echo "  → Configuring connection: $CONN"
+
+            # Add 127.0.0.1 as additional DNS server (not replacing existing)
+            # Use ipv4.dns-search to limit scope to globular.internal
+            nmcli connection modify "$CONN" \
+                +ipv4.dns "127.0.0.1" \
+                +ipv4.dns-search "globular.internal" 2>/dev/null || {
+                echo "  ⚠ Warning: Could not modify connection $CONN"
+                continue
+            }
+
+            # Apply changes (bring connection up to reload settings)
+            nmcli connection up "$CONN" >/dev/null 2>&1 || true
+
+            echo "  ✓ $CONN configured for globular.internal split-DNS"
+        done <<< "$ACTIVE_CONNS"
+
+        echo "  ✓ NetworkManager configured for *.globular.internal"
+        echo "  ✓ System will query 127.0.0.1 for globular.internal domain"
+    fi
+
+elif systemctl is-active --quiet systemd-resolved 2>/dev/null; then
     echo "  → Using systemd-resolved (split-DNS)"
 
     # Create configuration directory
@@ -54,25 +109,27 @@ EOF
     echo "  ✓ systemd-resolved configured for globular.internal zone"
     echo "  ✓ System will query 127.0.0.1 for *.globular.internal"
 
-elif command -v resolvconf >/dev/null 2>&1; then
-    echo "  → Using resolvconf"
-
-    # Add nameserver to resolvconf
-    echo "nameserver 127.0.0.1" | resolvconf -a globular
-
-    echo "  ✓ resolvconf configured"
-
 else
-    echo "  ⚠ No supported resolver system found (systemd-resolved or resolvconf)"
+    echo "  ⚠ No supported resolver system found (NetworkManager, systemd-resolved)"
     echo ""
     echo "  Manual configuration required:"
-    echo "  1. Ensure /etc/resolv.conf includes: nameserver 127.0.0.1"
-    echo "  2. Or configure your DNS system to forward *.globular.internal to 127.0.0.1"
+    echo "  For NetworkManager:"
+    echo "    nmcli connection modify <connection-name> +ipv4.dns 127.0.0.1"
+    echo "    nmcli connection modify <connection-name> +ipv4.dns-search globular.internal"
+    echo ""
+    echo "  For systemd-resolved:"
+    echo "    Create /etc/systemd/resolved.conf.d/globular.conf with:"
+    echo "    [Resolve]"
+    echo "    DNS=127.0.0.1"
+    echo "    Domains=~globular.internal"
+    echo ""
+    echo "  For other systems:"
+    echo "    Configure your DNS to forward *.globular.internal queries to 127.0.0.1"
     echo ""
 fi
 
 echo ""
-echo "[configure-resolver] Step 3: Verification..."
+echo "[configure-resolver] Step 4: Verification..."
 
 # Test if resolver is configured
 if command -v resolvectl >/dev/null 2>&1; then
