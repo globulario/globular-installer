@@ -241,6 +241,13 @@ if id globular >/dev/null 2>&1; then
     chown -R globular:globular /var/lib/globular/tls/etcd
   fi
   log_success "TLS files ownership set to globular:globular"
+
+  # Restart services that depend on TLS certificates
+  log_substep "Restarting services to apply TLS ownership changes..."
+  systemctl restart globular-etcd.service 2>/dev/null || true
+  systemctl restart globular-minio.service 2>/dev/null || true
+  sleep 3  # Wait for services to restart with correct cert permissions
+  log_success "Services restarted with correct TLS ownership"
 else
   log_substep "Warning: globular user not found, skipping ownership fix"
 fi
@@ -272,6 +279,9 @@ if ! systemctl is-active --quiet globular-minio.service; then
 fi
 log_success "MinIO service started"
 
+log_step "CLI Tools (needed for bucket provisioning)"
+install_list "${CMDS_PKGS[@]}"
+
 log_step "MinIO Bucket Provisioning"
 if [[ -x "$SCRIPT_DIR/ensure-minio-buckets.sh" ]]; then
   "$SCRIPT_DIR/ensure-minio-buckets.sh"
@@ -282,9 +292,6 @@ fi
 
 log_step "Data Layer (persistence)"
 install_list "${DATA_LAYER_PKGS[@]}"
-
-log_step "CLI Tools"
-install_list "${CMDS_PKGS[@]}"
 
 log_step "MinIO Bucket Setup"
 if [[ -x "$SCRIPT_DIR/setup-minio.sh" ]]; then

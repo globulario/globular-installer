@@ -12,12 +12,44 @@ if [[ ! -d "${CONTRACT_DIR}" ]]; then
   mkdir -p "${CONTRACT_DIR}"
 fi
 
+# Always ensure credentials file exists and is valid
 if [[ ! -f "${CRED_FILE}" ]]; then
   echo "[setup-minio-contract] Creating default credentials file at ${CRED_FILE}..."
   mkdir -p "$(dirname "${CRED_FILE}")"
   echo "globular:globularadmin" > "${CRED_FILE}"
   chmod 600 "${CRED_FILE}"
+
+  # Set ownership to globular user if it exists
+  if id globular >/dev/null 2>&1; then
+    chown globular:globular "${CRED_FILE}"
+    echo "[setup-minio-contract] Set credentials file ownership to globular:globular"
+  fi
+else
+  echo "[setup-minio-contract] Credentials file already exists at ${CRED_FILE}"
+
+  # Verify existing file is readable and valid
+  if [[ ! -r "${CRED_FILE}" ]]; then
+    echo "[setup-minio-contract] WARNING: Cannot read existing credentials file, recreating..."
+    echo "globular:globularadmin" > "${CRED_FILE}"
+    chmod 600 "${CRED_FILE}"
+    if id globular >/dev/null 2>&1; then
+      chown globular:globular "${CRED_FILE}"
+    fi
+  fi
 fi
+
+# Verify credentials file was created successfully
+if [[ ! -f "${CRED_FILE}" ]]; then
+  echo "ERROR: Failed to create credentials file at ${CRED_FILE}" >&2
+  exit 1
+fi
+
+# Ensure minio directory has correct ownership
+if id globular >/dev/null 2>&1; then
+  chown -R globular:globular "$(dirname "${CRED_FILE}")" 2>/dev/null || true
+fi
+
+echo "[setup-minio-contract] ✓ Credentials file ready at ${CRED_FILE}"
 
 if ! IFS=":" read -r MINIO_ACCESS_KEY MINIO_SECRET_KEY < "${CRED_FILE}"; then
   echo "ERROR: Unable to read credentials from ${CRED_FILE} (expected 'access:secret' format)." >&2

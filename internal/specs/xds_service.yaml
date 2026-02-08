@@ -80,6 +80,17 @@ steps:
           runtime:
             state_dir: "{{.StateDir}}"
 
+      # Watcher config for service discovery from etcd
+      - path: "{{.StateDir}}/xds/config.json"
+        owner: globular
+        group: globular
+        mode: 0644
+        atomic: true
+        content: |
+          {
+            "etcd_endpoints": ["https://127.0.0.1:2379"]
+          }
+
   # Install binaries/config from packaged payload when available.
   - id: install-xds-binary
     type: install_package_payload

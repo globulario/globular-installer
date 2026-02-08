@@ -25,9 +25,42 @@ fi
 # Additional wait for MinIO to be fully ready
 sleep 2
 
+# Debug: Check MinIO service status and logs
+echo "[ensure-minio-buckets] Checking MinIO service status..."
+systemctl status globular-minio.service --no-pager -l | head -20 || true
+
+# Debug: Check if MinIO is listening and on which protocol
+echo "[ensure-minio-buckets] Checking MinIO network status..."
+echo "  Port 9000 (API):"
+sudo netstat -tlnp | grep :9000 || echo "    Not listening"
+echo "  Port 9001 (Console):"
+sudo netstat -tlnp | grep :9001 || echo "    Not listening"
+
+# Debug: Try to connect to MinIO to see if it's HTTP or HTTPS
+echo "[ensure-minio-buckets] Testing MinIO connectivity..."
+echo "  HTTP test:"
+curl -k -s -o /dev/null -w "    HTTP Status: %{http_code}\n" http://127.0.0.1:9000/minio/health/live 2>&1 || echo "    HTTP failed"
+echo "  HTTPS test:"
+curl -k -s -o /dev/null -w "    HTTPS Status: %{http_code}\n" https://127.0.0.1:9000/minio/health/live 2>&1 || echo "    HTTPS failed"
+
+# Debug: Check TLS certificates exist
+echo "[ensure-minio-buckets] Checking TLS certificates..."
+if [[ -f "${STATE_DIR}/.minio/certs/public.crt" ]]; then
+  echo "  ✓ public.crt exists: $(ls -lh "${STATE_DIR}/.minio/certs/public.crt")"
+else
+  echo "  ✗ public.crt MISSING at ${STATE_DIR}/.minio/certs/public.crt"
+fi
+if [[ -f "${STATE_DIR}/.minio/certs/private.key" ]]; then
+  echo "  ✓ private.key exists: $(ls -lh "${STATE_DIR}/.minio/certs/private.key")"
+else
+  echo "  ✗ private.key MISSING at ${STATE_DIR}/.minio/certs/private.key"
+fi
+
 # Read credentials
 if [[ ! -f "${CRED_FILE}" ]]; then
     echo "[ensure-minio-buckets] ERROR: Credentials file not found: ${CRED_FILE}" >&2
+    echo "[ensure-minio-buckets] This file should have been created by setup-minio-contract.sh" >&2
+    echo "[ensure-minio-buckets] Run: sudo /path/to/setup-minio-contract.sh" >&2
     exit 1
 fi
 
@@ -36,7 +69,7 @@ if ! IFS=":" read -r ACCESS_KEY SECRET_KEY < "${CRED_FILE}"; then
     exit 1
 fi
 
-# Configure mc client
+# Configure mc client - try HTTPS first
 export MC_HOST_local="https://${ACCESS_KEY}:${SECRET_KEY}@127.0.0.1:9000"
 MC_CONFIG_DIR="${HOME}/.mc"
 mkdir -p "${MC_CONFIG_DIR}/certs/CAs"
@@ -48,18 +81,40 @@ fi
 
 # Test MinIO connection with retries
 MAX_RETRIES=10
+MINIO_PROTOCOL="https"
 for i in $(seq 1 $MAX_RETRIES); do
     if mc admin info local/ >/dev/null 2>&1; then
-        echo "[ensure-minio-buckets] MinIO connection successful"
+        echo "[ensure-minio-buckets] MinIO connection successful (${MINIO_PROTOCOL})"
         break
     fi
+
+    # On first failure, check if we should try HTTP instead
+    if [ $i -eq 1 ]; then
+        echo "[ensure-minio-buckets] HTTPS connection failed, checking if MinIO is running in HTTP mode..."
+        if curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:9000/minio/health/live 2>/dev/null | grep -q "200"; then
+            echo "[ensure-minio-buckets] WARNING: MinIO is running in HTTP mode (TLS not configured)"
+            echo "[ensure-minio-buckets] Switching to HTTP endpoint..."
+            export MC_HOST_local="http://${ACCESS_KEY}:${SECRET_KEY}@127.0.0.1:9000"
+            MINIO_PROTOCOL="http"
+            continue
+        fi
+    fi
+
     if [ $i -eq $MAX_RETRIES ]; then
         echo "[ensure-minio-buckets] ERROR: Cannot connect to MinIO after $MAX_RETRIES attempts" >&2
+        echo "[ensure-minio-buckets] Last error output:" >&2
+        mc admin info local/ 2>&1 | head -10 >&2
         exit 1
     fi
     echo "[ensure-minio-buckets] Waiting for MinIO to be ready... (attempt $i/$MAX_RETRIES)"
     sleep 2
 done
+
+# Warn if using HTTP
+if [[ "${MINIO_PROTOCOL}" == "http" ]]; then
+    echo "[ensure-minio-buckets] ⚠️  WARNING: MinIO is running in HTTP mode (insecure)"
+    echo "[ensure-minio-buckets] ⚠️  TLS certificates may be missing or misconfigured"
+fi
 
 # Read bucket name and prefix from contract
 BUCKET_NAME="globular"
