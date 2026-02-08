@@ -96,6 +96,31 @@ else
   die "setup-tls.sh not found or not executable"
 fi
 
+# Generate root/admin client certificates for CLI and service-to-service communication
+log_step "Client Certificate Generation"
+if [[ -x "$SCRIPT_DIR/generate-user-client-cert.sh" ]]; then
+  # Generate for root user (for sudo operations)
+  if "$SCRIPT_DIR/generate-user-client-cert.sh" 2>&1 | tee /tmp/client-cert-root.log; then
+    log_success "Root client certificates generated"
+  else
+    die "Root client certificate generation failed (check /tmp/client-cert-root.log) - CLI will not work without this"
+  fi
+
+  # Also generate for the actual user who invoked sudo (if different from root)
+  if [[ -n "${SUDO_USER:-}" ]] && [[ "${SUDO_USER}" != "root" ]]; then
+    # Run as the actual user - the script will handle sudo for signing
+    if su - "$SUDO_USER" -c "$SCRIPT_DIR/generate-user-client-cert.sh" 2>&1 | tee "/tmp/client-cert-$SUDO_USER.log"; then
+      log_success "User ($SUDO_USER) client certificates generated"
+      # Fix ownership
+      "$SCRIPT_DIR/fix-client-cert-ownership.sh" "$SUDO_USER" 2>&1 | tee "/tmp/client-cert-fix-$SUDO_USER.log" || true
+    else
+      die "User ($SUDO_USER) client certificate generation failed (check /tmp/client-cert-$SUDO_USER.log) - CLI will not work without this"
+    fi
+  fi
+else
+  die "generate-user-client-cert.sh not found - CLI will not work without client certificates"
+fi
+
 # Configure ScyllaDB with TLS (if ScyllaDB is installed)
 if systemctl list-unit-files | grep -q "scylla-server.service"; then
   log_step "ScyllaDB TLS Configuration"
