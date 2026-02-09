@@ -89,22 +89,17 @@ if [[ ! -f "${PKI_DIR}/ca.key" ]]; then
     exit 1
 fi
 
-# Create temp file for signed cert (sudo will create as root)
-TEMP_CERT=$(mktemp)
-
-sudo openssl x509 -req \
+# Sign certificate (must be run as root - script already called with sudo)
+openssl x509 -req \
     -in "${DOMAIN_DIR}/client.csr" \
     -CA "${PKI_DIR}/ca.crt" \
     -CAkey "${PKI_DIR}/ca.key" \
     -CAcreateserial \
-    -out "${TEMP_CERT}" \
+    -out "${DOMAIN_DIR}/client.crt" \
     -days 365 \
     -extfile "${DOMAIN_DIR}/client.conf" \
     -extensions v3_req 2>/dev/null
 
-# Copy with correct ownership
-cp "${TEMP_CERT}" "${DOMAIN_DIR}/client.crt"
-rm "${TEMP_CERT}"
 chmod 644 "${DOMAIN_DIR}/client.crt"
 echo "  ✓ Certificate signed"
 

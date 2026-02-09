@@ -126,11 +126,13 @@ if [[ -x "$SCRIPT_DIR/generate-user-client-cert.sh" ]]; then
 
   # Also generate for the actual user who invoked sudo (if different from root)
   if [[ -n "${SUDO_USER:-}" ]] && [[ "${SUDO_USER}" != "root" ]]; then
-    # Run as the actual user - the script will handle sudo for signing
-    if su - "$SUDO_USER" -c "$SCRIPT_DIR/generate-user-client-cert.sh" 2>&1 | tee "/tmp/client-cert-$SUDO_USER.log"; then
+    # Run as root (script will detect SUDO_USER automatically)
+    if "$SCRIPT_DIR/generate-user-client-cert.sh" 2>&1 | tee "/tmp/client-cert-$SUDO_USER.log"; then
+      # Fix ownership of generated certificates
+      if [[ -x "$SCRIPT_DIR/fix-client-cert-ownership.sh" ]]; then
+        "$SCRIPT_DIR/fix-client-cert-ownership.sh" "$SUDO_USER" 2>&1 | tee "/tmp/client-cert-fix-$SUDO_USER.log" || true
+      fi
       log_success "User ($SUDO_USER) client certificates generated"
-      # Fix ownership
-      "$SCRIPT_DIR/fix-client-cert-ownership.sh" "$SUDO_USER" 2>&1 | tee "/tmp/client-cert-fix-$SUDO_USER.log" || true
     else
       die "User ($SUDO_USER) client certificate generation failed (check /tmp/client-cert-$SUDO_USER.log) - CLI will not work without this"
     fi
