@@ -37,6 +37,10 @@ fi
 
 echo "[bootstrap-dns] ✓ DNS service ready (gRPC + port 53)"
 
+# Give DNS service extra time to fully initialize its database
+echo "[bootstrap-dns] Waiting for DNS database initialization..."
+sleep 3
+
 # Determine node IP (prefer non-loopback)
 NODE_IP=$(hostname -I | awk '{print $1}')
 if [[ -z "$NODE_IP" || "$NODE_IP" == "127.0.0.1" ]]; then
@@ -50,15 +54,15 @@ echo "[bootstrap-dns] Node IP: $NODE_IP"
 echo "[bootstrap-dns] Creating DNS records..."
 
 # n0.globular.internal → node IP (this node)
-globular dns a set n0.globular.internal. "$NODE_IP" --ttl 300
+globular dns a set n0.globular.internal. "$NODE_IP" --ttl 300 --timeout 10s
 echo "  ✓ n0.globular.internal. → $NODE_IP"
 
 # api.globular.internal → node IP (API endpoint)
-globular dns a set api.globular.internal. "$NODE_IP" --ttl 300
+globular dns a set api.globular.internal. "$NODE_IP" --ttl 300 --timeout 10s
 echo "  ✓ api.globular.internal. → $NODE_IP"
 
 # Wildcard for all undefined subdomains (catches service discovery)
-globular dns a set "*.globular.internal." "$NODE_IP" --ttl 300
+globular dns a set "*.globular.internal." "$NODE_IP" --ttl 300 --timeout 10s
 echo "  ✓ *.globular.internal. → $NODE_IP (wildcard)"
 
 echo ""
