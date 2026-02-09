@@ -110,6 +110,14 @@ chmod 600 "${DOMAIN_DIR}/client.pem"
 # Cleanup
 rm -f "${DOMAIN_DIR}/client.csr" "${DOMAIN_DIR}/client.conf"
 
+# Fix ownership - critical for user access!
+# When run via sudo, files are created as root but need to be owned by the actual user
+if [[ "${ACTUAL_USER}" != "root" ]]; then
+    echo "→ Setting ownership to ${ACTUAL_USER}..."
+    chown -R "${ACTUAL_USER}:${ACTUAL_USER}" "${DOMAIN_DIR}"
+    echo "  ✓ Ownership set to ${ACTUAL_USER}:${ACTUAL_USER}"
+fi
+
 echo ""
 echo "━━━ Client Certificate Generated Successfully ━━━"
 echo ""
