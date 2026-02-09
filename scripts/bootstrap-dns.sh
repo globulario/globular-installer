@@ -11,20 +11,26 @@ export GLOBULAR_SKIP_ETCD_DISCOVERY=1
 STATE_DIR="${STATE_DIR:-/var/lib/globular}"
 
 # Determine user for client certificates (handle sudo context)
-if [[ -n "${SUDO_USER:-}" ]]; then
-    # Script run with sudo - use original user's certificates
+# Try SUDO_USER first (original user who invoked sudo), fallback to finding any valid certs
+if [[ -n "${SUDO_USER:-}" ]] && [[ "${SUDO_USER}" != "root" ]]; then
     CLIENT_USER="$SUDO_USER"
     CLIENT_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+    CA_PATH="${CLIENT_HOME}/.config/globular/tls/localhost/ca.crt"
+elif [[ -f "/home/dave/.config/globular/tls/localhost/ca.crt" ]]; then
+    # Fallback: use dave's certificates if they exist (common case)
+    CLIENT_USER="dave"
+    CLIENT_HOME="/home/dave"
+    CA_PATH="/home/dave/.config/globular/tls/localhost/ca.crt"
 else
-    # Script run directly as root or regular user
-    CLIENT_USER="${USER}"
-    CLIENT_HOME="${HOME}"
+    # Last resort: try root's certificates
+    CLIENT_USER="${USER:-root}"
+    CLIENT_HOME="${HOME:-/root}"
+    CA_PATH="${CLIENT_HOME}/.config/globular/tls/localhost/ca.crt"
 fi
 
-# Set up CA certificate path for globular CLI
-CA_PATH="${CLIENT_HOME}/.config/globular/tls/localhost/ca.crt"
 if [[ ! -f "$CA_PATH" ]]; then
     echo "[bootstrap-dns] ERROR: CA certificate not found at $CA_PATH" >&2
+    echo "[bootstrap-dns] Tried: SUDO_USER, /home/dave, ${CLIENT_HOME}" >&2
     echo "[bootstrap-dns] Client certificates must be generated before DNS bootstrap" >&2
     exit 1
 fi
