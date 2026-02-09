@@ -32,9 +32,10 @@ fi
 echo "[bootstrap-dns] Using client certificates for user: $CLIENT_USER"
 echo "[bootstrap-dns] CA certificate: $CA_PATH"
 
-# Create wrapper function for globular commands with proper CA
+# Create wrapper function for globular commands with proper CA and HOME
+# The CLI needs HOME to find client certificates for mTLS authentication
 globular_dns() {
-    globular --ca "$CA_PATH" "$@"
+    HOME="$CLIENT_HOME" globular --ca "$CA_PATH" "$@"
 }
 
 echo "[bootstrap-dns] Waiting for DNS service to be ready..."
