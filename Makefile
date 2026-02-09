@@ -24,11 +24,11 @@ ensure-cache:
 
 # Build the installer binary (the main package lives under cmd/globular-installer)
 build: ensure-cache bin sync-specs
-	go build -o $(BIN) $(CMD_PKG)
+	go build -buildvcs=false -o $(BIN) $(CMD_PKG)
 
 # Optional: build all packages (useful for catching compile errors across the repo)
 build-all: ensure-cache
-	go build ./...
+	go build -buildvcs=false ./...
 
 test: ensure-cache
 	go test ./...
