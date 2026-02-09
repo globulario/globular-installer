@@ -65,12 +65,43 @@ gen_service_cert() {
     # Generate service private key (RSA 2048)
     gen_rsa_key "${keyfile}" 2048
 
+    # Auto-detect node IP and hostname for SANs
+    local NODE_IP=$(hostname -I | awk '{print $1}')
+    local NODE_HOSTNAME=$(hostname -s)
+    local NODE_FQDN=$(hostname -f 2>/dev/null || echo "${NODE_HOSTNAME}")
+
+    # Build SANs dynamically
+    local SANS="DNS:localhost,DNS:*.localhost,IP:127.0.0.1,IP:::1"
+
+    # Add node IP if detected and not loopback
+    if [[ -n "${NODE_IP}" ]] && [[ "${NODE_IP}" != "127.0.0.1" ]]; then
+        SANS="${SANS},IP:${NODE_IP}"
+        echo "[setup-tls]   Adding node IP: ${NODE_IP}"
+    fi
+
+    # Add hostname
+    if [[ -n "${NODE_HOSTNAME}" ]]; then
+        SANS="${SANS},DNS:${NODE_HOSTNAME}"
+        echo "[setup-tls]   Adding hostname: ${NODE_HOSTNAME}"
+    fi
+
+    # Add FQDN if different from hostname
+    if [[ -n "${NODE_FQDN}" ]] && [[ "${NODE_FQDN}" != "${NODE_HOSTNAME}" ]]; then
+        SANS="${SANS},DNS:${NODE_FQDN}"
+        echo "[setup-tls]   Adding FQDN: ${NODE_FQDN}"
+    fi
+
+    # Add globular.internal domain wildcards
+    SANS="${SANS},DNS:*.globular.internal,DNS:globular.internal"
+
+    echo "[setup-tls]   SANs: ${SANS}"
+
     # Generate CSR with SANs
     openssl req -new \
         -key "${keyfile}" \
         -out "${csrfile}" \
         -subj "/CN=localhost/O=Globular" \
-        -addext "subjectAltName=DNS:localhost,DNS:*.localhost,IP:127.0.0.1,IP:::1"
+        -addext "subjectAltName=${SANS}"
 
     # Sign with CA (1 year validity)
     openssl x509 -req \
@@ -81,7 +112,7 @@ gen_service_cert() {
         -out "${crtfile}" \
         -days 365 \
         -sha256 \
-        -extfile <(printf "subjectAltName=DNS:localhost,DNS:*.localhost,IP:127.0.0.1,IP:::1\nkeyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth,clientAuth")
+        -extfile <(printf "subjectAltName=${SANS}\nkeyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth,clientAuth")
 
     chmod 444 "${crtfile}"
     rm -f "${csrfile}"
