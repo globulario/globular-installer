@@ -153,14 +153,48 @@ setup_compat_symlinks() {
 }
 
 # Main execution
-echo "[setup-tls] Removing old ECDSA certificates..."
-rm -f "${PKI_DIR}/ca.key" "${PKI_DIR}/ca.crt" "${PKI_DIR}/ca.pem" "${PKI_DIR}/ca.srl"
-rm -f "${TLS_DIR}/privkey.pem" "${TLS_DIR}/fullchain.pem" "${TLS_DIR}/ca.pem"
-rm -f "${MINIO_CERTS_DIR}/public.crt" "${MINIO_CERTS_DIR}/private.key"
+# Check if CA exists and is RSA (idempotent - don't regenerate unnecessarily)
+CA_EXISTS=0
+CA_IS_RSA=0
 
-echo "[setup-tls] Generating new RSA certificates..."
-gen_ca
-gen_service_cert
+if [[ -f "${PKI_DIR}/ca.key" ]] && [[ -f "${PKI_DIR}/ca.crt" ]]; then
+    CA_EXISTS=1
+    # Check if CA key is RSA (not ECDSA)
+    if openssl rsa -in "${PKI_DIR}/ca.key" -check -noout >/dev/null 2>&1; then
+        CA_IS_RSA=1
+    fi
+fi
+
+if [[ $CA_EXISTS -eq 1 ]] && [[ $CA_IS_RSA -eq 1 ]]; then
+    echo "[setup-tls] ✓ RSA CA already exists, reusing..."
+    CA_SERIAL=$(openssl x509 -in "${PKI_DIR}/ca.crt" -noout -serial)
+    echo "[setup-tls]   CA Serial: ${CA_SERIAL}"
+else
+    if [[ $CA_EXISTS -eq 1 ]]; then
+        echo "[setup-tls] Removing old ECDSA CA..."
+        rm -f "${PKI_DIR}/ca.key" "${PKI_DIR}/ca.crt" "${PKI_DIR}/ca.pem" "${PKI_DIR}/ca.srl"
+    fi
+    echo "[setup-tls] Generating new RSA CA..."
+    gen_ca
+fi
+
+# Check if service certificate exists and is valid
+CERT_VALID=0
+if [[ -f "${TLS_DIR}/privkey.pem" ]] && [[ -f "${TLS_DIR}/fullchain.pem" ]]; then
+    # Check if cert is signed by current CA
+    if openssl verify -CAfile "${PKI_DIR}/ca.crt" "${TLS_DIR}/fullchain.pem" >/dev/null 2>&1; then
+        CERT_VALID=1
+    fi
+fi
+
+if [[ $CERT_VALID -eq 1 ]]; then
+    echo "[setup-tls] ✓ Service certificate is valid, skipping regeneration..."
+else
+    echo "[setup-tls] Generating new service certificate..."
+    rm -f "${TLS_DIR}/privkey.pem" "${TLS_DIR}/fullchain.pem" "${TLS_DIR}/ca.pem"
+    rm -f "${MINIO_CERTS_DIR}/public.crt" "${MINIO_CERTS_DIR}/private.key"
+    gen_service_cert
+fi
 
 # Always setup MinIO certs (idempotent)
 setup_minio_certs
