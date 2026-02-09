@@ -46,10 +46,14 @@ TEST_IP="127.0.0.1"
 
 for i in $(seq 1 $MAX_WAIT); do
     # Try to create a test record
-    globular --timeout 5s dns a set "$TEST_RECORD" "$TEST_IP" --ttl 60 >/dev/null 2>&1
+    SET_OUTPUT=$(globular --timeout 5s dns a set "$TEST_RECORD" "$TEST_IP" --ttl 60 2>&1)
+    SET_EXIT=$?
 
     # Verify it actually exists (don't trust exit code due to CLI bug)
-    if globular --timeout 5s dns a get "$TEST_RECORD" 2>/dev/null | grep -q "$TEST_IP"; then
+    GET_OUTPUT=$(globular --timeout 5s dns a get "$TEST_RECORD" 2>&1)
+    GET_EXIT=$?
+
+    if echo "$GET_OUTPUT" | grep -q "$TEST_IP"; then
         # Cleanup test record
         globular dns a remove "$TEST_RECORD" >/dev/null 2>&1 || true
         DNS_WRITABLE=1
@@ -61,7 +65,12 @@ done
 
 if [[ $DNS_WRITABLE -eq 0 ]]; then
     echo "[bootstrap-dns] ERROR: DNS database not ready for writes after ${MAX_WAIT}s" >&2
-    echo "[bootstrap-dns] This may indicate DNS service is not functioning correctly" >&2
+    echo "[bootstrap-dns] Diagnostics:" >&2
+    echo "  Set command exit: $SET_EXIT" >&2
+    echo "  Set output: $SET_OUTPUT" >&2
+    echo "  Get command exit: $GET_EXIT" >&2
+    echo "  Get output: $GET_OUTPUT" >&2
+    echo "[bootstrap-dns] DNS service may not be functioning correctly" >&2
     exit 1
 fi
 
