@@ -37,9 +37,29 @@ fi
 
 echo "[bootstrap-dns] ✓ DNS service ready (gRPC + port 53)"
 
-# Give DNS service extra time to fully initialize its database
-echo "[bootstrap-dns] Waiting for DNS database initialization..."
-sleep 3
+# Wait for DNS service to be ready for write operations
+echo "[bootstrap-dns] Waiting for DNS database to accept writes..."
+MAX_WAIT=30
+DNS_WRITABLE=0
+TEST_RECORD="bootstrap-test.globular.internal."
+TEST_IP="127.0.0.1"
+
+for i in $(seq 1 $MAX_WAIT); do
+    # Try to create a test record
+    if globular --timeout 5s dns a set "$TEST_RECORD" "$TEST_IP" --ttl 60 >/dev/null 2>&1; then
+        # Cleanup test record
+        globular dns a remove "$TEST_RECORD" >/dev/null 2>&1 || true
+        DNS_WRITABLE=1
+        echo "[bootstrap-dns] ✓ DNS database ready for writes (after ${i}s)"
+        break
+    fi
+    sleep 1
+done
+
+if [[ $DNS_WRITABLE -eq 0 ]]; then
+    echo "[bootstrap-dns] ERROR: DNS database not ready for writes after ${MAX_WAIT}s" >&2
+    exit 1
+fi
 
 # Determine node IP (prefer non-loopback)
 NODE_IP=$(hostname -I | awk '{print $1}')
@@ -62,16 +82,28 @@ echo "[bootstrap-dns] Node IP: $NODE_IP"
 echo "[bootstrap-dns] Creating DNS records..."
 
 # <hostname>.globular.internal → node IP (this node)
-globular --timeout 10s dns a set "${NODE_HOSTNAME}.globular.internal." "$NODE_IP" --ttl 300
-echo "  ✓ ${NODE_HOSTNAME}.globular.internal. → $NODE_IP"
+if globular --timeout 10s dns a set "${NODE_HOSTNAME}.globular.internal." "$NODE_IP" --ttl 300 2>&1; then
+    echo "  ✓ ${NODE_HOSTNAME}.globular.internal. → $NODE_IP"
+else
+    echo "[bootstrap-dns] ERROR: Failed to create ${NODE_HOSTNAME}.globular.internal record" >&2
+    exit 1
+fi
 
 # api.globular.internal → node IP (API endpoint)
-globular --timeout 10s dns a set api.globular.internal. "$NODE_IP" --ttl 300
-echo "  ✓ api.globular.internal. → $NODE_IP"
+if globular --timeout 10s dns a set api.globular.internal. "$NODE_IP" --ttl 300 2>&1; then
+    echo "  ✓ api.globular.internal. → $NODE_IP"
+else
+    echo "[bootstrap-dns] ERROR: Failed to create api.globular.internal record" >&2
+    exit 1
+fi
 
 # Wildcard for all undefined subdomains (catches service discovery)
-globular --timeout 10s dns a set "*.globular.internal." "$NODE_IP" --ttl 300
-echo "  ✓ *.globular.internal. → $NODE_IP (wildcard)"
+if globular --timeout 10s dns a set "*.globular.internal." "$NODE_IP" --ttl 300 2>&1; then
+    echo "  ✓ *.globular.internal. → $NODE_IP (wildcard)"
+else
+    echo "[bootstrap-dns] ERROR: Failed to create wildcard record" >&2
+    exit 1
+fi
 
 echo ""
 echo "[bootstrap-dns] ✓ DNS bootstrap complete"
