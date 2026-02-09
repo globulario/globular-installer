@@ -48,14 +48,22 @@ if [[ -z "$NODE_IP" || "$NODE_IP" == "127.0.0.1" ]]; then
     exit 1
 fi
 
+# Get actual hostname (short name, not FQDN)
+NODE_HOSTNAME=$(hostname -s)
+if [[ -z "$NODE_HOSTNAME" ]]; then
+    echo "[bootstrap-dns] ERROR: Could not determine hostname" >&2
+    exit 1
+fi
+
+echo "[bootstrap-dns] Hostname: $NODE_HOSTNAME"
 echo "[bootstrap-dns] Node IP: $NODE_IP"
 
 # Add DNS A records for Day-0
 echo "[bootstrap-dns] Creating DNS records..."
 
-# n0.globular.internal → node IP (this node)
-globular dns a set n0.globular.internal. "$NODE_IP" --ttl 300 --timeout 10s
-echo "  ✓ n0.globular.internal. → $NODE_IP"
+# <hostname>.globular.internal → node IP (this node)
+globular dns a set "${NODE_HOSTNAME}.globular.internal." "$NODE_IP" --ttl 300 --timeout 10s
+echo "  ✓ ${NODE_HOSTNAME}.globular.internal. → $NODE_IP"
 
 # api.globular.internal → node IP (API endpoint)
 globular dns a set api.globular.internal. "$NODE_IP" --ttl 300 --timeout 10s
@@ -71,10 +79,10 @@ echo ""
 
 # Verify records
 echo "[bootstrap-dns] Verifying DNS records..."
-if dig @127.0.0.1 +short n0.globular.internal 2>/dev/null | grep -q "$NODE_IP"; then
-    echo "  ✓ n0.globular.internal resolves correctly"
+if dig @127.0.0.1 +short "${NODE_HOSTNAME}.globular.internal" 2>/dev/null | grep -q "$NODE_IP"; then
+    echo "  ✓ ${NODE_HOSTNAME}.globular.internal resolves correctly"
 else
-    echo "  ⚠ Warning: n0.globular.internal resolution test failed"
+    echo "  ⚠ Warning: ${NODE_HOSTNAME}.globular.internal resolution test failed"
 fi
 
 if dig @127.0.0.1 +short api.globular.internal 2>/dev/null | grep -q "$NODE_IP"; then
