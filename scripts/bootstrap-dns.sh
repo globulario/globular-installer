@@ -37,6 +37,16 @@ fi
 
 echo "[bootstrap-dns] ✓ DNS service ready (gRPC + port 53)"
 
+# Check if globular CLI is available
+if ! command -v globular >/dev/null 2>&1; then
+    echo "[bootstrap-dns] ERROR: globular command not found in PATH" >&2
+    echo "[bootstrap-dns] Expected location: /usr/local/bin/globular" >&2
+    echo "[bootstrap-dns] Make sure globular-cli-cmd package is installed" >&2
+    exit 1
+fi
+
+echo "[bootstrap-dns] Using globular CLI: $(command -v globular)"
+
 # Wait for DNS service to be ready for write operations
 echo "[bootstrap-dns] Waiting for DNS database to accept writes..."
 MAX_WAIT=30
@@ -45,13 +55,23 @@ TEST_RECORD="bootstrap-test.globular.internal."
 TEST_IP="127.0.0.1"
 
 for i in $(seq 1 $MAX_WAIT); do
-    # Try to create a test record
+    echo "[bootstrap-dns] Attempt $i/$MAX_WAIT: Testing DNS write..." >&2
+
+    # Try to create a test record (capture output, don't fail on error)
+    set +e
     SET_OUTPUT=$(globular --timeout 5s dns a set "$TEST_RECORD" "$TEST_IP" --ttl 60 2>&1)
     SET_EXIT=$?
+    set -e
+
+    echo "[bootstrap-dns]   Set exit code: $SET_EXIT" >&2
 
     # Verify it actually exists (don't trust exit code due to CLI bug)
+    set +e
     GET_OUTPUT=$(globular --timeout 5s dns a get "$TEST_RECORD" 2>&1)
     GET_EXIT=$?
+    set -e
+
+    echo "[bootstrap-dns]   Get exit code: $GET_EXIT" >&2
 
     if echo "$GET_OUTPUT" | grep -q "$TEST_IP"; then
         # Cleanup test record
