@@ -10,6 +10,33 @@ export GLOBULAR_SKIP_ETCD_DISCOVERY=1
 
 STATE_DIR="${STATE_DIR:-/var/lib/globular}"
 
+# Determine user for client certificates (handle sudo context)
+if [[ -n "${SUDO_USER:-}" ]]; then
+    # Script run with sudo - use original user's certificates
+    CLIENT_USER="$SUDO_USER"
+    CLIENT_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+else
+    # Script run directly as root or regular user
+    CLIENT_USER="${USER}"
+    CLIENT_HOME="${HOME}"
+fi
+
+# Set up CA certificate path for globular CLI
+CA_PATH="${CLIENT_HOME}/.config/globular/tls/localhost/ca.crt"
+if [[ ! -f "$CA_PATH" ]]; then
+    echo "[bootstrap-dns] ERROR: CA certificate not found at $CA_PATH" >&2
+    echo "[bootstrap-dns] Client certificates must be generated before DNS bootstrap" >&2
+    exit 1
+fi
+
+echo "[bootstrap-dns] Using client certificates for user: $CLIENT_USER"
+echo "[bootstrap-dns] CA certificate: $CA_PATH"
+
+# Create wrapper function for globular commands with proper CA
+globular_dns() {
+    globular --ca "$CA_PATH" "$@"
+}
+
 echo "[bootstrap-dns] Waiting for DNS service to be ready..."
 
 # Wait for DNS service to be fully ready (both gRPC and port 53)
@@ -17,7 +44,7 @@ MAX_WAIT=30
 DNS_READY=0
 for i in $(seq 1 $MAX_WAIT); do
     # Check 1: gRPC service responds (any response means it's up)
-    if globular dns domains >/dev/null 2>&1; then
+    if globular_dns dns domains >/dev/null 2>&1; then
         # Check 2: Port 53 UDP listener is bound
         if ss -ulnp 2>/dev/null | grep -qE ':53\s.*dns_server'; then
             DNS_READY=1
@@ -30,7 +57,7 @@ done
 if [[ $DNS_READY -eq 0 ]]; then
     echo "[bootstrap-dns] ERROR: DNS service not ready after ${MAX_WAIT}s" >&2
     echo "[bootstrap-dns] Debug info:" >&2
-    echo "  gRPC status: $(globular dns domains 2>&1 | head -1)" >&2
+    echo "  gRPC status: $(globular_dns dns domains 2>&1 | head -1)" >&2
     echo "  Port 53 status: $(ss -ulnp 2>/dev/null | grep ':53\s' || echo 'not listening')" >&2
     exit 1
 fi
@@ -59,7 +86,7 @@ for i in $(seq 1 $MAX_WAIT); do
 
     # Try to create a test record (capture output, don't fail on error)
     set +e
-    SET_OUTPUT=$(globular --timeout 5s dns a set "$TEST_RECORD" "$TEST_IP" --ttl 60 2>&1)
+    SET_OUTPUT=$(globular_dns --timeout 5s dns a set "$TEST_RECORD" "$TEST_IP" --ttl 60 2>&1)
     SET_EXIT=$?
     set -e
 
@@ -67,7 +94,7 @@ for i in $(seq 1 $MAX_WAIT); do
 
     # Verify it actually exists (don't trust exit code due to CLI bug)
     set +e
-    GET_OUTPUT=$(globular --timeout 5s dns a get "$TEST_RECORD" 2>&1)
+    GET_OUTPUT=$(globular_dns --timeout 5s dns a get "$TEST_RECORD" 2>&1)
     GET_EXIT=$?
     set -e
 
@@ -75,7 +102,7 @@ for i in $(seq 1 $MAX_WAIT); do
 
     if echo "$GET_OUTPUT" | grep -q "$TEST_IP"; then
         # Cleanup test record
-        globular dns a remove "$TEST_RECORD" >/dev/null 2>&1 || true
+        globular_dns dns a remove "$TEST_RECORD" >/dev/null 2>&1 || true
         DNS_WRITABLE=1
         echo "[bootstrap-dns] ✓ DNS database ready for writes (after ${i}s)"
         break
@@ -115,7 +142,7 @@ echo "[bootstrap-dns] Node IP: $NODE_IP"
 echo "[bootstrap-dns] Creating DNS records..."
 
 # <hostname>.globular.internal → node IP (this node)
-if globular --timeout 10s dns a set "${NODE_HOSTNAME}.globular.internal." "$NODE_IP" --ttl 300 2>&1; then
+if globular_dns --timeout 10s dns a set "${NODE_HOSTNAME}.globular.internal." "$NODE_IP" --ttl 300 2>&1; then
     echo "  ✓ ${NODE_HOSTNAME}.globular.internal. → $NODE_IP"
 else
     echo "[bootstrap-dns] ERROR: Failed to create ${NODE_HOSTNAME}.globular.internal record" >&2
@@ -123,7 +150,7 @@ else
 fi
 
 # api.globular.internal → node IP (API endpoint)
-if globular --timeout 10s dns a set api.globular.internal. "$NODE_IP" --ttl 300 2>&1; then
+if globular_dns --timeout 10s dns a set api.globular.internal. "$NODE_IP" --ttl 300 2>&1; then
     echo "  ✓ api.globular.internal. → $NODE_IP"
 else
     echo "[bootstrap-dns] ERROR: Failed to create api.globular.internal record" >&2
@@ -131,7 +158,7 @@ else
 fi
 
 # Wildcard for all undefined subdomains (catches service discovery)
-if globular --timeout 10s dns a set "*.globular.internal." "$NODE_IP" --ttl 300 2>&1; then
+if globular_dns --timeout 10s dns a set "*.globular.internal." "$NODE_IP" --ttl 300 2>&1; then
     echo "  ✓ *.globular.internal. → $NODE_IP (wildcard)"
 else
     echo "[bootstrap-dns] ERROR: Failed to create wildcard record" >&2
