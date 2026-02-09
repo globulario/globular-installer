@@ -62,15 +62,15 @@ echo "[bootstrap-dns] Node IP: $NODE_IP"
 echo "[bootstrap-dns] Creating DNS records..."
 
 # <hostname>.globular.internal → node IP (this node)
-globular dns a set "${NODE_HOSTNAME}.globular.internal." "$NODE_IP" --ttl 300 --timeout 10s
+globular --timeout 10s dns a set "${NODE_HOSTNAME}.globular.internal." "$NODE_IP" --ttl 300
 echo "  ✓ ${NODE_HOSTNAME}.globular.internal. → $NODE_IP"
 
 # api.globular.internal → node IP (API endpoint)
-globular dns a set api.globular.internal. "$NODE_IP" --ttl 300 --timeout 10s
+globular --timeout 10s dns a set api.globular.internal. "$NODE_IP" --ttl 300
 echo "  ✓ api.globular.internal. → $NODE_IP"
 
 # Wildcard for all undefined subdomains (catches service discovery)
-globular dns a set "*.globular.internal." "$NODE_IP" --ttl 300 --timeout 10s
+globular --timeout 10s dns a set "*.globular.internal." "$NODE_IP" --ttl 300
 echo "  ✓ *.globular.internal. → $NODE_IP (wildcard)"
 
 echo ""
