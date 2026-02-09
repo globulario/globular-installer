@@ -125,17 +125,36 @@ if [[ -x "$SCRIPT_DIR/generate-user-client-cert.sh" ]]; then
   fi
 
   # Also generate for the actual user who invoked sudo (if different from root)
+  # Detect the original user even if $SUDO_USER is not set (e.g., after 'sudo su')
+  ORIGINAL_USER=""
   if [[ -n "${SUDO_USER:-}" ]] && [[ "${SUDO_USER}" != "root" ]]; then
+    ORIGINAL_USER="$SUDO_USER"
+  else
+    # Try to detect user from installer directory ownership
+    if [[ -d "$SCRIPT_DIR" ]]; then
+      DETECTED_USER=$(stat -c '%U' "$SCRIPT_DIR" 2>/dev/null || echo "")
+      if [[ -n "$DETECTED_USER" ]] && [[ "$DETECTED_USER" != "root" ]]; then
+        ORIGINAL_USER="$DETECTED_USER"
+        log_info "Detected original user from directory ownership: $ORIGINAL_USER"
+      fi
+    fi
+  fi
+
+  if [[ -n "$ORIGINAL_USER" ]]; then
+    # Set SUDO_USER so generate-user-client-cert.sh can detect the user
+    export SUDO_USER="$ORIGINAL_USER"
     # Run as root (script will detect SUDO_USER automatically)
-    if "$SCRIPT_DIR/generate-user-client-cert.sh" 2>&1 | tee "/tmp/client-cert-$SUDO_USER.log"; then
+    if "$SCRIPT_DIR/generate-user-client-cert.sh" 2>&1 | tee "/tmp/client-cert-$ORIGINAL_USER.log"; then
       # Fix ownership of generated certificates
       if [[ -x "$SCRIPT_DIR/fix-client-cert-ownership.sh" ]]; then
-        "$SCRIPT_DIR/fix-client-cert-ownership.sh" "$SUDO_USER" 2>&1 | tee "/tmp/client-cert-fix-$SUDO_USER.log" || true
+        "$SCRIPT_DIR/fix-client-cert-ownership.sh" "$ORIGINAL_USER" 2>&1 | tee "/tmp/client-cert-fix-$ORIGINAL_USER.log" || true
       fi
-      log_success "User ($SUDO_USER) client certificates generated"
+      log_success "User ($ORIGINAL_USER) client certificates generated"
     else
-      die "User ($SUDO_USER) client certificate generation failed (check /tmp/client-cert-$SUDO_USER.log) - CLI will not work without this"
+      die "User ($ORIGINAL_USER) client certificate generation failed (check /tmp/client-cert-$ORIGINAL_USER.log) - CLI will not work without this"
     fi
+  else
+    log_info "No non-root user detected, skipping user client certificate generation"
   fi
 else
   die "generate-user-client-cert.sh not found - CLI will not work without client certificates"
