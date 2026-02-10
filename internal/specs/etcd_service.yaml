@@ -84,7 +84,7 @@ steps:
             cert-file: "{{.StateDir}}/config/tls/fullchain.pem"
             key-file: "{{.StateDir}}/config/tls/privkey.pem"
             client-cert-auth: false
-            trusted-ca-file: "{{.StateDir}}/pki/ca.pem"
+            # trusted-ca-file removed - having this enables client auth even with client-cert-auth: false
             auto-tls: false
 
           # Peer TLS configuration
