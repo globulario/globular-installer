@@ -79,29 +79,17 @@ if [[ -f "${CA_CERT}" ]]; then
     cp "${CA_CERT}" "${MC_CONFIG_DIR}/certs/CAs/" 2>/dev/null || true
 fi
 
-# Test MinIO connection with retries
+# Test MinIO connection with retries (HTTPS only - secure by default)
 MAX_RETRIES=10
-MINIO_PROTOCOL="https"
 for i in $(seq 1 $MAX_RETRIES); do
     if mc admin info local/ >/dev/null 2>&1; then
-        echo "[ensure-minio-buckets] MinIO connection successful (${MINIO_PROTOCOL})"
+        echo "[ensure-minio-buckets] MinIO connection successful (HTTPS)"
         break
     fi
 
-    # On first failure, check if we should try HTTP instead
-    if [ $i -eq 1 ]; then
-        echo "[ensure-minio-buckets] HTTPS connection failed, checking if MinIO is running in HTTP mode..."
-        if curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:9000/minio/health/live 2>/dev/null | grep -q "200"; then
-            echo "[ensure-minio-buckets] WARNING: MinIO is running in HTTP mode (TLS not configured)"
-            echo "[ensure-minio-buckets] Switching to HTTP endpoint..."
-            export MC_HOST_local="http://${ACCESS_KEY}:${SECRET_KEY}@127.0.0.1:9000"
-            MINIO_PROTOCOL="http"
-            continue
-        fi
-    fi
-
     if [ $i -eq $MAX_RETRIES ]; then
-        echo "[ensure-minio-buckets] ERROR: Cannot connect to MinIO after $MAX_RETRIES attempts" >&2
+        echo "[ensure-minio-buckets] ERROR: Cannot connect to MinIO over HTTPS after $MAX_RETRIES attempts" >&2
+        echo "[ensure-minio-buckets] TLS certificates may be missing or misconfigured" >&2
         echo "[ensure-minio-buckets] Last error output:" >&2
         mc admin info local/ 2>&1 | head -10 >&2
         exit 1
@@ -109,12 +97,6 @@ for i in $(seq 1 $MAX_RETRIES); do
     echo "[ensure-minio-buckets] Waiting for MinIO to be ready... (attempt $i/$MAX_RETRIES)"
     sleep 2
 done
-
-# Warn if using HTTP
-if [[ "${MINIO_PROTOCOL}" == "http" ]]; then
-    echo "[ensure-minio-buckets] ⚠️  WARNING: MinIO is running in HTTP mode (insecure)"
-    echo "[ensure-minio-buckets] ⚠️  TLS certificates may be missing or misconfigured"
-fi
 
 # Read bucket name and prefix from contract
 BUCKET_NAME="globular"

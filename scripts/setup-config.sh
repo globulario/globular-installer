@@ -17,7 +17,7 @@ if [[ -f "${CONFIG_FILE}" ]]; then
 
     # Check if Protocol is set
     if grep -q '"Protocol"' "${CONFIG_FILE}"; then
-        CURRENT_PROTOCOL=$(jq -r '.Protocol // "http"' "${CONFIG_FILE}")
+        CURRENT_PROTOCOL=$(jq -r '.Protocol // "https"' "${CONFIG_FILE}")
         echo "[setup-config] Current Protocol: ${CURRENT_PROTOCOL}"
 
         if [[ "${CURRENT_PROTOCOL}" != "https" ]]; then
