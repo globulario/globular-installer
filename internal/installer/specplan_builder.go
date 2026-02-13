@@ -172,6 +172,14 @@ func buildStep(ctx *Context, ss spec.StepSpec) (Step, error) {
 		return buildStagePackageStep(ss)
 	case "install_package_payload":
 		return buildInstallPackagePayloadStep(ss)
+	case "install_os_packages":
+		step := NewInstallOSPackagesStep()
+		packages, err := getStringSliceParam(ss.Params, "packages")
+		if err != nil {
+			return nil, fmt.Errorf("install_os_packages: %w", err)
+		}
+		step.Packages = packages
+		return step, nil
 	case "fetch_file":
 		step, err := buildFetchFileStep(ss)
 		if err != nil {
