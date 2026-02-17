@@ -286,6 +286,31 @@ else
   log_substep "Config directory already removed"
 fi
 
+# Remove user client certificates (prevents stale certs on reinstall)
+log_info "Removing user client certificates..."
+CERT_CLEANUP_COUNT=0
+for user_home in /home/*; do
+  if [[ -d "$user_home/.config/globular" ]]; then
+    user_name="$(basename "$user_home")"
+    log_substep "Cleaning certificates for user: $user_name"
+    rm -rf "$user_home/.config/globular" || log_warn "Could not remove $user_home/.config/globular"
+    CERT_CLEANUP_COUNT=$((CERT_CLEANUP_COUNT + 1))
+  fi
+done
+
+# Also clean root's certificates
+if [[ -d /root/.config/globular ]]; then
+  log_substep "Cleaning certificates for root"
+  rm -rf /root/.config/globular || log_warn "Could not remove /root/.config/globular"
+  CERT_CLEANUP_COUNT=$((CERT_CLEANUP_COUNT + 1))
+fi
+
+if [[ $CERT_CLEANUP_COUNT -gt 0 ]]; then
+  log_success "Cleaned client certificates for $CERT_CLEANUP_COUNT user(s)"
+else
+  log_substep "No user certificates found"
+fi
+
 # Remove globular user/group if they exist
 if id globular >/dev/null 2>&1; then
   log_info "Removing globular user..."
