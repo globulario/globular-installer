@@ -33,12 +33,8 @@ steps:
         group: globular
         mode: 0750
 
-      # TLS directories (certificates must be provisioned by Day-0 bootstrap)
+      # TLS directories (INV-PKI-1: canonical paths)
       - path: "{{.StateDir}}/pki"
-        owner: globular
-        group: globular
-        mode: 0750
-      - path: "{{.StateDir}}/config/tls"
         owner: globular
         group: globular
         mode: 0750
@@ -79,18 +75,18 @@ steps:
           initial-cluster-state: "new"
           initial-cluster-token: "globular-etcd-cluster"
 
-          # Client TLS configuration
+          # Client TLS configuration (INV-PKI-1: canonical paths)
           client-transport-security:
-            cert-file: "{{.StateDir}}/config/tls/fullchain.pem"
-            key-file: "{{.StateDir}}/config/tls/privkey.pem"
+            cert-file: "{{.StateDir}}/pki/issued/services/service.crt"
+            key-file: "{{.StateDir}}/pki/issued/services/service.key"
             client-cert-auth: false
             # trusted-ca-file removed - having this enables client auth even with client-cert-auth: false
             auto-tls: false
 
-          # Peer TLS configuration
+          # Peer TLS configuration (INV-PKI-1: canonical paths)
           peer-transport-security:
-            cert-file: "{{.StateDir}}/config/tls/fullchain.pem"
-            key-file: "{{.StateDir}}/config/tls/privkey.pem"
+            cert-file: "{{.StateDir}}/pki/issued/services/service.crt"
+            key-file: "{{.StateDir}}/pki/issued/services/service.key"
             client-cert-auth: false
             trusted-ca-file: "{{.StateDir}}/pki/ca.pem"
             auto-tls: false

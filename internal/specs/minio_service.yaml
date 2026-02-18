@@ -45,12 +45,8 @@ steps:
         group: globular
         mode: 0755
 
-      # TLS directories (certificates must be provisioned by Day-0 bootstrap)
+      # TLS directories (INV-PKI-1: canonical paths)
       - path: "{{.StateDir}}/pki"
-        owner: globular
-        group: globular
-        mode: 0750
-      - path: "{{.StateDir}}/config/tls"
         owner: globular
         group: globular
         mode: 0750

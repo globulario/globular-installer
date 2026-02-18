@@ -40,12 +40,8 @@ steps:
         mode: 0755
 
       # TLS directories (certificates must be provisioned by Day-0 bootstrap)
-      # Envoy gets TLS config via xDS, but directories needed for cert access
+      # Envoy gets TLS config via xDS (INV-PKI-1: canonical paths)
       - path: "{{.StateDir}}/pki"
-        owner: globular
-        group: globular
-        mode: 0750
-      - path: "{{.StateDir}}/config/tls"
         owner: globular
         group: globular
         mode: 0750

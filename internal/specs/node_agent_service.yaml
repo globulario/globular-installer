@@ -1,4 +1,12 @@
 version: 1
+
+metadata:
+  name: node-agent
+
+service:
+  name: node-agent
+  exec: node_agent
+
 steps:
   - id: ensure-user-group
     type: ensure_user_group

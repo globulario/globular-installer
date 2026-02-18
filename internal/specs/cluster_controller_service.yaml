@@ -1,4 +1,12 @@
 version: 1
+
+metadata:
+  name: cluster-controller
+
+service:
+  name: cluster-controller
+  exec: cluster_controller
+
 steps:
   - id: ensure-user-group
     type: ensure_user_group
