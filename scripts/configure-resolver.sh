@@ -104,8 +104,8 @@ if systemctl is-active --quiet systemd-resolved 2>/dev/null; then
 # Use Globular DNS as primary resolver
 DNS=${GLOBULAR_DNS_SERVER}
 
-# Search domain for short names
-Domains=globular.internal
+# Search + routing domain for short names and .globular.internal
+Domains=~globular.internal globular.internal
 
 # Allow fallback to other DNS servers for external domains
 FallbackDNS=1.1.1.1 8.8.8.8
@@ -186,7 +186,7 @@ else
     echo "    Create /etc/systemd/resolved.conf.d/globular-dns.conf with:"
     echo "    [Resolve]"
     echo "    DNS=${GLOBULAR_DNS_SERVER}"
-    echo "    Domains=globular.internal"
+    echo "    Domains=~globular.internal globular.internal"
     echo "    FallbackDNS=1.1.1.1 8.8.8.8"
     echo ""
 fi
@@ -242,35 +242,89 @@ fi
 echo ""
 echo "[configure-resolver] Step 5: Verification..."
 
+TEST_DOMAIN="api.globular.internal"
+verify_ok=1
+
+echo "  → Verifying DNS resolution for ${TEST_DOMAIN}"
+echo "    Expected resolver for .globular.internal: ${GLOBULAR_DNS_SERVER} (node type: ${NODE_TYPE})"
+
 # Test connectivity for joining nodes
 if [[ "$NODE_TYPE" == "joining" ]]; then
-    echo "  → Testing connectivity to ${GLOBULAR_DNS_SERVER}..."
-    if timeout 2 nc -zvu "${GLOBULAR_DNS_SERVER}" 53 2>&1 | grep -q "succeeded"; then
-        echo "  ✓ DNS server ${GLOBULAR_DNS_SERVER}:53 is reachable"
+    if command -v nc >/dev/null 2>&1; then
+        echo "  → Testing connectivity to ${GLOBULAR_DNS_SERVER}:53..."
+        if timeout 2 nc -zvu "${GLOBULAR_DNS_SERVER}" 53 2>&1 | grep -q "succeeded"; then
+            echo "  ✓ DNS server ${GLOBULAR_DNS_SERVER}:53 is reachable"
+        else
+            echo "  ⚠ Cannot reach DNS server ${GLOBULAR_DNS_SERVER}:53"
+            echo "    Check network connectivity and firewall rules"
+            verify_ok=0
+        fi
     else
-        echo "  ⚠ Cannot reach DNS server ${GLOBULAR_DNS_SERVER}:53"
-        echo "  Check network connectivity and firewall rules"
+        echo "  ⚠ nc not found; skipping UDP reachability check"
     fi
 fi
 
-# Check resolver status
+# System resolver check (glibc)
+if getent_out=$(getent hosts "$TEST_DOMAIN" 2>/dev/null); then
+    RESOLVED_IPS=$(echo "$getent_out" | awk '{print $1}' | paste -sd, -)
+    echo "  ✓ getent hosts ${TEST_DOMAIN} -> ${RESOLVED_IPS}"
+else
+    echo "  ⚠ getent hosts ${TEST_DOMAIN} failed (system resolver did not return an address)"
+    verify_ok=0
+fi
+
+# systemd-resolved diagnostic (non-fatal)
 if command -v resolvectl >/dev/null 2>&1; then
-    echo "  → Resolver status:"
-    if resolvectl status | grep -q "globular.internal"; then
-        echo "  ✓ Search domain 'globular.internal' configured"
+    echo "  → resolvectl query ${TEST_DOMAIN} (diagnostic)"
+    if resolvectl_out=$(resolvectl query "$TEST_DOMAIN" 2>/dev/null); then
+        echo "$resolvectl_out" | sed 's/^/    /'
     else
-        echo "  ⚠ Search domain not found"
-    fi
-
-    if resolvectl status | grep -q "${GLOBULAR_DNS_SERVER}"; then
-        echo "  ✓ DNS server ${GLOBULAR_DNS_SERVER} configured"
-    else
-        echo "  ⚠ DNS server not found in resolver status"
+        echo "    ⚠ resolvectl query failed (service inactive or DNS unresolved)"
     fi
 fi
+
+# Direct query against the configured DNS server
+if command -v dig >/dev/null 2>&1; then
+    if dig_out=$(dig @"${GLOBULAR_DNS_SERVER}" "$TEST_DOMAIN" +short 2>/dev/null) && [[ -n "$dig_out" ]]; then
+        DIG_IPS=$(echo "$dig_out" | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+        echo "  ✓ dig @${GLOBULAR_DNS_SERVER} ${TEST_DOMAIN} -> ${DIG_IPS}"
+    else
+        echo "  ⚠ dig @${GLOBULAR_DNS_SERVER} ${TEST_DOMAIN} returned no records"
+        verify_ok=0
+    fi
+elif command -v nslookup >/dev/null 2>&1; then
+    if nslookup_out=$(nslookup "$TEST_DOMAIN" "${GLOBULAR_DNS_SERVER}" 2>/dev/null) && echo "$nslookup_out" | grep -qE "Address: [0-9a-fA-F:.]+"; then
+        NS_IP=$(echo "$nslookup_out" | awk '/Address: /{print $2}' | head -n1)
+        echo "  ✓ nslookup ${TEST_DOMAIN} ${GLOBULAR_DNS_SERVER} -> ${NS_IP}"
+    else
+        echo "  ⚠ nslookup ${TEST_DOMAIN} ${GLOBULAR_DNS_SERVER} returned no address"
+        verify_ok=0
+    fi
+else
+    echo "  → dig/nslookup not found; skipping direct DNS server query"
+fi
+
+if [[ $verify_ok -eq 1 ]]; then
+    VERIFY_RESULT="PASS"
+    echo "  ✓ DNS resolution verified for ${TEST_DOMAIN}"
+else
+    VERIFY_RESULT="FAIL"
+    echo "  ⚠ DNS resolution verification FAILED for ${TEST_DOMAIN}"
+    echo "    - Ensure .globular.internal routes to ${GLOBULAR_DNS_SERVER}"
+    echo "    - Check firewall rules for port 53/udp and 53/tcp"
+    echo "    - Try: dig @${GLOBULAR_DNS_SERVER} ${TEST_DOMAIN} +trace"
+    if [[ "$NODE_TYPE" == "joining" ]]; then
+        echo "    - Confirm ${GLOBULAR_DNS_SERVER} is reachable from this node"
+    fi
+fi
+echo "VERIFY_RESULT=${VERIFY_RESULT}"
 
 echo ""
-echo "[configure-resolver] ✓ System resolver configuration complete"
+if [[ "${VERIFY_RESULT}" == "PASS" ]]; then
+    echo "[configure-resolver] ✓ System resolver configuration complete (verify: PASS)"
+else
+    echo "[configure-resolver] ⚠ System resolver configuration complete (verify: FAIL)"
+fi
 echo ""
 
 # Save configuration info
@@ -301,5 +355,15 @@ else
 fi
 echo ""
 echo "For Day-1+ nodes joining this cluster:"
-echo "  sudo JOIN_DNS_SERVER=${NODE_IP} /path/to/configure-resolver.sh"
+JOIN_HINT_IP="${NODE_IP}"
+if [[ -z "${JOIN_HINT_IP}" ]]; then
+    JOIN_HINT_IP=$(ip -4 addr show scope global 2>/dev/null | awk '/inet /{print $2}' | head -n1 | cut -d/ -f1 || true)
+fi
+
+if [[ -n "${JOIN_HINT_IP}" ]]; then
+    echo "  sudo JOIN_DNS_SERVER=${JOIN_HINT_IP} /path/to/configure-resolver.sh"
+else
+    echo "  sudo JOIN_DNS_SERVER=<cluster-node-ip> /path/to/configure-resolver.sh"
+    echo "  (No IP detected automatically; use 'ip -4 addr show' to pick the node's IP)"
+fi
 echo ""

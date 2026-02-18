@@ -45,11 +45,29 @@ else
     # Can be overridden with GLOBULAR_DOMAIN environment variable
     DOMAIN="${GLOBULAR_DOMAIN:-globular.internal}"
 
-    # Determine address - try to get actual hostname/IP, fallback to 127.0.0.1
-    ADDRESS="${GLOBULAR_ADDRESS:-127.0.0.1}"
+    # Determine address - get the actual non-loopback IP address
+    if [[ -n "${GLOBULAR_ADDRESS:-}" ]]; then
+        ADDRESS="$GLOBULAR_ADDRESS"
+    else
+        # Try to detect the actual IP address (not loopback)
+        ADDRESS=$(ip -4 route get 1.1.1.1 2>/dev/null | grep -oP 'src \K\S+' || echo "")
+        if [[ -z "$ADDRESS" ]] || [[ "$ADDRESS" == "127.0.0.1" ]]; then
+            # Fallback: get first non-loopback IPv4 address
+            ADDRESS=$(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '^127\.' | head -n1)
+        fi
+        # Final fallback if detection failed
+        if [[ -z "$ADDRESS" ]]; then
+            ADDRESS="127.0.0.1"
+        fi
+    fi
 
     echo "[setup-config] → Domain: ${DOMAIN}"
     echo "[setup-config] → Address: ${ADDRESS}"
+    if [[ "$ADDRESS" == "127.0.0.1" ]]; then
+        echo "[setup-config] ⚠️  Using loopback address - cluster features may be limited"
+    else
+        echo "[setup-config] ✓ Using non-loopback address for cluster routing"
+    fi
 
     # Create minimal config with HTTPS and cluster-capable domain
     cat > "${CONFIG_FILE}" << EOF

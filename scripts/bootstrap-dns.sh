@@ -53,8 +53,9 @@ DNS_READY=0
 for i in $(seq 1 $MAX_WAIT); do
     # Check 1: gRPC service responds (any response means it's up)
     if globular_dns dns domains >/dev/null 2>&1; then
-        # Check 2: Port 53 UDP listener is bound
-        if ss -ulnp 2>/dev/null | grep -qE ':53\s.*dns_server'; then
+        # Check 2: Port 53 UDP listener is bound (any listener on port 53)
+        # Note: ss -ulnp requires root to show process names, so just check if port is bound
+        if ss -uln 2>/dev/null | grep -qE ':53\s'; then
             DNS_READY=1
             break
         fi

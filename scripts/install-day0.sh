@@ -118,7 +118,8 @@ fi
 log_step "Client Certificate Generation"
 if [[ -x "$SCRIPT_DIR/generate-user-client-cert.sh" ]]; then
   # Generate for root user (for sudo operations)
-  if "$SCRIPT_DIR/generate-user-client-cert.sh" 2>&1 | tee /tmp/client-cert-root.log; then
+  # CRITICAL: Unset SUDO_USER so script generates certificates for root, not the original user
+  if ( unset SUDO_USER; "$SCRIPT_DIR/generate-user-client-cert.sh" ) 2>&1 | tee /tmp/client-cert-root.log; then
     log_success "Root client certificates generated"
   else
     die "Root client certificate generation failed (check /tmp/client-cert-root.log) - CLI will not work without this"
@@ -294,16 +295,46 @@ CMDS_PKGS=(
   "service.globular-cli-cmd_0.0.1_linux_amd64.tgz"
 )
 
+# Phase 2: Enable bootstrap mode for Day-0 installation
+# Security Fix #4: Create JSON state file with explicit timestamps
+# This enables 4-level secured bootstrap mode:
+# - Time-bounded (30 minutes from now, explicit in file)
+# - Loopback-only (127.0.0.1/::1)
+# - Method allowlisted (essential Day-0 methods only)
+# - Explicit enablement (this file with 0600 permissions)
+BOOTSTRAP_FLAG="/var/lib/globular/bootstrap.enabled"
+log_substep "Enabling bootstrap mode (30-minute window)..."
+mkdir -p "$(dirname "$BOOTSTRAP_FLAG")"
+
+# Create JSON state file with explicit timestamps (not relying on mtime)
+ENABLED_AT=$(date +%s)
+EXPIRES_AT=$((ENABLED_AT + 1800))  # 30 minutes = 1800 seconds
+NONCE=$(openssl rand -hex 16 2>/dev/null || echo "fallback-nonce-$$")
+
+cat > "$BOOTSTRAP_FLAG" <<EOF
+{
+  "enabled_at_unix": $ENABLED_AT,
+  "expires_at_unix": $EXPIRES_AT,
+  "nonce": "$NONCE",
+  "created_by": "${SUDO_USER:-root}",
+  "version": "1.0"
+}
+EOF
+
+# Set secure permissions: 0600, root-owned
+chmod 0600 "$BOOTSTRAP_FLAG"
+chown root:root "$BOOTSTRAP_FLAG" 2>/dev/null || chown 0:0 "$BOOTSTRAP_FLAG"
+
+log_success "Bootstrap mode enabled: $BOOTSTRAP_FLAG (expires: $(date -d @$EXPIRES_AT '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -r $EXPIRES_AT '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo 'in 30 minutes'))"
+
 log_step "Infrastructure Layer (etcd + minio)"
 install_list "${BOOTSTRAP_MINIO_PKGS[@]}"
 
 log_step "TLS Ownership Fix"
 log_substep "Setting TLS file ownership to globular user..."
 if id globular >/dev/null 2>&1; then
-  chown -R globular:globular /var/lib/globular/pki /var/lib/globular/config/tls /var/lib/globular/.minio 2>/dev/null || true
-  if [[ -d /var/lib/globular/tls/etcd ]]; then
-    chown -R globular:globular /var/lib/globular/tls/etcd
-  fi
+  # INV-PKI-1: Use canonical PKI paths only
+  chown -R globular:globular /var/lib/globular/pki /var/lib/globular/.minio 2>/dev/null || true
   log_success "TLS files ownership set to globular:globular"
 
   # Restart services that depend on TLS certificates
@@ -369,6 +400,32 @@ log_step "Globular Configuration (Protocol=https)"
 if [[ -x "$SCRIPT_DIR/setup-config.sh" ]]; then
   "$SCRIPT_DIR/setup-config.sh"
   log_success "Configuration set to HTTPS"
+
+  # Ensure network.json is readable by all for health checks
+  if [[ -f /var/lib/globular/network.json ]]; then
+    chmod 644 /var/lib/globular/network.json
+    log_substep "Set network.json permissions to 644"
+  fi
+
+  # CRITICAL: Regenerate client certificates now that domain is configured
+  # Initial certs were generated with default "localhost", but config.json now has the actual domain
+  log_substep "Regenerating client certificates with configured domain..."
+
+  # Regenerate root client certificates
+  if ( unset SUDO_USER; "$SCRIPT_DIR/generate-user-client-cert.sh" ) >/dev/null 2>&1; then
+    log_substep "Root client certificates regenerated for configured domain"
+  fi
+
+  # Regenerate user client certificates if we have a detected user
+  if [[ -n "${ORIGINAL_USER:-}" ]] && [[ "$ORIGINAL_USER" != "root" ]]; then
+    export SUDO_USER="$ORIGINAL_USER"
+    if "$SCRIPT_DIR/generate-user-client-cert.sh" >/dev/null 2>&1; then
+      if [[ -x "$SCRIPT_DIR/fix-client-cert-ownership.sh" ]]; then
+        "$SCRIPT_DIR/fix-client-cert-ownership.sh" "$ORIGINAL_USER" >/dev/null 2>&1 || true
+      fi
+      log_substep "User ($ORIGINAL_USER) client certificates regenerated for configured domain"
+    fi
+  fi
 else
   log_substep "Warning: setup-config.sh not found (Protocol may default to HTTP)"
 fi
@@ -376,13 +433,44 @@ fi
 log_step "Bootstrap Services (xds, envoy, gateway, agents)"
 install_list "${BOOTSTRAP_REST_PKGS[@]}"
 
+# Restart xDS to ensure it picks up the HTTPS configuration
+log_substep "Restarting xDS service to apply HTTPS configuration..."
+if systemctl is-active --quiet globular-xds.service; then
+  systemctl restart globular-xds.service
+  sleep 3  # Wait for xDS to regenerate Envoy config
+  log_success "xDS restarted with HTTPS config"
+fi
+
+# Restart Envoy to pick up the new configuration from xDS
+log_substep "Restarting Envoy with HTTPS configuration..."
+if systemctl is-active --quiet globular-envoy.service; then
+  systemctl restart globular-envoy.service
+  sleep 3  # Wait for Envoy to start with new config
+  log_success "Envoy restarted on port 8443 (HTTPS)"
+fi
+
 log_step "Control Plane Services"
 install_list "${CONTROL_PLANE_PKGS[@]}"
 
 log_step "System Resolver Configuration (Day-0)"
 if [[ -x "$SCRIPT_DIR/configure-resolver.sh" ]]; then
-  "$SCRIPT_DIR/configure-resolver.sh"
-  log_success "System resolver configured for globular.internal"
+  RESOLVER_LOG="/tmp/configure-resolver-$(date +%Y%m%d-%H%M%S).log"
+  set +e
+  "$SCRIPT_DIR/configure-resolver.sh" 2>&1 | tee "$RESOLVER_LOG"
+  resolver_rc=${PIPESTATUS[0]}
+  set -e
+
+  if [[ $resolver_rc -ne 0 ]]; then
+    die "configure-resolver.sh failed (see $RESOLVER_LOG)"
+  fi
+
+  if grep -q "VERIFY_RESULT=FAIL" "$RESOLVER_LOG"; then
+    log_substep "Warning: DNS resolver verification FAILED (see $RESOLVER_LOG)"
+  elif grep -q "VERIFY_RESULT=PASS" "$RESOLVER_LOG"; then
+    log_success "System resolver configured for globular.internal"
+  else
+    log_substep "Warning: configure-resolver.sh completed without VERIFY_RESULT marker (see $RESOLVER_LOG)"
+  fi
 else
   log_substep "Warning: configure-resolver.sh not found, DNS system resolver not configured"
 fi
@@ -449,10 +537,58 @@ else
   log_substep "Conformance tests disabled (GLOBULAR_CONFORMANCE=off)"
 fi
 
+# Cluster Health Validation
+log_step "Cluster Health Validation"
+VALIDATION_SCRIPT="$SCRIPT_DIR/validate-cluster-health.sh"
+
+if [[ -x "$VALIDATION_SCRIPT" ]]; then
+  log_substep "Running comprehensive cluster health checks..."
+  echo ""
+
+  # Run validation and capture exit code
+  if "$VALIDATION_SCRIPT"; then
+    VALIDATION_PASSED=1
+  else
+    VALIDATION_PASSED=0
+    VALIDATION_EXIT=$?
+    echo ""
+    echo "╔════════════════════════════════════════════════════════════════╗"
+    echo "║          ⚠  CLUSTER HEALTH VALIDATION FAILED                   ║"
+    echo "╚════════════════════════════════════════════════════════════════╝"
+    echo ""
+    log_info "Cluster health validation failed (exit code: $VALIDATION_EXIT)"
+    log_info "Some services may not be running correctly"
+    log_info "Review the validation output above for details"
+    log_info "Common fixes:"
+    log_info "  - Check service logs: journalctl -u globular-<service> -n 50"
+    log_info "  - Restart failed services: systemctl restart globular-<service>"
+    log_info "  - Re-run validation: sudo $VALIDATION_SCRIPT"
+    echo ""
+    die "Installation validation failed - cluster is not healthy"
+  fi
+else
+  log_substep "Warning: Validation script not found: $VALIDATION_SCRIPT"
+  log_substep "Skipping cluster health validation"
+  VALIDATION_PASSED=0
+fi
+
 echo ""
 echo "╔════════════════════════════════════════════════════════════════╗"
 echo "║          ✓ INSTALLATION COMPLETE                               ║"
 echo "╚════════════════════════════════════════════════════════════════╝"
 echo ""
 log_success "Globular Day-0 installation successful!"
+
+if [[ $VALIDATION_PASSED -eq 1 ]]; then
+  log_success "All cluster health checks passed!"
+fi
+
+# Phase 2: Disable bootstrap mode (Day-0 complete)
+# Remove the flag file to close the bootstrap window
+if [[ -f "$BOOTSTRAP_FLAG" ]]; then
+  log_substep "Disabling bootstrap mode..."
+  rm -f "$BOOTSTRAP_FLAG"
+  log_success "Bootstrap mode disabled (Day-0 complete)"
+fi
+
 echo ""

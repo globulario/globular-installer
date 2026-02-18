@@ -6,8 +6,9 @@ echo "CONFIGURING SCYLLA TLS"
 echo "=================================="
 echo ""
 
-# Certificate paths (from Globular TLS setup)
-GLOBULAR_TLS_DIR="/var/lib/globular/config/tls"
+# Certificate paths (from Globular TLS setup - canonical paths)
+# INV-PKI-1: Use canonical PKI paths instead of config/tls
+GLOBULAR_SERVICE_CERT_DIR="/var/lib/globular/pki/issued/services"
 GLOBULAR_PKI_DIR="/var/lib/globular/pki"
 
 # ScyllaDB paths
@@ -22,14 +23,14 @@ mkdir -p "${SCYLLA_TLS_DIR}"
 # Copy certificates for ScyllaDB
 echo "→ Copying TLS certificates for ScyllaDB..."
 
-if [[ ! -f "${GLOBULAR_TLS_DIR}/fullchain.pem" ]]; then
-    echo "✗ ERROR: Globular certificates not found at ${GLOBULAR_TLS_DIR}"
+if [[ ! -f "${GLOBULAR_SERVICE_CERT_DIR}/service.crt" ]]; then
+    echo "✗ ERROR: Globular certificates not found at ${GLOBULAR_SERVICE_CERT_DIR}"
     echo "  Run setup-tls.sh first to generate certificates"
     exit 1
 fi
 
-cp "${GLOBULAR_TLS_DIR}/fullchain.pem" "${SCYLLA_TLS_DIR}/server.crt"
-cp "${GLOBULAR_TLS_DIR}/privkey.pem" "${SCYLLA_TLS_DIR}/server.key"
+cp "${GLOBULAR_SERVICE_CERT_DIR}/service.crt" "${SCYLLA_TLS_DIR}/server.crt"
+cp "${GLOBULAR_SERVICE_CERT_DIR}/service.key" "${SCYLLA_TLS_DIR}/server.key"
 cp "${GLOBULAR_PKI_DIR}/ca.pem" "${SCYLLA_TLS_DIR}/ca.crt"
 
 # Set permissions (ScyllaDB runs as scylla user)

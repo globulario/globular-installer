@@ -25,32 +25,31 @@ else
     FAIL=1
 fi
 
-if [[ -f /var/lib/globular/config/tls/fullchain.pem ]] && [[ -f /var/lib/globular/config/tls/privkey.pem ]]; then
-    echo "   ✓ Service certificates exist"
+# INV-PKI-1: Check canonical PKI paths
+if [[ -f /var/lib/globular/pki/issued/services/service.crt ]] && [[ -f /var/lib/globular/pki/issued/services/service.key ]]; then
+    echo "   ✓ Service certificates exist at canonical location"
 
     # Check ownership
-    OWNER=$(stat -c "%U:%G" /var/lib/globular/config/tls/fullchain.pem 2>/dev/null || echo "unknown")
+    OWNER=$(stat -c "%U:%G" /var/lib/globular/pki/issued/services/service.crt 2>/dev/null || echo "unknown")
     if [[ "$OWNER" == "globular:globular" ]]; then
         echo "   ✓ Service certificates owned by globular:globular"
     else
         echo "   ⚠ Service certificates owned by $OWNER (expected globular:globular)" >&2
     fi
 else
-    echo "   ✗ Service certificates missing" >&2
+    echo "   ✗ Service certificates missing at canonical location" >&2
     FAIL=1
 fi
 
-# Check symlinks
+# Check etcd client certificates
 echo ""
-echo "2. Checking compatibility symlinks..."
-for link in server.crt server.key ca.crt; do
-    if [[ -L /var/lib/globular/config/tls/$link ]]; then
-        echo "   ✓ $link symlink exists"
-    else
-        echo "   ✗ $link symlink missing" >&2
-        FAIL=1
-    fi
-done
+echo "2. Checking etcd client certificates..."
+if [[ -f /var/lib/globular/pki/issued/etcd/client.crt ]] && [[ -f /var/lib/globular/pki/issued/etcd/client.key ]]; then
+    echo "   ✓ etcd client certificates exist at canonical location"
+else
+    echo "   ✗ etcd client certificates missing" >&2
+    FAIL=1
+fi
 
 # Check client certificates
 echo ""

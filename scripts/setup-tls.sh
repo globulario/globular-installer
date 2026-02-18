@@ -6,15 +6,18 @@ set -euo pipefail
 
 STATE_DIR="${STATE_DIR:-/var/lib/globular}"
 PKI_DIR="${STATE_DIR}/pki"
-TLS_DIR="${STATE_DIR}/config/tls"
+# Canonical locations for certificates (INV-PKI-1)
+SERVICE_CERT_DIR="${PKI_DIR}/issued/services"
+ETCD_CERT_DIR="${PKI_DIR}/issued/etcd"
 MINIO_CERTS_DIR="${STATE_DIR}/.minio/certs"
 
 echo "[setup-tls] Bootstrapping TLS certificates (RSA)"
 echo "[setup-tls] STATE_DIR=${STATE_DIR}"
 
-# Create directories
+# Create directories (canonical PKI structure)
 mkdir -p "${PKI_DIR}"
-mkdir -p "${TLS_DIR}"
+mkdir -p "${SERVICE_CERT_DIR}"
+mkdir -p "${ETCD_CERT_DIR}"
 mkdir -p "${MINIO_CERTS_DIR}"
 
 # Function to generate RSA key (not ECDSA - for XDS compatibility)
@@ -56,9 +59,10 @@ gen_ca() {
 
 # Function to generate service certificate
 gen_service_cert() {
-    local keyfile="${TLS_DIR}/privkey.pem"
-    local crtfile="${TLS_DIR}/fullchain.pem"
-    local csrfile="${TLS_DIR}/server.csr"
+    # Use canonical paths (INV-PKI-1)
+    local keyfile="${SERVICE_CERT_DIR}/service.key"
+    local crtfile="${SERVICE_CERT_DIR}/service.crt"
+    local csrfile="${SERVICE_CERT_DIR}/service.csr"
 
     echo "[setup-tls] Generating service certificate (RSA 2048)..."
 
@@ -125,8 +129,8 @@ setup_minio_certs() {
     echo "[setup-tls] Setting up MinIO certificates..."
 
     # MinIO expects: public.crt and private.key
-    cp "${TLS_DIR}/fullchain.pem" "${MINIO_CERTS_DIR}/public.crt"
-    cp "${TLS_DIR}/privkey.pem" "${MINIO_CERTS_DIR}/private.key"
+    cp "${SERVICE_CERT_DIR}/service.crt" "${MINIO_CERTS_DIR}/public.crt"
+    cp "${SERVICE_CERT_DIR}/service.key" "${MINIO_CERTS_DIR}/private.key"
 
     chmod 444 "${MINIO_CERTS_DIR}/public.crt"
     chmod 400 "${MINIO_CERTS_DIR}/private.key"
@@ -134,22 +138,10 @@ setup_minio_certs() {
     echo "[setup-tls] ✓ MinIO certificates configured"
 }
 
-# Function to create compatibility symlinks
+# Function to create compatibility symlinks (deprecated - canonical paths used directly)
 setup_compat_symlinks() {
-    echo "[setup-tls] Creating compatibility symlinks for service discovery..."
-
-    # Create ca.pem symlink in config/tls for compatibility
-    if [[ ! -e "${TLS_DIR}/ca.pem" ]]; then
-        ln -sf "${PKI_DIR}/ca.pem" "${TLS_DIR}/ca.pem"
-    fi
-
-    # Services look for server.crt, server.key, ca.crt via GetTLSFile()
-    # Create symlinks with expected names
-    ln -sf fullchain.pem "${TLS_DIR}/server.crt"
-    ln -sf privkey.pem "${TLS_DIR}/server.key"
-    ln -sf ca.pem "${TLS_DIR}/ca.crt"
-
-    echo "[setup-tls] ✓ Compatibility symlinks created"
+    echo "[setup-tls] Skipping compatibility symlinks (using canonical paths)"
+    # Services now use GetServiceCertPath() which reads from canonical locations directly
 }
 
 # Main execution
@@ -180,9 +172,9 @@ fi
 
 # Check if service certificate exists and is valid
 CERT_VALID=0
-if [[ -f "${TLS_DIR}/privkey.pem" ]] && [[ -f "${TLS_DIR}/fullchain.pem" ]]; then
+if [[ -f "${SERVICE_CERT_DIR}/service.key" ]] && [[ -f "${SERVICE_CERT_DIR}/service.crt" ]]; then
     # Check if cert is signed by current CA
-    if openssl verify -CAfile "${PKI_DIR}/ca.crt" "${TLS_DIR}/fullchain.pem" >/dev/null 2>&1; then
+    if openssl verify -CAfile "${PKI_DIR}/ca.crt" "${SERVICE_CERT_DIR}/service.crt" >/dev/null 2>&1; then
         CERT_VALID=1
     fi
 fi
@@ -191,7 +183,7 @@ if [[ $CERT_VALID -eq 1 ]]; then
     echo "[setup-tls] ✓ Service certificate is valid, skipping regeneration..."
 else
     echo "[setup-tls] Generating new service certificate..."
-    rm -f "${TLS_DIR}/privkey.pem" "${TLS_DIR}/fullchain.pem" "${TLS_DIR}/ca.pem"
+    rm -f "${SERVICE_CERT_DIR}/service.key" "${SERVICE_CERT_DIR}/service.crt"
     rm -f "${MINIO_CERTS_DIR}/public.crt" "${MINIO_CERTS_DIR}/private.key"
     gen_service_cert
 fi
@@ -202,38 +194,24 @@ setup_minio_certs
 # Setup compatibility symlinks
 setup_compat_symlinks
 
-# Setup etcd client certificates (for application services)
+# Setup etcd client certificates at canonical location (INV-PKI-1)
 setup_etcd_client_certs() {
-    local etcd_client_dir="${STATE_DIR}/tls/etcd"
-    echo "[setup-tls] Setting up etcd client certificates..."
+    echo "[setup-tls] Setting up etcd client certificates at canonical location..."
 
-    mkdir -p "${etcd_client_dir}"
+    # GetEtcdTLS() expects:
+    # - /var/lib/globular/pki/issued/etcd/client.crt
+    # - /var/lib/globular/pki/issued/etcd/client.key
+    # - /var/lib/globular/pki/ca.crt
 
-    # The Go code expects specific filenames:
-    # 1. Server triplet (for hasServerTriplet detection):
-    #    - ca.crt, server.crt, server.pem
-    # 2. Client certificates (for etcd connection):
-    #    - ca.crt, client.crt, client.pem
+    # Copy service cert to etcd client cert location (reuse service cert for etcd client)
+    cp "${SERVICE_CERT_DIR}/service.crt" "${ETCD_CERT_DIR}/client.crt"
+    cp "${SERVICE_CERT_DIR}/service.key" "${ETCD_CERT_DIR}/client.key"
 
-    # CA certificate (used by both checks)
-    cp "${PKI_DIR}/ca.crt" "${etcd_client_dir}/ca.crt"
+    chmod 755 "${ETCD_CERT_DIR}"
+    chmod 644 "${ETCD_CERT_DIR}/client.crt"
+    chmod 400 "${ETCD_CERT_DIR}/client.key"
 
-    # Server triplet files (for detection)
-    cp "${TLS_DIR}/fullchain.pem" "${etcd_client_dir}/server.crt"
-    cp "${TLS_DIR}/privkey.pem" "${etcd_client_dir}/server.pem"
-
-    # Client certificate files (for actual connection)
-    cp "${TLS_DIR}/fullchain.pem" "${etcd_client_dir}/client.crt"
-    cp "${TLS_DIR}/privkey.pem" "${etcd_client_dir}/client.pem"
-
-    chmod 755 "${etcd_client_dir}"
-    chmod 644 "${etcd_client_dir}/ca.crt"
-    chmod 644 "${etcd_client_dir}/server.crt"
-    chmod 644 "${etcd_client_dir}/client.crt"
-    chmod 400 "${etcd_client_dir}/server.pem"
-    chmod 400 "${etcd_client_dir}/client.pem"
-
-    echo "[setup-tls] ✓ etcd client certificates configured"
+    echo "[setup-tls] ✓ etcd client certificates configured at canonical location"
 }
 
 # Setup etcd client certs
@@ -241,26 +219,21 @@ setup_etcd_client_certs
 
 # Set ownership if running as root AND globular user exists
 if [[ $EUID -eq 0 ]] && id globular >/dev/null 2>&1; then
-    chown -R globular:globular "${PKI_DIR}" "${TLS_DIR}" "${MINIO_CERTS_DIR}" "${STATE_DIR}/tls"
+    chown -R globular:globular "${PKI_DIR}" "${MINIO_CERTS_DIR}"
     echo "[setup-tls] ✓ Ownership set to globular:globular"
 
     # Make CA certificates world-readable (public keys)
     # Private keys remain accessible only to globular user
-    chmod 755 "${PKI_DIR}" "${TLS_DIR}"
+    chmod 755 "${PKI_DIR}" "${SERVICE_CERT_DIR}" "${ETCD_CERT_DIR}"
     chmod 644 "${PKI_DIR}/ca.pem" "${PKI_DIR}/ca.crt" 2>/dev/null || true
-    chmod 644 "${TLS_DIR}/ca.pem" "${TLS_DIR}/ca.crt" 2>/dev/null || true
-    chmod 644 "${TLS_DIR}/fullchain.pem" "${TLS_DIR}/server.crt" 2>/dev/null || true
+    # TLS_DIR no longer used - certs at canonical paths
+    chmod 644 "${SERVICE_CERT_DIR}/service.crt" 2>/dev/null || true
     chmod 400 "${PKI_DIR}/ca.key" 2>/dev/null || true
-    chmod 400 "${TLS_DIR}/privkey.pem" "${TLS_DIR}/server.key" 2>/dev/null || true
+    chmod 400 "${SERVICE_CERT_DIR}/service.key" 2>/dev/null || true
 
     # Make etcd client certificates accessible (for service discovery)
-    chmod 755 "${STATE_DIR}/tls" 2>/dev/null || true
-    chmod 755 "${STATE_DIR}/tls/etcd" 2>/dev/null || true
-    chmod 644 "${STATE_DIR}/tls/etcd/ca.crt" 2>/dev/null || true
-    chmod 644 "${STATE_DIR}/tls/etcd/server.crt" 2>/dev/null || true
-    chmod 644 "${STATE_DIR}/tls/etcd/client.crt" 2>/dev/null || true
-    chmod 400 "${STATE_DIR}/tls/etcd/server.pem" 2>/dev/null || true
-    chmod 400 "${STATE_DIR}/tls/etcd/client.pem" 2>/dev/null || true
+    chmod 644 "${ETCD_CERT_DIR}/client.crt" 2>/dev/null || true
+    chmod 400 "${ETCD_CERT_DIR}/client.key" 2>/dev/null || true
 
     echo "[setup-tls] ✓ CA certificates set to world-readable"
 elif [[ $EUID -eq 0 ]]; then
@@ -269,7 +242,6 @@ fi
 
 echo "[setup-tls] TLS bootstrap complete (RSA)"
 echo "[setup-tls]   CA: ${PKI_DIR}/ca.{key,crt,pem} (RSA 4096)"
-echo "[setup-tls]   Service cert: ${TLS_DIR}/{fullchain.pem,privkey.pem} (RSA 2048)"
-echo "[setup-tls]   Service symlinks: ${TLS_DIR}/{server.crt,server.key,ca.crt} -> {fullchain.pem,privkey.pem,ca.pem}"
+echo "[setup-tls]   Service cert: ${SERVICE_CERT_DIR}/{service.crt,service.key} (RSA 2048)"
 echo "[setup-tls]   MinIO certs: ${MINIO_CERTS_DIR}/{public.crt,private.key}"
-echo "[setup-tls]   etcd client certs: ${STATE_DIR}/tls/etcd/{ca.crt,server.{crt,pem},client.{crt,pem}}"
+echo "[setup-tls]   etcd client certs: ${ETCD_CERT_DIR}/{client.crt,client.key}"

@@ -170,24 +170,25 @@ echo ""
 # ============================================================================
 echo -e "${YELLOW}[3/7] Checking TLS Configuration...${NC}"
 
-check "TLS fullchain.pem exists" \
-    "test -f /var/lib/globular/config/tls/fullchain.pem && echo 'exists'" \
+# INV-PKI-1: Validate canonical PKI paths
+check "Service certificate exists" \
+    "test -f /var/lib/globular/pki/issued/services/service.crt && echo 'exists'" \
     "exists"
 
-check "TLS privkey.pem exists" \
-    "test -f /var/lib/globular/config/tls/privkey.pem && echo 'exists'" \
+check "Service private key exists" \
+    "test -f /var/lib/globular/pki/issued/services/service.key && echo 'exists'" \
     "exists"
 
-check "TLS ca.pem exists" \
-    "test -f /var/lib/globular/config/tls/ca.pem && echo 'exists'" \
+check "CA certificate exists" \
+    "test -f /var/lib/globular/pki/ca.pem && echo 'exists'" \
     "exists"
 
-check "TLS symlink server.crt exists" \
-    "test -L /var/lib/globular/config/tls/server.crt && echo 'exists'" \
+check "etcd client certificate exists" \
+    "test -f /var/lib/globular/pki/issued/etcd/client.crt && echo 'exists'" \
     "exists"
 
-check "TLS symlink server.key exists" \
-    "test -L /var/lib/globular/config/tls/server.key && echo 'exists'" \
+check "etcd client key exists" \
+    "test -f /var/lib/globular/pki/issued/etcd/client.key && echo 'exists'" \
     "exists"
 
 check "MinIO certs directory exists" \
@@ -195,7 +196,7 @@ check "MinIO certs directory exists" \
     "exists"
 
 check "etcd TLS directory exists" \
-    "test -d /var/lib/globular/tls/etcd && echo 'exists'" \
+    "test -d /var/lib/globular/pki/issued/etcd && echo 'exists'" \
     "exists"
 
 echo ""
@@ -289,7 +290,7 @@ echo ""
 echo -e "${YELLOW}[7/7] Checking Security Model...${NC}"
 
 check "TLS certificates have correct permissions" \
-    "perms=\$(stat -c '%a' /var/lib/globular/config/tls/privkey.pem 2>&1); if echo \"\$perms\" | grep -qE '^[46]00$'; then echo 'ok'; else echo \"FAIL: perms=\$perms (expected 600 or 400)\" >&2; exit 1; fi" \
+    "perms=\$(stat -c '%a' /var/lib/globular/pki/issued/services/service.key 2>&1); if echo \"\$perms\" | grep -qE '^[46]00$'; then echo 'ok'; else echo \"FAIL: perms=\$perms (expected 600 or 400)\" >&2; exit 1; fi" \
     "ok"
 
 check "No HTTP fallback in config" \

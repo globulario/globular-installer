@@ -44,6 +44,28 @@ echo ""
 mkdir -p "${DOMAIN_DIR}"
 chmod 700 "${DOMAIN_DIR}"
 
+# Check if client certificate exists and is still valid with current CA
+NEED_REGEN=false
+if [[ -f "${DOMAIN_DIR}/client.crt" ]] && [[ -f "${DOMAIN_DIR}/ca.crt" ]]; then
+    # Check if CA has changed
+    if ! diff -q "${PKI_DIR}/ca.crt" "${DOMAIN_DIR}/ca.crt" >/dev/null 2>&1; then
+        echo "→ CA certificate changed, regenerating client certificate..."
+        NEED_REGEN=true
+    else
+        # Check if client cert is still valid
+        if openssl verify -CAfile "${PKI_DIR}/ca.crt" "${DOMAIN_DIR}/client.crt" >/dev/null 2>&1; then
+            echo "  ✓ Client certificate is valid, skipping regeneration"
+            exit 0
+        else
+            echo "→ Client certificate invalid, regenerating..."
+            NEED_REGEN=true
+        fi
+    fi
+else
+    echo "→ No existing client certificate found, generating new one..."
+    NEED_REGEN=true
+fi
+
 # Copy CA certificate
 echo "→ Copying CA certificate..."
 cp "${PKI_DIR}/ca.crt" "${DOMAIN_DIR}/ca.crt"
