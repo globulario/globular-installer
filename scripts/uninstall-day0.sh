@@ -57,6 +57,67 @@ log_info "Uninstall mode: $UNINSTALL_MODE"
 log_info "Package directory: $PKG_DIR"
 log_info "Timeout: ${UNINSTALL_TIMEOUT}s"
 
+# Check for external domain registrations
+log_step "External Domain Warning"
+echo ""
+echo "⚠️  IMPORTANT: External Domain DNS Records"
+echo ""
+echo "This uninstall script removes local services and etcd data, but does NOT"
+echo "automatically clean up external DNS records published to DNS providers"
+echo "(CloudFlare, Route53, etc.)."
+echo ""
+
+# Try to check if domains are registered (if globular CLI is available)
+if command -v globular >/dev/null 2>&1; then
+  DOMAIN_COUNT=0
+  if systemctl is-active --quiet globular-etcd 2>/dev/null; then
+    # Try to query domains (may fail if certs not set up)
+    DOMAIN_CHECK=$(globular domain status 2>&1 | grep -c "globular\\.app\|globular\\.cloud" || echo "0")
+    if [[ "$DOMAIN_CHECK" != "0" ]]; then
+      DOMAIN_COUNT=$DOMAIN_CHECK
+    fi
+  fi
+
+  if [[ $DOMAIN_COUNT -gt 0 ]]; then
+    echo "  ⚠️  Detected external domain registrations in etcd!"
+    echo ""
+    echo "  To properly clean up external DNS records, run BEFORE uninstalling:"
+    echo ""
+    echo "    globular domain status                              # List domains"
+    echo "    globular domain remove --fqdn <domain> --cleanup-dns  # Remove each"
+    echo ""
+    echo "  Without --cleanup-dns flag, DNS records will persist in your provider"
+    echo "  and domains will continue to resolve even after uninstall."
+    echo ""
+  else
+    echo "  ℹ️  No external domains detected in current etcd state"
+    echo "     (or unable to query - etcd may not be running)"
+    echo ""
+  fi
+else
+  echo "  ℹ️  Cannot check for external domains (globular CLI not available)"
+  echo ""
+fi
+
+echo "If you previously registered external domains (globular.app, globular.cloud, etc.),"
+echo "you may need to manually remove DNS records from your DNS provider after uninstall."
+echo ""
+echo "DNS Provider Interfaces:"
+echo "  - CloudFlare: https://dash.cloudflare.com → DNS → Records"
+echo "  - Route53:    AWS Console → Route53 → Hosted Zones"
+echo "  - Other:      Check your DNS provider's management interface"
+echo ""
+
+# Give user a chance to abort
+if [[ -t 0 ]]; then  # Check if running interactively
+  echo "Press Enter to continue with uninstall, or Ctrl+C to abort..."
+  read -r
+else
+  echo "Non-interactive mode - continuing in 5 seconds... (Ctrl+C to abort)"
+  sleep 5
+fi
+echo ""
+
 pkg_base_from_filename() {
   local base
   base="$(basename "$1")"
