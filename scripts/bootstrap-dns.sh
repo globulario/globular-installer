@@ -38,40 +38,75 @@ fi
 echo "[bootstrap-dns] Using client certificates for user: $CLIENT_USER"
 echo "[bootstrap-dns] CA certificate: $CA_PATH"
 
-# Create wrapper function for globular commands with proper HOME
-# The CLI needs HOME to find client certificates for mTLS authentication
-# NOTE: Do NOT use --ca flag as it disables client certificate loading!
+# Pick DNS gRPC endpoint: the service may reallocate from its default port
+# (10006) if another service occupies it at startup time. We probe candidate
+# ports and pick the first one that actually responds as dns.DnsService.
+# Override via DNS_GRPC_ADDR env var to skip discovery.
+DNS_GRPC_ADDR="${DNS_GRPC_ADDR:-}"
+
+# Create wrapper function for globular commands with proper HOME and explicit
+# DNS endpoint. The CLI needs HOME to find client certificates for mTLS
+# authentication. NOTE: Do NOT use --ca flag as it disables client certificate
+# loading!
 globular_dns() {
-    HOME="$CLIENT_HOME" globular "$@"
+    HOME="$CLIENT_HOME" globular --dns "${DNS_GRPC_ADDR:-127.0.0.1:10006}" "$@"
+}
+
+# Probe whether a candidate address actually hosts the DNS gRPC service.
+# Returns 0 if the service responded (even with auth/not-found errors).
+# Returns 1 if the port has a different service or is not reachable.
+_probe_dns_grpc() {
+    local addr="$1"
+    local out
+    out=$(HOME="$CLIENT_HOME" globular --dns "$addr" --timeout 3s dns domains get 2>&1)
+    echo "$out" | grep -qE "unknown service dns\.DnsService|connect: connection refused|no route to host" && return 1
+    return 0
 }
 
 echo "[bootstrap-dns] Waiting for DNS service to be ready..."
 
-# Wait for DNS service to be fully ready (both gRPC and port 53)
+# Wait for DNS service to be fully ready (gRPC responding on correct port + port 53 bound).
+# NOTE: Do NOT use `globular dns domains` (no subcommand) — it prints help and
+# exits 0 without connecting. Use `dns domains get` for a real gRPC call.
 MAX_WAIT=30
 DNS_READY=0
 for i in $(seq 1 $MAX_WAIT); do
-    # Check 1: gRPC service responds (any response means it's up)
-    if globular_dns dns domains >/dev/null 2>&1; then
-        # Check 2: Port 53 UDP listener is bound (any listener on port 53)
-        # Note: ss -ulnp requires root to show process names, so just check if port is bound
-        if ss -uln 2>/dev/null | grep -qE ':53\s'; then
-            DNS_READY=1
-            break
-        fi
+    # Discover the actual DNS gRPC port on each iteration until found.
+    # The service defaults to 10006 but reallocates if there is a port conflict.
+    if [[ -z "$DNS_GRPC_ADDR" ]]; then
+        for _port in 10006 10007 10008 10009; do
+            if _probe_dns_grpc "127.0.0.1:$_port"; then
+                DNS_GRPC_ADDR="127.0.0.1:$_port"
+                [[ "$_port" != "10006" ]] && \
+                    echo "[bootstrap-dns] Note: DNS service found on port $_port (port conflict forced reallocation from 10006)"
+                break
+            fi
+        done
     fi
+
+    # Require both: gRPC port discovered AND port 53 UDP bound
+    if [[ -n "$DNS_GRPC_ADDR" ]] && ss -uln 2>/dev/null | grep -qE ':53\s'; then
+        DNS_READY=1
+        break
+    fi
+
     sleep 1
 done
 
 if [[ $DNS_READY -eq 0 ]]; then
     echo "[bootstrap-dns] ERROR: DNS service not ready after ${MAX_WAIT}s" >&2
     echo "[bootstrap-dns] Debug info:" >&2
-    echo "  gRPC status: $(globular_dns dns domains 2>&1 | head -1)" >&2
+    if [[ -n "$DNS_GRPC_ADDR" ]]; then
+        echo "  DNS gRPC endpoint: $DNS_GRPC_ADDR" >&2
+        echo "  gRPC status: $(globular_dns --timeout 5s dns domains get 2>&1 | head -1)" >&2
+    else
+        echo "  DNS gRPC: not found on ports 10006-10009" >&2
+    fi
     echo "  Port 53 status: $(ss -ulnp 2>/dev/null | grep ':53\s' || echo 'not listening')" >&2
     exit 1
 fi
 
-echo "[bootstrap-dns] ✓ DNS service ready (gRPC + port 53)"
+echo "[bootstrap-dns] ✓ DNS service ready (${DNS_GRPC_ADDR} + port 53)"
 
 # Check if globular CLI is available
 if ! command -v globular >/dev/null 2>&1; then
@@ -122,11 +157,13 @@ done
 if [[ $DNS_WRITABLE -eq 0 ]]; then
     echo "[bootstrap-dns] ERROR: DNS database not ready for writes after ${MAX_WAIT}s" >&2
     echo "[bootstrap-dns] Diagnostics:" >&2
+    echo "  DNS gRPC endpoint: $DNS_GRPC_ADDR" >&2
     echo "  Set command exit: $SET_EXIT" >&2
     echo "  Set output: $SET_OUTPUT" >&2
     echo "  Get command exit: $GET_EXIT" >&2
     echo "  Get output: $GET_OUTPUT" >&2
     echo "[bootstrap-dns] DNS service may not be functioning correctly" >&2
+    echo "[bootstrap-dns] Check: journalctl -u globular-dns.service -n 50" >&2
     exit 1
 fi
 

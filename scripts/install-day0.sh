@@ -277,8 +277,11 @@ CONTROL_PLANE_PKGS=(
   "service.rbac_0.0.1_linux_amd64.tgz"
   "service.authentication_0.0.1_linux_amd64.tgz"
   "service.discovery_0.0.1_linux_amd64.tgz"
-  "service.repository_0.0.1_linux_amd64.tgz"
+  # DNS must be installed before repository so it gets its default port (10006).
+  # The PortAllocator assigns ports in first-come order; repository would otherwise
+  # grab 10006 first and force DNS to reallocate to 10007, breaking bootstrap-dns.sh.
   "service.dns_0.0.1_linux_amd64.tgz"
+  "service.repository_0.0.1_linux_amd64.tgz"
 )
 
 OPS_PKGS=(
