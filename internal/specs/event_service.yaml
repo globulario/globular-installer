@@ -47,6 +47,20 @@ steps:
         group: globular
         mode: 0750
 
+  - id: install-event-payload
+    type: install_package_payload
+    install_bins: true
+    install_config: false
+    install_spec: false
+    install_systemd: false
+
+  - id: ensure-event-config
+    type: ensure_service_config
+    service_name: event
+    exec: event_server
+    address_host: auto
+    rewrite_if_out_of_range: true
+
   - id: install-event-service
     type: install_services
     units:

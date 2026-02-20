@@ -12,6 +12,7 @@ type Options struct {
 	FeaturesCSV      string
 	NonInteractive   bool
 	DryRun           bool
+	Force            bool
 	Verbose          bool
 	StagingDir       string
 	SpecPath         string

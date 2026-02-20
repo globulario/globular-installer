@@ -38,6 +38,9 @@ func (s *InstallBinariesStep) Check(ctx *Context) (StepStatus, error) {
 	if len(specs) == 0 {
 		return StatusOK, nil
 	}
+	if ctx.Force {
+		return StatusNeedsApply, nil
+	}
 	for _, spec := range specs {
 		info, err := os.Stat(spec.Path)
 		if err != nil {

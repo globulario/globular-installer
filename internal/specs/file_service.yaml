@@ -47,6 +47,20 @@ steps:
         group: globular
         mode: 0750
 
+  - id: install-file-payload
+    type: install_package_payload
+    install_bins: true
+    install_config: false
+    install_spec: false
+    install_systemd: false
+
+  - id: ensure-file-config
+    type: ensure_service_config
+    service_name: file
+    exec: file_server
+    address_host: auto
+    rewrite_if_out_of_range: true
+
   - id: install-file-service
     type: install_services
     units:

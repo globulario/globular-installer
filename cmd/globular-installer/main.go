@@ -57,6 +57,7 @@ func runCommand(prog, cmd string, args []string) int {
 	specInline := fs.String("spec-inline", "", "inline spec content (YAML/JSON)")
 	portRange := fs.String("port-range", "10000-11000", "service port range (start-end)")
 	dryRun := fs.Bool("dry-run", false, "perform a dry run")
+	force := fs.Bool("force", false, "force reinstall even if binaries are already up-to-date")
 	purge := fs.Bool("purge", false, "remove config/state dirs when uninstalling")
 	nonInteractive := fs.Bool("non-interactive", false, "run without prompts")
 	verbose := fs.Bool("verbose", false, "enable verbose logging")
@@ -89,6 +90,7 @@ func runCommand(prog, cmd string, args []string) int {
 		SpecPath:         *specPath,
 		SpecInline:       *specInline,
 		DryRun:           *dryRun,
+		Force:            *force,
 		NonInteractive:   *nonInteractive,
 		Verbose:          *verbose,
 		Purge:            *purge,
@@ -157,6 +159,7 @@ func printCommandUsage(w io.Writer, prog, cmd string) {
 	fmt.Fprintln(w, "  --spec string            path to YAML/JSON install spec")
 	fmt.Fprintln(w, "  --spec-inline string     inline spec contents (YAML/JSON)")
 	fmt.Fprintln(w, "  --dry-run                run without making system changes")
+	fmt.Fprintln(w, "  --force                  force reinstall even if binaries are already up-to-date")
 	fmt.Fprintln(w, "  --non-interactive        run without prompts")
 	fmt.Fprintln(w, "  --verbose                print verbose logs")
 	fmt.Fprintln(w, "  --version string         globular version metadata")

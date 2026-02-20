@@ -42,6 +42,7 @@ type Context struct {
 	PortRangeEnd   int
 	NonInteractive bool
 	DryRun         bool
+	Force          bool
 	Logger         Logger
 	StagingDir     string
 	Runtime        *RuntimeState
@@ -208,6 +209,7 @@ func NewContext(opts Options) (*Context, error) {
 		StagingDir:     opts.StagingDir,
 		NonInteractive: opts.NonInteractive,
 		DryRun:         opts.DryRun,
+		Force:          opts.Force,
 		Logger:         logger,
 		Runtime: &RuntimeState{
 			ChangedBinaries: make(map[string]bool),

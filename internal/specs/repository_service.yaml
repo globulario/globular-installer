@@ -79,7 +79,7 @@ steps:
     type: ensure_service_config
     service_name: repository
     exec: repository_server
-    address_host: localhost
+    address_host: auto
     rewrite_if_out_of_range: true
 
   - id: enable-repository

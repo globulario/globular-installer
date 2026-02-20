@@ -7,6 +7,8 @@ set -euo pipefail
 #   PKG_DIR                  - Package directory (default: internal/assets/packages)
 #   INSTALLER_BIN            - Installer binary path (auto-detected)
 #   TOLERATE_ALREADY_INSTALLED - Allow already-installed packages (default: 1)
+#   FORCE_REINSTALL          - Force overwrite existing binaries even if unchanged (default: 0)
+#                              Set to 1 to always reinstall all binaries (useful after rebuild)
 #   GLOBULAR_CONFORMANCE     - Conformance test mode (default: warn)
 #                              warn: Run tests, log failures, continue installation
 #                              fail: Run tests, abort installation on any failure (v1 target)
@@ -93,6 +95,11 @@ INSTALL_MODE="$(detect_install_cmd)"
 UNINSTALL_MODE="$(detect_uninstall_cmd)"
 
 TOLERATE_ALREADY_INSTALLED="${TOLERATE_ALREADY_INSTALLED:-1}"
+FORCE_REINSTALL="${FORCE_REINSTALL:-0}"
+FORCE_FLAG=""
+if [[ "$FORCE_REINSTALL" == "1" ]]; then
+  FORCE_FLAG="--force"
+fi
 
 echo ""
 echo "╔════════════════════════════════════════════════════════════════╗"
@@ -192,7 +199,8 @@ install_from_extracted_spec() {
   fi
 
   set +e
-  out="$("$INSTALLER_BIN" install --staging-dir "$staging" --spec "$spec" 2>&1)"
+  # shellcheck disable=SC2086
+  out="$("$INSTALLER_BIN" install --staging-dir "$staging" --spec "$spec" $FORCE_FLAG 2>&1)"
   rc=$?
   set -e
 
@@ -211,11 +219,12 @@ run_install() {
   log_substep "Installing $pkgname..."
 
   set +e
+  # shellcheck disable=SC2086
   case "$INSTALL_MODE" in
-    pkg_install_flag) out="$("$INSTALLER_BIN" pkg install --package "$pkgfile" 2>&1)"; rc=$? ;;
-    pkg_install_arg)  out="$("$INSTALLER_BIN" pkg install "$pkgfile" 2>&1)"; rc=$? ;;
-    install_flag)     out="$("$INSTALLER_BIN" install --package "$pkgfile" 2>&1)"; rc=$? ;;
-    install_arg)      out="$("$INSTALLER_BIN" install "$pkgfile" 2>&1)"; rc=$? ;;
+    pkg_install_flag) out="$("$INSTALLER_BIN" pkg install --package "$pkgfile" $FORCE_FLAG 2>&1)"; rc=$? ;;
+    pkg_install_arg)  out="$("$INSTALLER_BIN" pkg install "$pkgfile" $FORCE_FLAG 2>&1)"; rc=$? ;;
+    install_flag)     out="$("$INSTALLER_BIN" install --package "$pkgfile" $FORCE_FLAG 2>&1)"; rc=$? ;;
+    install_arg)      out="$("$INSTALLER_BIN" install "$pkgfile" $FORCE_FLAG 2>&1)"; rc=$? ;;
     *) die "Unknown install mode: $INSTALL_MODE" ;;
   esac
   set -e

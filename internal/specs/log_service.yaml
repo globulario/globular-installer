@@ -47,6 +47,20 @@ steps:
         group: globular
         mode: 0750
 
+  - id: install-log-payload
+    type: install_package_payload
+    install_bins: true
+    install_config: false
+    install_spec: false
+    install_systemd: false
+
+  - id: ensure-log-config
+    type: ensure_service_config
+    service_name: log
+    exec: log_server
+    address_host: auto
+    rewrite_if_out_of_range: true
+
   - id: install-log-service
     type: install_services
     units:
