@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"regexp"
@@ -14,14 +15,21 @@ import (
 
 // NormalizeScyllaConfigStep ensures /etc/scylla/scylla.yaml has correct bindings
 // to prevent "connection refused" errors during service startup.
+//
+// When ListenAddress is empty it is auto-detected as the IP of the outbound
+// default interface (same technique used by Globular services at runtime).
 type NormalizeScyllaConfigStep struct {
 	// ScyllaConfigPath is the path to scylla.yaml (default: /etc/scylla/scylla.yaml)
 	ScyllaConfigPath string
-	// ListenAddress is the primary IP address Scylla should bind to
+	// ListenAddress is the primary IP address Scylla should bind to.
+	// If empty it is auto-detected from the default outbound interface.
 	ListenAddress string
-	// RPCAddress is the RPC binding (default: 0.0.0.0 for single-node)
+	// RPCAddress is the CQL client binding (default: same as ListenAddress).
+	// listen_address cannot be 0.0.0.0 in ScyllaDB; both default to the detected IP.
 	RPCAddress string
-	// BroadcastRPCAddress is the advertised RPC address
+	// BroadcastAddress is the address advertised to peers (default: ListenAddress)
+	BroadcastAddress string
+	// BroadcastRPCAddress is the CQL address advertised to clients (default: ListenAddress)
 	BroadcastRPCAddress string
 	// NativeTransportPort is the CQL port (default: 9042)
 	NativeTransportPort string
@@ -39,18 +47,38 @@ func (s *NormalizeScyllaConfigStep) defaults() {
 	if s.ScyllaConfigPath == "" {
 		s.ScyllaConfigPath = "/etc/scylla/scylla.yaml"
 	}
-	if s.RPCAddress == "" {
-		s.RPCAddress = "0.0.0.0"
-	}
 	if s.NativeTransportPort == "" {
 		s.NativeTransportPort = "9042"
 	}
 	if s.ValidationTimeoutSec == 0 {
 		s.ValidationTimeoutSec = 90
 	}
+	// Auto-detect the outbound IP when no address was specified.
+	if s.ListenAddress == "" {
+		if ip, err := outboundIP(); err == nil {
+			s.ListenAddress = ip
+		}
+	}
+	if s.RPCAddress == "" {
+		s.RPCAddress = s.ListenAddress
+	}
+	if s.BroadcastAddress == "" && s.ListenAddress != "" {
+		s.BroadcastAddress = s.ListenAddress
+	}
 	if s.BroadcastRPCAddress == "" && s.ListenAddress != "" {
 		s.BroadcastRPCAddress = s.ListenAddress
 	}
+}
+
+// outboundIP returns the local IP used for outbound connections by dialling a
+// UDP packet (no data is actually sent — this is just a routing lookup).
+func outboundIP() (string, error) {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		return "", err
+	}
+	defer conn.Close()
+	return conn.LocalAddr().(*net.UDPAddr).IP.String(), nil
 }
 
 func (s *NormalizeScyllaConfigStep) Check(ctx *Context) (StepStatus, error) {
@@ -108,13 +136,29 @@ func (s *NormalizeScyllaConfigStep) Check(ctx *Context) (StepStatus, error) {
 	}
 
 	// Check if rpc_address needs to be set
-	if !strings.Contains(string(data), "rpc_address: "+s.RPCAddress) {
-		needsNormalization = true
+	if s.RPCAddress != "" {
+		if !strings.Contains(string(data), "rpc_address: "+s.RPCAddress) {
+			needsNormalization = true
+		}
+	}
+
+	// Check if broadcast_address needs to be set
+	if s.BroadcastAddress != "" {
+		if !strings.Contains(string(data), "broadcast_address: "+s.BroadcastAddress) {
+			needsNormalization = true
+		}
 	}
 
 	// Check if broadcast_rpc_address needs to be set
 	if s.BroadcastRPCAddress != "" {
 		if !strings.Contains(string(data), "broadcast_rpc_address: "+s.BroadcastRPCAddress) {
+			needsNormalization = true
+		}
+	}
+
+	// Check if seeds need to be updated
+	if s.ListenAddress != "" {
+		if !strings.Contains(string(data), `- seeds: "`+s.ListenAddress+`"`) {
 			needsNormalization = true
 		}
 	}
@@ -180,6 +224,7 @@ func (s *NormalizeScyllaConfigStep) normalizeConfig(content string) (string, err
 	// Track which settings we've set
 	setListenAddress := false
 	setRPCAddress := false
+	setBroadcastAddress := false
 	setBroadcastRPCAddress := false
 	setNativeTransportPort := false
 	inClientEncryption := false
@@ -218,15 +263,16 @@ func (s *NormalizeScyllaConfigStep) normalizeConfig(content string) (string, err
 			continue
 		}
 
-		// Trim trailing whitespace from seeds line
-		if strings.HasPrefix(trimmed, "- seeds:") {
-			// Extract the seeds value and trim it
+		// Update seeds to use the listen address
+		if strings.HasPrefix(trimmed, "- seeds:") && s.ListenAddress != "" {
 			re := regexp.MustCompile(`(- seeds:\s*)"([^"]+)"`)
+			indent := strings.Repeat(" ", len(line)-len(strings.TrimLeft(line, " \t")))
 			if matches := re.FindStringSubmatch(line); len(matches) >= 3 {
-				indent := strings.Repeat(" ", len(line)-len(strings.TrimLeft(line, " \t")))
-				buf.WriteString(fmt.Sprintf("%s- seeds: \"%s\"\n", indent, strings.TrimSpace(matches[2])))
-				continue
+				buf.WriteString(fmt.Sprintf("%s- seeds: \"%s\"\n", indent, s.ListenAddress))
+			} else {
+				buf.WriteString(fmt.Sprintf("%s- seeds: \"%s\"\n", indent, s.ListenAddress))
 			}
+			continue
 		}
 
 		// Replace listen_address
@@ -238,10 +284,18 @@ func (s *NormalizeScyllaConfigStep) normalizeConfig(content string) (string, err
 		}
 
 		// Replace rpc_address
-		if strings.HasPrefix(trimmed, "rpc_address:") {
+		if strings.HasPrefix(trimmed, "rpc_address:") && s.RPCAddress != "" {
 			indent := strings.Repeat(" ", len(line)-len(strings.TrimLeft(line, " \t")))
 			buf.WriteString(fmt.Sprintf("%srpc_address: %s\n", indent, s.RPCAddress))
 			setRPCAddress = true
+			continue
+		}
+
+		// Replace broadcast_address (must come before broadcast_rpc_address check)
+		if strings.HasPrefix(trimmed, "broadcast_address:") && s.BroadcastAddress != "" {
+			indent := strings.Repeat(" ", len(line)-len(strings.TrimLeft(line, " \t")))
+			buf.WriteString(fmt.Sprintf("%sbroadcast_address: %s\n", indent, s.BroadcastAddress))
+			setBroadcastAddress = true
 			continue
 		}
 
@@ -274,8 +328,11 @@ func (s *NormalizeScyllaConfigStep) normalizeConfig(content string) (string, err
 	if !setListenAddress && s.ListenAddress != "" {
 		result += fmt.Sprintf("\nlisten_address: %s\n", s.ListenAddress)
 	}
-	if !setRPCAddress {
+	if !setRPCAddress && s.RPCAddress != "" {
 		result += fmt.Sprintf("rpc_address: %s\n", s.RPCAddress)
+	}
+	if !setBroadcastAddress && s.BroadcastAddress != "" {
+		result += fmt.Sprintf("broadcast_address: %s\n", s.BroadcastAddress)
 	}
 	if !setBroadcastRPCAddress && s.BroadcastRPCAddress != "" {
 		result += fmt.Sprintf("broadcast_rpc_address: %s\n", s.BroadcastRPCAddress)

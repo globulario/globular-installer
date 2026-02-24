@@ -19,6 +19,7 @@ mkdir -p "${PKI_DIR}"
 mkdir -p "${SERVICE_CERT_DIR}"
 mkdir -p "${ETCD_CERT_DIR}"
 mkdir -p "${MINIO_CERTS_DIR}"
+chmod 755 "${STATE_DIR}" "${PKI_DIR}"
 
 # Function to generate RSA key (not ECDSA - for XDS compatibility)
 gen_rsa_key() {
@@ -49,6 +50,12 @@ gen_ca() {
         -addext "keyUsage=critical,keyCertSign,cRLSign"
 
     chmod 444 "${crtfile}"
+
+    # Ensure canonical CA location exists (INV-PKI-1)
+    if [[ ! -f "${PKI_DIR}/ca.crt" ]]; then
+        cp "${crtfile}" "${PKI_DIR}/ca.crt"
+    fi
+    chmod 644 "${PKI_DIR}/ca.crt"
 
     # Create CA bundle
     cp "${crtfile}" "${pemfile}"

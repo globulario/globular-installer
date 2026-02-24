@@ -6,6 +6,19 @@ echo "CONFIGURING SCYLLA TLS"
 echo "=================================="
 echo ""
 
+# Auto-detect the outbound IP address (the IP Globular services will use to reach ScyllaDB)
+# ScyllaDB does not support 0.0.0.0 for listen_address/rpc_address — must be a specific IP.
+LOCAL_IP=$(ip route get 8.8.8.8 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1); exit}')
+if [[ -z "${LOCAL_IP}" ]]; then
+    LOCAL_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+fi
+if [[ -z "${LOCAL_IP}" ]]; then
+    echo "✗ ERROR: Cannot detect local IP address for ScyllaDB configuration"
+    exit 1
+fi
+echo "→ Detected local IP: ${LOCAL_IP}"
+echo ""
+
 # Certificate paths (from Globular TLS setup - canonical paths)
 # INV-PKI-1: Use canonical PKI paths instead of config/tls
 GLOBULAR_SERVICE_CERT_DIR="/var/lib/globular/pki/issued/services"
@@ -52,11 +65,11 @@ echo ""
 # Update scylla.yaml to enable TLS
 echo "→ Updating scylla.yaml for TLS..."
 
-cat > "${SCYLLA_YAML}" <<'EOF'
+cat > "${SCYLLA_YAML}" <<EOF
 seed_provider:
   - class_name: org.apache.cassandra.locator.SimpleSeedProvider
     parameters:
-      - seeds: "127.0.0.1"
+      - seeds: "${LOCAL_IP}"
 
 # --- Client ↔ Node TLS (CQL/native transport) ---
 client_encryption_options:
@@ -69,15 +82,14 @@ client_encryption_options:
 # TLS-enabled CQL port (9142)
 native_transport_port_ssl: 9142
 
-# Plaintext CQL port (9042) - keep for backward compatibility
-# Set to 127.0.0.1 to only allow local connections, or comment out to disable
-listen_address: 127.0.0.1
-rpc_address: 127.0.0.1
+# Plaintext CQL port (9042)
+listen_address: ${LOCAL_IP}
+rpc_address: ${LOCAL_IP}
 native_transport_port: 9042
 
-# For single-node or local testing
-broadcast_address: 127.0.0.1
-broadcast_rpc_address: 127.0.0.1
+# Addresses advertised to peers and clients
+broadcast_address: ${LOCAL_IP}
+broadcast_rpc_address: ${LOCAL_IP}
 endpoint_snitch: SimpleSnitch
 
 # Developer mode (disable for production)
@@ -151,8 +163,8 @@ echo "TLS CONFIGURATION COMPLETE"
 echo "=================================="
 echo ""
 echo "ScyllaDB is now configured with TLS:"
-echo "  • Plaintext CQL: localhost:9042"
-echo "  • TLS CQL: localhost:9142"
+echo "  • Plaintext CQL: ${LOCAL_IP}:9042"
+echo "  • TLS CQL: ${LOCAL_IP}:9142"
 echo ""
 echo "Certificates:"
 echo "  • Server cert: ${SCYLLA_TLS_DIR}/server.crt"
@@ -160,7 +172,7 @@ echo "  • Server key: ${SCYLLA_TLS_DIR}/server.key"
 echo "  • CA cert: ${SCYLLA_TLS_DIR}/ca.crt"
 echo ""
 echo "To test TLS connection:"
-echo "  cqlsh --ssl 127.0.0.1 9142"
+echo "  cqlsh --ssl ${LOCAL_IP} 9142"
 echo ""
 echo "To check ScyllaDB status:"
 echo "  systemctl status scylla-server.service"

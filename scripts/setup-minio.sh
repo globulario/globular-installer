@@ -58,7 +58,7 @@ defaults = {
     "type": "minio",
     "endpoint": "127.0.0.1:9000",
     "bucket": "globular",
-    "prefix": default_domain,
+    "prefix": "",  # No domain level - direct paths: users/, webroot/, packages-repository/
     "secure": False,
     "caBundlePath": "",
 }

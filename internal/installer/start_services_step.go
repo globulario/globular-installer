@@ -177,18 +177,21 @@ func startTimeEnsureFreePort(ctx *Context, unit string, binName string) error {
 		binPath = filepath.Join(ctx.Prefix, "bin", binName)
 	}
 
-	id, err := describeServiceID(binPath)
+	desc, err := describeService(binPath)
 	if err != nil {
 		if ctx.Logger != nil {
 			ctx.Logger.Infof("start: describe failed for %s; skipping port preflight for %s: %v", binPath, unit, err)
 		}
 		return nil
 	}
+	id := desc["Id"].(string)
 
 	cfgPath := filepath.Join(ctx.ConfigDir, id+".json")
 	raw, err := os.ReadFile(cfgPath)
 	if err != nil {
-		return nil
+		// First install — no config yet. Seed it with a pre-allocated free port so
+		// the service starts without a runtime port conflict.
+		return writeSeedConfig(ctx, unit, cfgPath, desc)
 	}
 
 	var cfg map[string]any
@@ -221,13 +224,84 @@ func startTimeEnsureFreePort(ctx *Context, unit string, binName string) error {
 	cfg["Address"] = fmt.Sprintf("%s:%d", host, newPort)
 	cfg["Port"] = newPort
 
+	if err := writeConfigFile(ctx, cfgPath, cfg); err != nil {
+		return err
+	}
+
+	if ctx.Logger != nil {
+		start, end := ctx.Ports.Range()
+		ctx.Logger.Infof("port clash detected for %s: %d in use; rewrote %s to %d (range=%d-%d)", unit, port, cfgPath, newPort, start, end)
+	}
+	return nil
+}
+
+// writeSeedConfig creates a minimal service config from --describe output with a
+// pre-checked free port. This runs on first install before systemd starts the service.
+func writeSeedConfig(ctx *Context, unit, cfgPath string, desc map[string]any) error {
+	// Determine default port: prefer "DefaultPort" field, fall back to "Port".
+	defaultPort := descInt(desc, "DefaultPort")
+	if defaultPort == 0 {
+		defaultPort = descInt(desc, "Port")
+	}
+	if defaultPort == 0 {
+		return nil // Can't determine port; let service handle it at runtime.
+	}
+
+	// Determine host from describe address (may be "localhost:N" or just "localhost").
+	host := "localhost"
+	if addr, _ := desc["Address"].(string); addr != "" {
+		if h, _, e := net.SplitHostPort(strings.TrimSpace(addr)); e == nil && h != "" {
+			host = h
+		} else if idx := strings.LastIndex(addr, ":"); idx > 0 {
+			host = addr[:idx]
+		} else {
+			host = addr
+		}
+	}
+
+	// Choose the final port: default if free, otherwise reserve an alternative.
+	port := defaultPort
+	if portProbe(port) && ctx.Ports != nil {
+		newPort, err := ctx.Ports.Reserve(unit)
+		if err != nil {
+			if ctx.Logger != nil {
+				ctx.Logger.Infof("seed-config: port %d in use for %s, no alternative (%v); service will self-heal", defaultPort, unit, err)
+			}
+		} else {
+			port = newPort
+		}
+	}
+
+	// Build seed config: start from describe output so all fields are present,
+	// then override address/port with the chosen free port.
+	seed := make(map[string]any, len(desc))
+	for k, v := range desc {
+		seed[k] = v
+	}
+	seed["Address"] = fmt.Sprintf("%s:%d", host, port)
+	seed["Port"] = port
+	delete(seed, "DefaultPort") // runtime-only hint, not stored in config
+	delete(seed, "PortRange")   // runtime-only hint, not stored in config
+
+	if err := writeConfigFile(ctx, cfgPath, seed); err != nil {
+		return err
+	}
+
+	if ctx.Logger != nil {
+		ctx.Logger.Infof("seed-config: wrote initial config for %s at %s (port=%d)", unit, cfgPath, port)
+	}
+	return nil
+}
+
+// writeConfigFile atomically writes cfg as JSON to path using the platform installer.
+func writeConfigFile(ctx *Context, path string, cfg map[string]any) error {
 	out, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
-		return fmt.Errorf("marshal updated config for %s: %w", unit, err)
+		return fmt.Errorf("marshal config for %s: %w", path, err)
 	}
 
 	spec := platform.FileSpec{
-		Path:   cfgPath,
+		Path:   path,
 		Data:   append(out, '\n'),
 		Owner:  "globular",
 		Group:  "globular",
@@ -235,39 +309,59 @@ func startTimeEnsureFreePort(ctx *Context, unit string, binName string) error {
 		Atomic: true,
 	}
 	if err := ctx.Platform.InstallFiles(context.Background(), []platform.FileSpec{spec}); err != nil {
-		return fmt.Errorf("rewrite config %s: %w", cfgPath, err)
+		return fmt.Errorf("write config %s: %w", path, err)
 	}
 
 	if ctx.Runtime != nil {
 		ensureRuntimeMaps(ctx.Runtime)
-		ctx.Runtime.ChangedFiles[cfgPath] = true
-	}
-
-	if ctx.Logger != nil {
-		start, end := ctx.Ports.Range()
-		ctx.Logger.Infof("port clash detected for %s: %d in use; rewrote %s to %d (range=%d-%d)", unit, port, cfgPath, newPort, start, end)
+		ctx.Runtime.ChangedFiles[path] = true
 	}
 
 	return nil
 }
 
-func describeServiceID(binPath string) (string, error) {
+// descInt extracts an integer from a describe map field (handles float64 from JSON).
+func descInt(m map[string]any, key string) int {
+	v := m[key]
+	switch n := v.(type) {
+	case int:
+		return n
+	case float64:
+		return int(n)
+	case int64:
+		return int(n)
+	}
+	return 0
+}
+
+// describeService runs binary --describe and returns the full describe map.
+// The map is guaranteed to have a non-empty "Id" field on success.
+func describeService(binPath string) (map[string]any, error) {
 	c, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(c, binPath, "--describe")
 	out, err := cmd.Output()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	var m map[string]any
 	if err := json.Unmarshal(out, &m); err != nil {
-		return "", err
+		return nil, err
 	}
 	id, _ := m["Id"].(string)
 	if id == "" {
-		return "", fmt.Errorf("missing Id in --describe")
+		return nil, fmt.Errorf("missing Id in --describe")
 	}
-	return id, nil
+	return m, nil
+}
+
+// describeServiceID is a convenience wrapper that returns just the service Id.
+func describeServiceID(binPath string) (string, error) {
+	m, err := describeService(binPath)
+	if err != nil {
+		return "", err
+	}
+	return m["Id"].(string), nil
 }
 
 func parsePortForStart(address string) (int, error) {

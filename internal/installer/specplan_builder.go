@@ -222,6 +222,24 @@ func buildStep(ctx *Context, ss spec.StepSpec) (Step, error) {
 		step.HostsPath = getStringParam(ss.Params, "hosts_path", "/etc/hosts")
 		step.ClusterDomain = getStringParam(ss.Params, "cluster_domain", "")
 		return step, nil
+	case "normalize_scylla_config":
+		timeoutSec := 90
+		if s := getStringParam(ss.Params, "timeout_sec", ""); s != "" {
+			if n, err := strconv.Atoi(s); err == nil && n > 0 {
+				timeoutSec = n
+			}
+		}
+		step := &NormalizeScyllaConfigStep{
+			ScyllaConfigPath:     getStringParam(ss.Params, "config_path", ""),
+			ListenAddress:        getStringParam(ss.Params, "listen_address", ""),
+			RPCAddress:           getStringParam(ss.Params, "rpc_address", ""),
+			BroadcastAddress:     getStringParam(ss.Params, "broadcast_address", ""),
+			BroadcastRPCAddress:  getStringParam(ss.Params, "broadcast_rpc_address", ""),
+			NativeTransportPort:  getStringParam(ss.Params, "native_transport_port", ""),
+			ValidatePort:         getBoolParam(ss.Params, "validate_port", true),
+			ValidationTimeoutSec: timeoutSec,
+		}
+		return step, nil
 	case "noop":
 		name := ss.ID
 		if name == "" {
