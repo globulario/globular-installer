@@ -96,6 +96,10 @@ UNINSTALL_MODE="$(detect_uninstall_cmd)"
 
 TOLERATE_ALREADY_INSTALLED="${TOLERATE_ALREADY_INSTALLED:-1}"
 FORCE_REINSTALL="${FORCE_REINSTALL:-0}"
+
+# Canonical cluster domain — single source of truth for all Day-0 scripts
+DOMAIN="${GLOBULAR_DOMAIN:-globular.internal}"
+export DOMAIN
 FORCE_FLAG=""
 if [[ "$FORCE_REINSTALL" == "1" ]]; then
   FORCE_FLAG="--force"
@@ -106,9 +110,31 @@ echo "╔═══════════════════════�
 echo "║          GLOBULAR DAY-0 INSTALLATION                           ║"
 echo "╚════════════════════════════════════════════════════════════════╝"
 echo ""
+
+# Prompt for MinIO data storage location
+# MinIO stores all bucket data under this directory. Choose a path on a
+# drive with enough space for your object-store data (backups, media, etc.)
+MINIO_DATA_DIR="${MINIO_DATA_DIR:-}"
+if [[ -z "$MINIO_DATA_DIR" ]]; then
+  DEFAULT_MINIO_DATA_DIR="/var/lib/globular/minio/data"
+  echo "  MinIO stores all bucket data (backups, media, etc.) in a local directory."
+  echo "  Choose a path on a drive with enough free space."
+  echo ""
+  read -r -p "  MinIO data directory [$DEFAULT_MINIO_DATA_DIR]: " MINIO_DATA_DIR
+  MINIO_DATA_DIR="${MINIO_DATA_DIR:-$DEFAULT_MINIO_DATA_DIR}"
+fi
+# Ensure absolute path
+if [[ "${MINIO_DATA_DIR:0:1}" != "/" ]]; then
+  die "MinIO data directory must be an absolute path: $MINIO_DATA_DIR"
+fi
+export MINIO_DATA_DIR
+MINIO_DATA_DIR_FLAG="--minio-data-dir $MINIO_DATA_DIR"
+
 log_info "Installer binary: $INSTALLER_BIN"
 log_info "Install mode: $INSTALL_MODE"
 log_info "Package directory: $PKG_DIR"
+log_info "MinIO data directory: $MINIO_DATA_DIR"
+log_info "Cluster domain: $DOMAIN"
 log_info "Conformance mode: ${GLOBULAR_CONFORMANCE:-warn}"
 echo ""
 
@@ -200,7 +226,7 @@ install_from_extracted_spec() {
 
   set +e
   # shellcheck disable=SC2086
-  out="$("$INSTALLER_BIN" install --staging-dir "$staging" --spec "$spec" $FORCE_FLAG 2>&1)"
+  out="$("$INSTALLER_BIN" install --staging-dir "$staging" --spec "$spec" $FORCE_FLAG $MINIO_DATA_DIR_FLAG 2>&1)"
   rc=$?
   set -e
 
@@ -217,14 +243,16 @@ run_install() {
   local out rc
 
   log_substep "Installing $pkgname..."
+  log_substep "  CMD: $INSTALLER_BIN install $FORCE_FLAG $MINIO_DATA_DIR_FLAG $pkgfile"
 
   set +e
   # shellcheck disable=SC2086
+  # NOTE: flags MUST come before positional args (Go flag package stops at first non-flag)
   case "$INSTALL_MODE" in
-    pkg_install_flag) out="$("$INSTALLER_BIN" pkg install --package "$pkgfile" $FORCE_FLAG 2>&1)"; rc=$? ;;
-    pkg_install_arg)  out="$("$INSTALLER_BIN" pkg install "$pkgfile" $FORCE_FLAG 2>&1)"; rc=$? ;;
-    install_flag)     out="$("$INSTALLER_BIN" install --package "$pkgfile" $FORCE_FLAG 2>&1)"; rc=$? ;;
-    install_arg)      out="$("$INSTALLER_BIN" install "$pkgfile" $FORCE_FLAG 2>&1)"; rc=$? ;;
+    pkg_install_flag) out="$("$INSTALLER_BIN" pkg install --package "$pkgfile" $FORCE_FLAG $MINIO_DATA_DIR_FLAG 2>&1)"; rc=$? ;;
+    pkg_install_arg)  out="$("$INSTALLER_BIN" pkg install $FORCE_FLAG $MINIO_DATA_DIR_FLAG "$pkgfile" 2>&1)"; rc=$? ;;
+    install_flag)     out="$("$INSTALLER_BIN" install --package "$pkgfile" $FORCE_FLAG $MINIO_DATA_DIR_FLAG 2>&1)"; rc=$? ;;
+    install_arg)      out="$("$INSTALLER_BIN" install $FORCE_FLAG $MINIO_DATA_DIR_FLAG "$pkgfile" 2>&1)"; rc=$? ;;
     *) die "Unknown install mode: $INSTALL_MODE" ;;
   esac
   set -e
@@ -258,11 +286,14 @@ install_list() {
   for f in "${pkg_array[@]}"; do
     local path="$PKG_DIR/$f"
     if [[ ! -f "$path" ]]; then
-      continue  # Skip silently if package not found
+      log_substep "Warning: package not found, skipping: $path"
+      continue
     fi
     run_install "$path"
   done
 }
+
+SCYLLADB_PKG="service.scylladb_2025.3.1_linux_amd64.tgz"
 
 BOOTSTRAP_MINIO_PKGS=(
   "service.etcd_3.5.14_linux_amd64.tgz"
@@ -279,6 +310,7 @@ BOOTSTRAP_REST_PKGS=(
   "service.gateway_0.0.1_linux_amd64.tgz"
   "service.node-agent_0.0.1_linux_amd64.tgz"
   "service.cluster-controller_0.0.1_linux_amd64.tgz"
+  "service.cluster-doctor_0.0.1_linux_amd64.tgz"
 )
 
 CONTROL_PLANE_PKGS=(
@@ -294,8 +326,15 @@ CONTROL_PLANE_PKGS=(
 )
 
 OPS_PKGS=(
+  "service.sidekick_7.0.0_linux_amd64.tgz"
+  "service.node-exporter_1.10.2_linux_amd64.tgz"
+  "service.prometheus_3.5.1_linux_amd64.tgz"
+  "service.monitoring_0.0.1_linux_amd64.tgz"
   "service.event_0.0.1_linux_amd64.tgz"
   "service.log_0.0.1_linux_amd64.tgz"
+  "service.backup-manager_0.0.1_linux_amd64.tgz"
+  "service.scylla-manager-agent_3.8.1_linux_amd64.tgz"
+  "service.scylla-manager_3.8.1_linux_amd64.tgz"
 )
 
 OPTIONAL_WORKLOAD_PKGS=(
@@ -305,6 +344,13 @@ OPTIONAL_WORKLOAD_PKGS=(
 CMDS_PKGS=(
   "service.mc-cmd_0.0.1_linux_amd64.tgz"
   "service.globular-cli-cmd_0.0.1_linux_amd64.tgz"
+  "service.etcdctl-cmd_3.5.14_linux_amd64.tgz"
+  "service.rclone-cmd_1.73.1_linux_amd64.tgz"
+  "service.restic-cmd_0.18.1_linux_amd64.tgz"
+  "service.sctool-cmd_3.8.1_linux_amd64.tgz"
+  "service.sha256sum-cmd_9.4.0_linux_amd64.tgz"
+  "service.yt-dlp-cmd_2026.2.21_linux_amd64.tgz"
+  "service.ffmpeg-cmd_7.0.2_linux_amd64.tgz"
 )
 
 # Phase 2: Enable bootstrap mode for Day-0 installation
@@ -339,8 +385,86 @@ chown root:root "$BOOTSTRAP_FLAG" 2>/dev/null || chown 0:0 "$BOOTSTRAP_FLAG"
 
 log_success "Bootstrap mode enabled: $BOOTSTRAP_FLAG (expires: $(date -d @$EXPIRES_AT '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -r $EXPIRES_AT '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo 'in 30 minutes'))"
 
+log_step "ScyllaDB Database"
+if systemctl list-unit-files 2>/dev/null | grep -q "^scylla-server.service"; then
+  log_success "ScyllaDB already installed, skipping"
+else
+  log_substep "ScyllaDB not found — installing..."
+
+  # Ensure GPG keyring directory exists
+  mkdir -p /etc/apt/keyrings
+
+  # Import ScyllaDB GPG key if not present
+  if [[ ! -f /etc/apt/keyrings/scylladb.gpg ]]; then
+    log_substep "Importing ScyllaDB GPG key..."
+    curl -fsSL https://downloads.scylladb.com/deb/ubuntu/scylladb-2025.3.gpg | \
+      gpg --dearmor -o /etc/apt/keyrings/scylladb.gpg
+    log_success "ScyllaDB GPG key imported"
+  fi
+
+  # Install the ScyllaDB Globular package (sets up apt repo + installs OS packages)
+  if [[ -f "$PKG_DIR/$SCYLLADB_PKG" ]]; then
+    run_install "$PKG_DIR/$SCYLLADB_PKG"
+  else
+    log_substep "Warning: $SCYLLADB_PKG not found, attempting direct apt install..."
+    # Ensure apt repo is configured
+    if [[ ! -f /etc/apt/sources.list.d/scylla.list ]]; then
+      echo "deb [arch=amd64,arm64 signed-by=/etc/apt/keyrings/scylladb.gpg] https://downloads.scylladb.com/downloads/scylla/deb/debian-ubuntu/scylladb-2025.3 stable main" \
+        > /etc/apt/sources.list.d/scylla.list
+    fi
+    apt-get update -qq
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq scylla scylla-server scylla-conf scylla-cqlsh scylla-python3
+  fi
+
+  # Enable and start ScyllaDB
+  systemctl daemon-reload
+  systemctl enable scylla-server.service 2>/dev/null || true
+  if ! systemctl is-active --quiet scylla-server.service; then
+    systemctl start scylla-server.service || log_substep "Warning: failed to start scylla-server (may need scylla_setup)"
+  fi
+  log_success "ScyllaDB installed and started"
+
+  # Configure TLS for the freshly installed ScyllaDB
+  if [[ -x "$SCRIPT_DIR/setup-scylla-tls.sh" ]]; then
+    log_substep "Configuring ScyllaDB TLS..."
+    "$SCRIPT_DIR/setup-scylla-tls.sh" || log_substep "Warning: ScyllaDB TLS setup failed (will retry later)"
+  fi
+fi
+
 log_step "Infrastructure Layer (etcd + minio)"
 install_list "${BOOTSTRAP_MINIO_PKGS[@]}"
+
+# If the user chose a custom MinIO data directory, patch the systemd unit and env file
+# to use the custom path instead of the default /var/lib/globular/minio/data.
+DEFAULT_MINIO_PATH="/var/lib/globular/minio/data"
+if [[ "$MINIO_DATA_DIR" != "$DEFAULT_MINIO_PATH" ]]; then
+  log_substep "Applying custom MinIO data directory: $MINIO_DATA_DIR"
+
+  MINIO_UNIT="/etc/systemd/system/globular-minio.service"
+  MINIO_ENV="/var/lib/globular/minio/minio.env"
+
+  # Patch the systemd unit
+  if [[ -f "$MINIO_UNIT" ]]; then
+    sed -i "s|${DEFAULT_MINIO_PATH}|${MINIO_DATA_DIR}|g" "$MINIO_UNIT"
+    log_substep "Patched $MINIO_UNIT"
+  fi
+
+  # Patch the env file
+  if [[ -f "$MINIO_ENV" ]]; then
+    sed -i "s|${DEFAULT_MINIO_PATH}|${MINIO_DATA_DIR}|g" "$MINIO_ENV"
+    log_substep "Patched $MINIO_ENV"
+  fi
+
+  # Create the custom data directory
+  mkdir -p "$MINIO_DATA_DIR"
+  chown globular:globular "$MINIO_DATA_DIR"
+  chmod 0700 "$MINIO_DATA_DIR"
+  log_substep "Created $MINIO_DATA_DIR"
+
+  systemctl daemon-reload
+  systemctl restart globular-minio.service 2>/dev/null || true
+  log_success "MinIO configured to use $MINIO_DATA_DIR"
+fi
 
 log_step "TLS Ownership Fix"
 log_substep "Setting TLS file ownership to globular user..."
@@ -348,6 +472,23 @@ if id globular >/dev/null 2>&1; then
   # INV-PKI-1: Use canonical PKI paths only
   chown -R globular:globular /var/lib/globular/pki /var/lib/globular/.minio 2>/dev/null || true
   log_success "TLS files ownership set to globular:globular"
+
+  # Allow the gateway to read systemd journal (needed for journal.ReadUnit API)
+  if getent group systemd-journal >/dev/null 2>&1; then
+    usermod -aG systemd-journal globular
+    log_success "globular user added to systemd-journal group"
+  fi
+
+  # Allow scylla-manager-agent (running as globular) to manage ScyllaDB snapshots
+  if getent group scylla >/dev/null 2>&1; then
+    usermod -aG scylla globular
+    # Set default ACLs so new snapshot files/dirs are group-writable by scylla group
+    if command -v setfacl >/dev/null 2>&1 && [[ -d /var/lib/scylla/data ]]; then
+      setfacl -R -m g:scylla:rwX /var/lib/scylla/data
+      setfacl -R -d -m g:scylla:rwX /var/lib/scylla/data
+    fi
+    log_success "globular user added to scylla group (snapshot management)"
+  fi
 
   # Restart services that depend on TLS certificates
   log_substep "Restarting services to apply TLS ownership changes..."
@@ -445,6 +586,23 @@ fi
 log_step "Bootstrap Services (xds, envoy, gateway, agents)"
 install_list "${BOOTSTRAP_REST_PKGS[@]}"
 
+# Explicitly ensure cluster-doctor is installed and running (common omission)
+CLUSTER_DOCTOR_PKG="$PKG_DIR/service.cluster-doctor_0.0.1_linux_amd64.tgz"
+if [[ -f "$CLUSTER_DOCTOR_PKG" ]]; then
+  if ! systemctl list-unit-files | grep -q "^globular-cluster-doctor.service"; then
+    log_substep "cluster-doctor unit missing; reinstalling from package..."
+    run_install "$CLUSTER_DOCTOR_PKG"
+  fi
+
+  if ! systemctl is-active --quiet globular-cluster-doctor.service 2>/dev/null; then
+    log_substep "Starting globular-cluster-doctor.service..."
+    systemctl enable globular-cluster-doctor.service >/dev/null 2>&1 || true
+    systemctl start globular-cluster-doctor.service || log_substep "Warning: failed to start cluster-doctor (check logs)"
+  fi
+else
+  log_substep "Warning: cluster-doctor package not found at $CLUSTER_DOCTOR_PKG"
+fi
+
 # Restart xDS to ensure it picks up the HTTPS configuration
 log_substep "Restarting xDS service to apply HTTPS configuration..."
 if systemctl is-active --quiet globular-xds.service; then
@@ -464,6 +622,36 @@ fi
 log_step "Control Plane Services"
 install_list "${CONTROL_PLANE_PKGS[@]}"
 
+# Set cluster_domain in cluster controller config so the admin UI and DNS
+# reconciler know the canonical domain from the very first boot.
+CC_CONFIG_DIR="/var/lib/globular/cluster-controller"
+CC_CONFIG_FILE="${CC_CONFIG_DIR}/config.json"
+mkdir -p "${CC_CONFIG_DIR}"
+if [[ -f "${CC_CONFIG_FILE}" ]]; then
+  # Merge cluster_domain into existing config
+  jq --arg d "$DOMAIN" '.cluster_domain = $d' "${CC_CONFIG_FILE}" > "${CC_CONFIG_FILE}.tmp"
+  mv "${CC_CONFIG_FILE}.tmp" "${CC_CONFIG_FILE}"
+else
+  cat > "${CC_CONFIG_FILE}" <<CCEOF
+{
+  "port": 12000,
+  "cluster_domain": "${DOMAIN}",
+  "default_profiles": ["core"]
+}
+CCEOF
+fi
+chmod 644 "${CC_CONFIG_FILE}"
+if id globular >/dev/null 2>&1; then
+  chown globular:globular "${CC_CONFIG_FILE}"
+fi
+log_success "Cluster controller config: cluster_domain=${DOMAIN}"
+
+# Restart cluster controller to pick up the domain
+if systemctl is-active --quiet globular-cluster-controller.service 2>/dev/null; then
+  systemctl restart globular-cluster-controller.service
+  log_substep "Restarted cluster controller with cluster_domain"
+fi
+
 log_step "System Resolver Configuration (Day-0)"
 if [[ -x "$SCRIPT_DIR/configure-resolver.sh" ]]; then
   RESOLVER_LOG="/tmp/configure-resolver-$(date +%Y%m%d-%H%M%S).log"
@@ -479,7 +667,7 @@ if [[ -x "$SCRIPT_DIR/configure-resolver.sh" ]]; then
   if grep -q "VERIFY_RESULT=FAIL" "$RESOLVER_LOG"; then
     log_substep "Warning: DNS resolver verification FAILED (see $RESOLVER_LOG)"
   elif grep -q "VERIFY_RESULT=PASS" "$RESOLVER_LOG"; then
-    log_success "System resolver configured for globular.internal"
+    log_success "System resolver configured for ${DOMAIN}"
   else
     log_substep "Warning: configure-resolver.sh completed without VERIFY_RESULT marker (see $RESOLVER_LOG)"
   fi
@@ -497,6 +685,83 @@ fi
 
 log_step "Operations Services"
 install_list "${OPS_PKGS[@]}"
+
+# Configure scylla-manager-agent (auth token, port, ScyllaDB API address, MinIO S3 creds)
+AGENT_CONFIG="/var/lib/globular/scylla-manager-agent/scylla-manager-agent.yaml"
+AGENT_TOKEN_FILE="/var/lib/globular/scylla-manager-agent/auth_token.txt"
+if [[ -f "$AGENT_CONFIG" ]] && ! grep -q "^auth_token:" "$AGENT_CONFIG"; then
+  log_substep "Configuring scylla-manager-agent..."
+
+  # Generate auth token
+  if [[ ! -f "$AGENT_TOKEN_FILE" ]]; then
+    cat /proc/sys/kernel/random/uuid > "$AGENT_TOKEN_FILE"
+    chown globular:globular "$AGENT_TOKEN_FILE"
+    chmod 0640 "$AGENT_TOKEN_FILE"
+  fi
+  AGENT_TOKEN=$(cat "$AGENT_TOKEN_FILE")
+
+  # Detect ScyllaDB listen address
+  SCYLLA_IP=""
+  if [[ -f /etc/scylla/scylla.yaml ]]; then
+    SCYLLA_IP=$(grep "^listen_address:" /etc/scylla/scylla.yaml 2>/dev/null | awk '{print $2}')
+  fi
+  if [[ -z "$SCYLLA_IP" ]]; then
+    SCYLLA_IP=$(ip route get 8.8.8.8 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1); exit}')
+  fi
+  if [[ -z "$SCYLLA_IP" ]]; then
+    SCYLLA_IP="127.0.0.1"
+  fi
+
+  # Read MinIO credentials for S3 backup access
+  MINIO_CRED_FILE="${STATE_DIR:-/var/lib/globular}/minio/credentials"
+  AGENT_S3_BLOCK=""
+  if [[ -f "$MINIO_CRED_FILE" ]]; then
+    if IFS=":" read -r MINIO_AK MINIO_SK < "$MINIO_CRED_FILE" && [[ -n "$MINIO_AK" && -n "$MINIO_SK" ]]; then
+      AGENT_S3_BLOCK="
+# MinIO S3 access for ScyllaDB backups (auto-configured by install-day0.sh)
+s3:
+  access_key_id: ${MINIO_AK}
+  secret_access_key: ${MINIO_SK}
+  provider: Minio
+  region: us-east-1
+  endpoint: https://127.0.0.1:9000
+
+# Skip TLS verification for internal MinIO with self-signed certs
+rclone:
+  insecure_skip_verify: true"
+      log_substep "MinIO S3 credentials included in agent config"
+    else
+      log_substep "Warning: could not parse MinIO credentials from $MINIO_CRED_FILE"
+    fi
+  else
+    log_substep "Warning: MinIO credentials file not found at $MINIO_CRED_FILE — agent will not have S3 access"
+  fi
+
+  cat > "$AGENT_CONFIG" <<AGENTEOF
+# Scylla Manager Agent configuration (managed by Globular)
+auth_token: ${AGENT_TOKEN}
+
+# Ports 56090/56091 avoid conflict with Globular service range (10000-10200)
+https: 0.0.0.0:56090
+prometheus: 0.0.0.0:56091
+debug: 127.0.0.1:56092
+
+# ScyllaDB API address (auto-detected from scylla.yaml)
+scylla:
+  api_address: ${SCYLLA_IP}
+  api_port: "10000"
+${AGENT_S3_BLOCK}
+AGENTEOF
+  chown globular:globular "$AGENT_CONFIG"
+  chmod 0640 "$AGENT_CONFIG"
+  # Allow other globular services (backup_manager) to read the config
+  chmod 0750 /var/lib/globular/scylla-manager-agent
+
+  log_success "scylla-manager-agent configured (token generated, port=56090, scylla=${SCYLLA_IP})"
+
+  # Restart agent with new config
+  systemctl restart globular-scylla-manager-agent.service 2>/dev/null || true
+fi
 
 log_step "Workload Services"
 install_list "${OPTIONAL_WORKLOAD_PKGS[@]}"
@@ -582,6 +847,22 @@ else
   log_substep "Warning: Validation script not found: $VALIDATION_SCRIPT"
   log_substep "Skipping cluster health validation"
   VALIDATION_PASSED=0
+fi
+
+# Seed desired state so the controller tracks all installed services
+log_step "Seed Desired State"
+GLOBULAR_CLI="/usr/lib/globular/bin/globularcli"
+if [[ -x "$GLOBULAR_CLI" ]]; then
+  log_substep "Importing installed services into controller desired state..."
+  if "$GLOBULAR_CLI" services seed --insecure 2>&1; then
+    log_success "Desired state seeded from installed services"
+  else
+    log_substep "Warning: failed to seed desired state (controller may not be ready yet)"
+    log_substep "Run manually later: globular services seed --insecure"
+  fi
+else
+  log_substep "Warning: globular CLI not found at $GLOBULAR_CLI, skipping desired-state seed"
+  log_substep "Run manually later: globular services seed --insecure"
 fi
 
 echo ""
