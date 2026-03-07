@@ -689,28 +689,30 @@ install_list "${OPS_PKGS[@]}"
 # Configure scylla-manager-agent (auth token, port, ScyllaDB API address, MinIO S3 creds)
 AGENT_CONFIG="/var/lib/globular/scylla-manager-agent/scylla-manager-agent.yaml"
 AGENT_TOKEN_FILE="/var/lib/globular/scylla-manager-agent/auth_token.txt"
+
+# Detect ScyllaDB listen address (needed for agent config and cluster registration)
+SCYLLA_IP=""
+if [[ -f /etc/scylla/scylla.yaml ]]; then
+  SCYLLA_IP=$(grep "^listen_address:" /etc/scylla/scylla.yaml 2>/dev/null | awk '{print $2}')
+fi
+if [[ -z "$SCYLLA_IP" ]]; then
+  SCYLLA_IP=$(ip route get 8.8.8.8 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1); exit}')
+fi
+if [[ -z "$SCYLLA_IP" ]]; then
+  SCYLLA_IP="127.0.0.1"
+fi
+
+# Generate auth token (idempotent)
+if [[ -d /var/lib/globular/scylla-manager-agent ]] && [[ ! -f "$AGENT_TOKEN_FILE" ]]; then
+  cat /proc/sys/kernel/random/uuid > "$AGENT_TOKEN_FILE"
+  chown globular:globular "$AGENT_TOKEN_FILE"
+  chmod 0640 "$AGENT_TOKEN_FILE"
+fi
+
 if [[ -f "$AGENT_CONFIG" ]] && ! grep -q "^auth_token:" "$AGENT_CONFIG"; then
   log_substep "Configuring scylla-manager-agent..."
 
-  # Generate auth token
-  if [[ ! -f "$AGENT_TOKEN_FILE" ]]; then
-    cat /proc/sys/kernel/random/uuid > "$AGENT_TOKEN_FILE"
-    chown globular:globular "$AGENT_TOKEN_FILE"
-    chmod 0640 "$AGENT_TOKEN_FILE"
-  fi
   AGENT_TOKEN=$(cat "$AGENT_TOKEN_FILE")
-
-  # Detect ScyllaDB listen address
-  SCYLLA_IP=""
-  if [[ -f /etc/scylla/scylla.yaml ]]; then
-    SCYLLA_IP=$(grep "^listen_address:" /etc/scylla/scylla.yaml 2>/dev/null | awk '{print $2}')
-  fi
-  if [[ -z "$SCYLLA_IP" ]]; then
-    SCYLLA_IP=$(ip route get 8.8.8.8 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1); exit}')
-  fi
-  if [[ -z "$SCYLLA_IP" ]]; then
-    SCYLLA_IP="127.0.0.1"
-  fi
 
   # Read MinIO credentials for S3 backup access
   MINIO_CRED_FILE="${STATE_DIR:-/var/lib/globular}/minio/credentials"
@@ -754,13 +756,56 @@ ${AGENT_S3_BLOCK}
 AGENTEOF
   chown globular:globular "$AGENT_CONFIG"
   chmod 0640 "$AGENT_CONFIG"
-  # Allow other globular services (backup_manager) to read the config
-  chmod 0750 /var/lib/globular/scylla-manager-agent
 
   log_success "scylla-manager-agent configured (token generated, port=56090, scylla=${SCYLLA_IP})"
 
   # Restart agent with new config
   systemctl restart globular-scylla-manager-agent.service 2>/dev/null || true
+fi
+
+# Always ensure the agent config directory is readable by backup-manager (runs as globular)
+if [[ -d /var/lib/globular/scylla-manager-agent ]]; then
+  chmod 0750 /var/lib/globular/scylla-manager-agent
+  chown globular:globular /var/lib/globular/scylla-manager-agent
+fi
+
+# Register ScyllaDB cluster in scylla-manager (idempotent — works on fresh install or reinstall)
+if [[ -f "$AGENT_TOKEN_FILE" ]] && command -v sctool &>/dev/null; then
+  AGENT_TOKEN=$(cat "$AGENT_TOKEN_FILE")
+  log_substep "Ensuring ScyllaDB is registered in scylla-manager..."
+
+  # Wait for agent to be ready (up to 15s)
+  for i in $(seq 1 15); do
+    if curl -sf --connect-timeout 1 -k "https://127.0.0.1:56090/api/v1/version" &>/dev/null; then
+      break
+    fi
+    sleep 1
+  done
+
+  # Wait for scylla-manager server to be ready (up to 15s)
+  for i in $(seq 1 15); do
+    if sctool status &>/dev/null 2>&1; then
+      break
+    fi
+    sleep 1
+  done
+
+  # Check if already registered
+  if ! sctool cluster list 2>/dev/null | grep -q "$DOMAIN"; then
+    REGISTER_OUT=$(sctool cluster add \
+      --host "${SCYLLA_IP:-127.0.0.1}" \
+      --name "${DOMAIN}" \
+      --auth-token "${AGENT_TOKEN}" \
+      --port 56090 2>&1) && \
+      log_success "ScyllaDB cluster registered as '${DOMAIN}'" || \
+      log_substep "Warning: cluster registration failed: ${REGISTER_OUT}"
+  else
+    # Already registered — ensure auth token is current
+    sctool cluster update -c "${DOMAIN}" \
+      --auth-token "${AGENT_TOKEN}" \
+      --port 56090 2>/dev/null || true
+    log_substep "ScyllaDB cluster '${DOMAIN}' already registered (auth token refreshed)"
+  fi
 fi
 
 log_step "Workload Services"
