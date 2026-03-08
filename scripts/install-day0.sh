@@ -194,16 +194,8 @@ else
   die "generate-user-client-cert.sh not found - CLI will not work without client certificates"
 fi
 
-# Configure ScyllaDB with TLS (if ScyllaDB is installed)
-if systemctl list-unit-files | grep -q "scylla-server.service"; then
-  log_step "ScyllaDB TLS Configuration"
-  if [[ -x "$SCRIPT_DIR/setup-scylla-tls.sh" ]]; then
-    "$SCRIPT_DIR/setup-scylla-tls.sh" || die "ScyllaDB TLS setup failed"
-    log_success "ScyllaDB configured with TLS"
-  else
-    log_info "setup-scylla-tls.sh not found (skipping ScyllaDB TLS)"
-  fi
-fi
+# Note: ScyllaDB TLS is configured in the "ScyllaDB Database" section below
+# (both fresh-install and already-installed paths run setup-scylla-tls.sh)
 
 install_from_extracted_spec() {
   local pkgfile="$1"
@@ -387,7 +379,41 @@ log_success "Bootstrap mode enabled: $BOOTSTRAP_FLAG (expires: $(date -d @$EXPIR
 
 log_step "ScyllaDB Database"
 if systemctl list-unit-files 2>/dev/null | grep -q "^scylla-server.service"; then
-  log_success "ScyllaDB already installed, skipping"
+  log_success "ScyllaDB packages already installed"
+
+  # Ensure data dirs exist (may have been wiped for a clean reinstall)
+  if [[ ! -d /var/lib/scylla/data ]] || [[ ! -d /var/lib/scylla/commitlog ]]; then
+    log_substep "ScyllaDB data directories missing — recreating..."
+    mkdir -p /var/lib/scylla/data /var/lib/scylla/commitlog
+    chown -R scylla:scylla /var/lib/scylla
+    log_success "ScyllaDB data directories recreated"
+  fi
+
+  # Reconfigure TLS and restart (handles wiped /var/lib/scylla/conf symlink)
+  if [[ -x "$SCRIPT_DIR/setup-scylla-tls.sh" ]]; then
+    log_substep "Configuring ScyllaDB TLS..."
+    "$SCRIPT_DIR/setup-scylla-tls.sh" || die "ScyllaDB TLS setup failed"
+    log_success "ScyllaDB configured with TLS"
+  fi
+
+  # Wait for ScyllaDB to be ready
+  if ! systemctl is-active --quiet scylla-server.service; then
+    systemctl start scylla-server.service || log_substep "Warning: failed to start scylla-server"
+  fi
+  log_substep "Waiting for ScyllaDB CQL port (9042)..."
+  SCYLLA_READY=0
+  for i in $(seq 1 90); do
+    if cqlsh 127.0.0.1 9042 -e "SELECT now() FROM system.local" &>/dev/null; then
+      SCYLLA_READY=1
+      break
+    fi
+    sleep 1
+  done
+  if [[ $SCYLLA_READY -eq 1 ]]; then
+    log_success "ScyllaDB ready (took ${i}s)"
+  else
+    log_substep "Warning: ScyllaDB not accepting connections after 90s"
+  fi
 else
   log_substep "ScyllaDB not found — installing..."
 
@@ -416,13 +442,43 @@ else
     DEBIAN_FRONTEND=noninteractive apt-get install -y -qq scylla scylla-server scylla-conf scylla-cqlsh scylla-python3
   fi
 
+  # Move ScyllaDB REST API to port 56093 to avoid conflict with Globular
+  # services (port range 10000-20000). ScyllaDB defaults to api_port 10000
+  # which collides with the persistence service.
+  if [[ -f /etc/scylla/scylla.yaml ]]; then
+    if ! grep -q "^api_port:" /etc/scylla/scylla.yaml; then
+      echo "" >> /etc/scylla/scylla.yaml
+      echo "# Moved to 56093 to avoid conflict with Globular service ports (10000+)" >> /etc/scylla/scylla.yaml
+      echo "api_port: 56093" >> /etc/scylla/scylla.yaml
+      log_substep "Set ScyllaDB api_port to 56093 (avoids port 10000 conflict)"
+    fi
+  fi
+
   # Enable and start ScyllaDB
   systemctl daemon-reload
   systemctl enable scylla-server.service 2>/dev/null || true
   if ! systemctl is-active --quiet scylla-server.service; then
     systemctl start scylla-server.service || log_substep "Warning: failed to start scylla-server (may need scylla_setup)"
   fi
-  log_success "ScyllaDB installed and started"
+
+  # Wait for ScyllaDB to be ready (CQL port 9042). ScyllaDB can take 30-90s
+  # to initialize on first start. Without this wait, downstream services
+  # (persistence, scylla-manager) fail to connect on the first install attempt.
+  log_substep "Waiting for ScyllaDB to accept CQL connections (port 9042)..."
+  SCYLLA_READY=0
+  for i in $(seq 1 90); do
+    if cqlsh 127.0.0.1 9042 -e "SELECT now() FROM system.local" &>/dev/null; then
+      SCYLLA_READY=1
+      break
+    fi
+    sleep 1
+  done
+  if [[ $SCYLLA_READY -eq 1 ]]; then
+    log_success "ScyllaDB installed and ready (took ${i}s)"
+  else
+    log_substep "Warning: ScyllaDB started but not yet accepting connections after 90s"
+    log_substep "Downstream services may fail on first attempt — re-run installer to retry"
+  fi
 
   # Configure TLS for the freshly installed ScyllaDB
   if [[ -x "$SCRIPT_DIR/setup-scylla-tls.sh" ]]; then
@@ -469,6 +525,11 @@ fi
 log_step "TLS Ownership Fix"
 log_substep "Setting TLS file ownership to globular user..."
 if id globular >/dev/null 2>&1; then
+  # Create backup data directory outside the cluster dir so backups survive uninstall/disk failure
+  mkdir -p /var/backups/globular
+  chown globular:globular /var/backups/globular
+  log_success "Backup data directory created at /var/backups/globular"
+
   # INV-PKI-1: Use canonical PKI paths only
   chown -R globular:globular /var/lib/globular/pki /var/lib/globular/.minio 2>/dev/null || true
   log_success "TLS files ownership set to globular:globular"
@@ -489,6 +550,21 @@ if id globular >/dev/null 2>&1; then
     fi
     log_success "globular user added to scylla group (snapshot management)"
   fi
+
+  # Sudoers: allow globular user to manage services for backup/restore operations
+  log_substep "Installing sudoers rules for globular user..."
+  cat > /etc/sudoers.d/globular <<'SUDOERS'
+# Allow globular user to stop/start/restart Globular-managed services
+# Only systemctl needs sudo — all data dirs are owned by globular:globular
+globular ALL=(root) NOPASSWD: /usr/bin/systemctl stop globular-etcd.service
+globular ALL=(root) NOPASSWD: /usr/bin/systemctl start globular-etcd.service
+globular ALL=(root) NOPASSWD: /usr/bin/systemctl restart globular-etcd.service
+globular ALL=(root) NOPASSWD: /usr/bin/systemctl stop globular-minio.service
+globular ALL=(root) NOPASSWD: /usr/bin/systemctl start globular-minio.service
+globular ALL=(root) NOPASSWD: /usr/bin/systemctl restart globular-minio.service
+SUDOERS
+  chmod 0440 /etc/sudoers.d/globular
+  log_success "Sudoers rules installed for globular user"
 
   # Restart services that depend on TLS certificates
   log_substep "Restarting services to apply TLS ownership changes..."
@@ -748,10 +824,10 @@ https: 0.0.0.0:56090
 prometheus: 0.0.0.0:56091
 debug: 127.0.0.1:56092
 
-# ScyllaDB API address (auto-detected from scylla.yaml)
+# ScyllaDB API address — must match api_address in scylla.yaml
 scylla:
-  api_address: ${SCYLLA_IP}
-  api_port: "10000"
+  api_address: "${SCYLLA_IP}"
+  api_port: "56093"
 ${AGENT_S3_BLOCK}
 AGENTEOF
   chown globular:globular "$AGENT_CONFIG"
