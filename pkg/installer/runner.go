@@ -99,7 +99,13 @@ func (rn *Runner) Run(ctx *Context, p *Plan, mode RunMode) (*RunReport, error) {
 			}
 
 			result.Applied = true
+			// Temporarily clear Force for the convergence re-check so steps
+			// that unconditionally return NeedsApply when Force is set (e.g.
+			// InstallBinariesStep) can verify files actually landed.
+			savedForce := ctx.Force
+			ctx.Force = false
 			statusAfter, err := step.Check(ctx)
+			ctx.Force = savedForce
 			if err != nil {
 				result.Err = err
 				result.CheckStatus = statusAfter

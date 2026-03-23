@@ -84,6 +84,9 @@ func TestInstallPackagePayloadCheckConverges(t *testing.T) {
 
 	mustMkdir(t, filepath.Join(prefix, "bin"))
 	mustWriteFile(t, filepath.Join(prefix, "bin", "svc"), []byte("bin"))
+	if err := os.Chmod(filepath.Join(prefix, "bin", "svc"), 0o755); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
 	mustMkdir(t, filepath.Join(cfgRoot, "svc"))
 	mustWriteFile(t, filepath.Join(cfgRoot, "svc", "a.conf"), []byte("cfg"))
 	mustMkdir(t, specRoot)
@@ -91,10 +94,14 @@ func TestInstallPackagePayloadCheckConverges(t *testing.T) {
 	mustMkdir(t, systemdRoot)
 	mustWriteFile(t, filepath.Join(systemdRoot, "svc.service"), []byte("[Unit]\n"))
 
+	mustMkdir(t, filepath.Join(staging, "bin"))
+	mustWriteFile(t, filepath.Join(staging, "bin", "svc"), []byte("bin"))
+
 	ctx := &Context{
 		StagingDir: staging,
 		Prefix:     prefix,
 		ConfigDir:  cfgRoot,
+		Platform:   &recordingPlatform{},
 	}
 
 	step := &InstallPackagePayloadStep{
