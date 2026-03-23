@@ -9,28 +9,46 @@ echo ""
 export GLOBULAR_SKIP_ETCD_DISCOVERY=1
 
 STATE_DIR="${STATE_DIR:-/var/lib/globular}"
+DOMAIN="${DOMAIN:-globular.internal}"
 
 # Determine user for client certificates (handle sudo context)
 # Try SUDO_USER first (original user who invoked sudo), fallback to finding any valid certs
 if [[ -n "${SUDO_USER:-}" ]] && [[ "${SUDO_USER}" != "root" ]]; then
     CLIENT_USER="$SUDO_USER"
     CLIENT_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
-    CA_PATH="${CLIENT_HOME}/.config/globular/tls/localhost/ca.crt"
-elif [[ -f "/home/dave/.config/globular/tls/localhost/ca.crt" ]]; then
-    # Fallback: use dave's certificates if they exist (common case)
-    CLIENT_USER="dave"
-    CLIENT_HOME="/home/dave"
-    CA_PATH="/home/dave/.config/globular/tls/localhost/ca.crt"
+elif [[ -n "${ORIGINAL_USER:-}" ]] && [[ "${ORIGINAL_USER}" != "root" ]]; then
+    CLIENT_USER="$ORIGINAL_USER"
+    CLIENT_HOME=$(getent passwd "$ORIGINAL_USER" | cut -d: -f6)
 else
-    # Last resort: try root's certificates
     CLIENT_USER="${USER:-root}"
     CLIENT_HOME="${HOME:-/root}"
-    CA_PATH="${CLIENT_HOME}/.config/globular/tls/localhost/ca.crt"
 fi
 
-if [[ ! -f "$CA_PATH" ]]; then
-    echo "[bootstrap-dns] ERROR: CA certificate not found at $CA_PATH" >&2
-    echo "[bootstrap-dns] Tried: SUDO_USER, /home/dave, ${CLIENT_HOME}" >&2
+# Find CA cert — try domain dir first, then localhost (legacy)
+CA_PATH=""
+for _tls_domain in "${DOMAIN}" "localhost"; do
+    _candidate="${CLIENT_HOME}/.config/globular/tls/${_tls_domain}/ca.crt"
+    if [[ -f "$_candidate" ]]; then
+        CA_PATH="$_candidate"
+        break
+    fi
+done
+# Also check root's certs if not found
+if [[ -z "$CA_PATH" ]] && [[ "$CLIENT_USER" != "root" ]]; then
+    for _tls_domain in "${DOMAIN}" "localhost"; do
+        _candidate="/root/.config/globular/tls/${_tls_domain}/ca.crt"
+        if [[ -f "$_candidate" ]]; then
+            CA_PATH="$_candidate"
+            CLIENT_USER="root"
+            CLIENT_HOME="/root"
+            break
+        fi
+    done
+fi
+
+if [[ -z "$CA_PATH" ]]; then
+    echo "[bootstrap-dns] ERROR: CA certificate not found" >&2
+    echo "[bootstrap-dns] Searched: ${CLIENT_HOME}/.config/globular/tls/{${DOMAIN},localhost}/ca.crt" >&2
     echo "[bootstrap-dns] Client certificates must be generated before DNS bootstrap" >&2
     exit 1
 fi
@@ -49,7 +67,7 @@ DNS_GRPC_ADDR="${DNS_GRPC_ADDR:-}"
 # authentication. NOTE: Do NOT use --ca flag as it disables client certificate
 # loading!
 globular_dns() {
-    HOME="$CLIENT_HOME" globular --dns "${DNS_GRPC_ADDR:-127.0.0.1:10006}" "$@"
+    HOME="$CLIENT_HOME" globular --dns "${DNS_GRPC_ADDR:-localhost:10006}" "$@"
 }
 
 # Probe whether a candidate address actually hosts the DNS gRPC service.
@@ -75,8 +93,8 @@ for i in $(seq 1 $MAX_WAIT); do
     # The service defaults to 10006 but reallocates if there is a port conflict.
     if [[ -z "$DNS_GRPC_ADDR" ]]; then
         for _port in 10006 10007 10008 10009; do
-            if _probe_dns_grpc "127.0.0.1:$_port"; then
-                DNS_GRPC_ADDR="127.0.0.1:$_port"
+            if _probe_dns_grpc "localhost:$_port"; then
+                DNS_GRPC_ADDR="localhost:$_port"
                 [[ "$_port" != "10006" ]] && \
                     echo "[bootstrap-dns] Note: DNS service found on port $_port (port conflict forced reallocation from 10006)"
                 break
@@ -122,7 +140,7 @@ echo "[bootstrap-dns] Using globular CLI: $(command -v globular)"
 echo "[bootstrap-dns] Waiting for DNS database to accept writes..."
 MAX_WAIT=30
 DNS_WRITABLE=0
-TEST_RECORD="bootstrap-test.globular.internal."
+TEST_RECORD="bootstrap-test.${DOMAIN}."
 TEST_IP="127.0.0.1"
 
 for i in $(seq 1 $MAX_WAIT); do
@@ -184,28 +202,37 @@ fi
 echo "[bootstrap-dns] Hostname: $NODE_HOSTNAME"
 echo "[bootstrap-dns] Node IP: $NODE_IP"
 
+# Ensure domain/zone is registered before adding records.
+# The DNS service requires a domain in its managed list before SetA works.
+echo "[bootstrap-dns] Registering DNS zone: ${DOMAIN}"
+if globular_dns --timeout 10s dns domains add "${DOMAIN}" 2>&1; then
+    echo "  ✓ Zone ${DOMAIN} registered"
+else
+    echo "[bootstrap-dns] WARNING: Failed to register zone ${DOMAIN} (may already exist)" >&2
+fi
+
 # Add DNS A records for Day-0
 echo "[bootstrap-dns] Creating DNS records..."
 
-# <hostname>.globular.internal → node IP (this node)
-if globular_dns --timeout 10s dns a set "${NODE_HOSTNAME}.globular.internal." "$NODE_IP" --ttl 300 2>&1; then
-    echo "  ✓ ${NODE_HOSTNAME}.globular.internal. → $NODE_IP"
+# <hostname>.<domain> → node IP (this node)
+if globular_dns --timeout 10s dns a set "${NODE_HOSTNAME}.${DOMAIN}." "$NODE_IP" --ttl 300 2>&1; then
+    echo "  ✓ ${NODE_HOSTNAME}.${DOMAIN}. → $NODE_IP"
 else
-    echo "[bootstrap-dns] ERROR: Failed to create ${NODE_HOSTNAME}.globular.internal record" >&2
+    echo "[bootstrap-dns] ERROR: Failed to create ${NODE_HOSTNAME}.${DOMAIN} record" >&2
     exit 1
 fi
 
-# api.globular.internal → node IP (API endpoint)
-if globular_dns --timeout 10s dns a set api.globular.internal. "$NODE_IP" --ttl 300 2>&1; then
-    echo "  ✓ api.globular.internal. → $NODE_IP"
+# api.<domain> → node IP (API endpoint)
+if globular_dns --timeout 10s dns a set "api.${DOMAIN}." "$NODE_IP" --ttl 300 2>&1; then
+    echo "  ✓ api.${DOMAIN}. → $NODE_IP"
 else
-    echo "[bootstrap-dns] ERROR: Failed to create api.globular.internal record" >&2
+    echo "[bootstrap-dns] ERROR: Failed to create api.${DOMAIN} record" >&2
     exit 1
 fi
 
 # Wildcard for all undefined subdomains (catches service discovery)
-if globular_dns --timeout 10s dns a set "*.globular.internal." "$NODE_IP" --ttl 300 2>&1; then
-    echo "  ✓ *.globular.internal. → $NODE_IP (wildcard)"
+if globular_dns --timeout 10s dns a set "*.${DOMAIN}." "$NODE_IP" --ttl 300 2>&1; then
+    echo "  ✓ *.${DOMAIN}. → $NODE_IP (wildcard)"
 else
     echo "[bootstrap-dns] ERROR: Failed to create wildcard record" >&2
     exit 1
@@ -217,16 +244,16 @@ echo ""
 
 # Verify records
 echo "[bootstrap-dns] Verifying DNS records..."
-if dig @127.0.0.1 +short "${NODE_HOSTNAME}.globular.internal" 2>/dev/null | grep -q "$NODE_IP"; then
-    echo "  ✓ ${NODE_HOSTNAME}.globular.internal resolves correctly"
+if dig @127.0.0.1 +short "${NODE_HOSTNAME}.${DOMAIN}" 2>/dev/null | grep -q "$NODE_IP"; then
+    echo "  ✓ ${NODE_HOSTNAME}.${DOMAIN} resolves correctly"
 else
-    echo "  ⚠ Warning: ${NODE_HOSTNAME}.globular.internal resolution test failed"
+    echo "  ⚠ Warning: ${NODE_HOSTNAME}.${DOMAIN} resolution test failed"
 fi
 
-if dig @127.0.0.1 +short api.globular.internal 2>/dev/null | grep -q "$NODE_IP"; then
-    echo "  ✓ api.globular.internal resolves correctly"
+if dig @127.0.0.1 +short "api.${DOMAIN}" 2>/dev/null | grep -q "$NODE_IP"; then
+    echo "  ✓ api.${DOMAIN} resolves correctly"
 else
-    echo "  ⚠ Warning: api.globular.internal resolution test failed"
+    echo "  ⚠ Warning: api.${DOMAIN} resolution test failed"
 fi
 
 echo ""
