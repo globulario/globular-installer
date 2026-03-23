@@ -2,4 +2,4 @@
 
 package main
 
-import _ "github.com/globulario/globular-installer/internal/platform/linux"
+import _ "github.com/globulario/globular-installer/pkg/platform/linux"

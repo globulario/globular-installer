@@ -1,0 +1,62 @@
+version: 1
+
+metadata:
+  kind: infrastructure
+  description: "High-performance NoSQL database (Cassandra-compatible) for persistent service data."
+  keywords: [scylladb, database, nosql, cassandra, persistence]
+  license: AGPL-3.0
+  provides_capabilities: [local-db]
+  health_check:
+    unit: scylla-server.service
+    port: 9042
+
+steps:
+  - id: ensure-dirs
+    type: ensure_dirs
+    dirs:
+      - path: "{{.Prefix}}/bin"
+        owner: root
+        group: root
+        mode: 0755
+      - path: /etc/apt/keyrings
+        owner: root
+        group: root
+        mode: 0755
+
+  # Skip payload installation (ScyllaDB is an OS package, not a bundled binary)
+  - id: install-payload
+    type: install_package_payload
+    install_bins: false
+    install_config: false
+    install_spec: false
+    install_systemd: false
+
+  # Install ScyllaDB GPG key and apt repository
+  - id: install-scylladb-repo
+    type: install_files
+    files:
+      - path: /etc/apt/sources.list.d/scylla.list
+        owner: root
+        group: root
+        mode: 0644
+        atomic: true
+        skip_if_exists: true
+        content: |
+          deb [arch=amd64,arm64 signed-by=/etc/apt/keyrings/scylladb.gpg] https://downloads.scylladb.com/downloads/scylla/deb/debian-ubuntu/scylladb-2025.3 stable main
+
+  # Install ScyllaDB OS packages
+  - id: install-scylladb-packages
+    type: install_os_packages
+    packages:
+      - scylla
+      - scylla-server
+      - scylla-conf
+      - scylla-cqlsh
+      - scylla-python3
+
+  # Post-install: TLS certs, scylla.yaml, data dirs, systemd overrides, start.
+  # Replaces the external setup-scylla-tls.sh script.
+  - id: run-post-install
+    type: run_script
+    script: post-install.sh
+    timeout: 5m

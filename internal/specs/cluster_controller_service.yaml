@@ -20,12 +20,12 @@ steps:
     type: ensure_dirs
     dirs:
       - path: "{{.Prefix}}"
-        owner: root
-        group: root
+        owner: globular
+        group: globular
         mode: 0755
       - path: "{{.Prefix}}/bin"
-        owner: root
-        group: root
+        owner: globular
+        group: globular
         mode: 0755
 
       - path: "{{.StateDir}}"

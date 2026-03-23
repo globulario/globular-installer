@@ -1,4 +1,14 @@
 version: 1
+
+metadata:
+  kind: service
+  description: "xDS control plane that provides dynamic Envoy configuration for service discovery and routing."
+  keywords: [xds, envoy, service-discovery, control-plane, routing]
+  license: MIT
+  provides_capabilities: [service-mesh]
+  health_check:
+    unit: globular-xds.service
+
 steps:
   - id: ensure-user-group
     type: ensure_user_group
@@ -82,7 +92,7 @@ steps:
         atomic: true
         content: |
           {
-            "etcd_endpoints": ["https://127.0.0.1:2379"]
+            "etcd_endpoints": ["https://{{.NodeIP}}:2379"]
           }
 
   # Install binaries/config from packaged payload when available.

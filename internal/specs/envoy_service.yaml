@@ -1,5 +1,16 @@
 version: 1
 
+metadata:
+  kind: infrastructure
+  description: "L7 edge proxy handling TLS termination, gRPC-Web translation, and dynamic service routing."
+  keywords: [envoy, proxy, tls, grpc-web, load-balancer, routing]
+  license: Apache-2.0
+  provides_capabilities: [http-proxy]
+  runtime_local_dependencies: [xds]
+  health_check:
+    unit: globular-envoy.service
+    port: 8443
+
 steps:
   - id: ensure-user-group
     type: ensure_user_group

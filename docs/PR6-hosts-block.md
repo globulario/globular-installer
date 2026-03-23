@@ -62,7 +62,7 @@ steps:
 
 ```go
 import (
-    "github.com/globulario/globular-installer/internal/installer"
+    "github.com/globulario/globular-installer/pkg/installer"
 )
 
 // During Day0 installation

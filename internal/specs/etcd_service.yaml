@@ -1,4 +1,15 @@
 version: 1
+
+metadata:
+  kind: infrastructure
+  description: "Distributed key-value store used for service configuration, leader election, and cluster coordination."
+  keywords: [etcd, key-value, distributed, consensus, raft, configuration]
+  license: Apache-2.0
+  provides_capabilities: [config-store]
+  health_check:
+    unit: globular-etcd.service
+    port: 2379
+
 steps:
   - id: ensure-user-group
     type: ensure_user_group
@@ -32,6 +43,10 @@ steps:
         owner: globular
         group: globular
         mode: 0750
+      - path: "{{.StateDir}}/config"
+        owner: globular
+        group: globular
+        mode: 0750
 
       # TLS directories (INV-PKI-1: canonical paths)
       - path: "{{.StateDir}}/pki"
@@ -49,7 +64,7 @@ steps:
   - id: install-etcd-config
     type: install_files
     files:
-      - path: "{{.StateDir}}/etcd/etcd.yaml"
+      - path: "{{.StateDir}}/config/etcd.yaml"
         owner: globular
         group: globular
         mode: 0644
@@ -63,15 +78,17 @@ steps:
           data-dir: "{{.StateDir}}/etcd"
 
           # Client API with TLS (what globular-xds will dial)
-          listen-client-urls: "https://127.0.0.1:2379"
-          advertise-client-urls: "https://127.0.0.1:2379"
+          # MUST use routable IP only — 127.0.0.1 breaks multi-node clusters
+          # and masks connectivity bugs.
+          listen-client-urls: "https://{{.NodeIP}}:2379"
+          advertise-client-urls: "https://{{.NodeIP}}:2379"
 
-          # Peer traffic with TLS (single-node still uses this for cluster identity)
-          listen-peer-urls: "https://127.0.0.1:2380"
-          initial-advertise-peer-urls: "https://127.0.0.1:2380"
+          # Peer traffic with TLS
+          listen-peer-urls: "https://{{.NodeIP}}:2380"
+          initial-advertise-peer-urls: "https://{{.NodeIP}}:2380"
 
           # Single-node cluster bootstrap with TLS
-          initial-cluster: "globular-etcd=https://127.0.0.1:2380"
+          initial-cluster: "globular-etcd=https://{{.NodeIP}}:2380"
           initial-cluster-state: "new"
           initial-cluster-token: "globular-etcd-cluster"
 
@@ -127,7 +144,7 @@ steps:
           ExecStartPre=+/usr/bin/mkdir -p {{.StateDir}}/etcd
           ExecStartPre=+/usr/bin/chown globular:globular {{.StateDir}}/etcd
           ExecStartPre=+/usr/bin/chmod 0750 {{.StateDir}}/etcd
-          ExecStart={{.Prefix}}/bin/etcd --config-file {{.StateDir}}/etcd/etcd.yaml
+          ExecStart={{.Prefix}}/bin/etcd --config-file {{.StateDir}}/config/etcd.yaml
           Restart=on-failure
           RestartSec=2
           LimitNOFILE=524288
@@ -146,7 +163,7 @@ steps:
       - globular-etcd.service
     restart_on_files:
       globular-etcd.service:
-        - "{{.StateDir}}/etcd/etcd.yaml"
+        - "{{.StateDir}}/config/etcd.yaml"
     binaries:
       globular-etcd.service: etcd
 
