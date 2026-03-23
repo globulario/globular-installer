@@ -33,7 +33,7 @@ for recommended in index.html logo.png; do
 done
 
 eval "$(
-  STATE_DIR="${STATE_DIR}" CONTRACT_FILE="${CONTRACT_FILE}" DOMAIN="${DOMAIN}" GLOBULAR_DOMAIN="${DOMAIN}" python3 - <<'PY'
+  STATE_DIR="${STATE_DIR}" CONTRACT_FILE="${CONTRACT_FILE}" DOMAIN="${DOMAIN}" GLOBULAR_DOMAIN="${DOMAIN}" NODE_IP="${NODE_IP:-$(hostname -I 2>/dev/null | awk '{print $1}')}" python3 - <<'PY'
 import json
 import os
 import shlex
@@ -56,9 +56,9 @@ default_domain = (
 
 defaults = {
     "type": "minio",
-    "endpoint": "127.0.0.1:9000",
+    "endpoint": f"{os.environ.get('NODE_IP', '127.0.0.1')}:9000",
     "bucket": "globular",
-    "prefix": "",  # No domain level - direct paths: users/, webroot/, packages-repository/
+    "prefix": "",  # No domain level - direct paths: users/, webroot/, artifacts/
     "secure": False,
     "caBundlePath": "",
 }

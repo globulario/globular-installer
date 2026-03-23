@@ -325,12 +325,21 @@ OPS_PKGS=(
   "service.event_0.0.1_linux_amd64.tgz"
   "service.log_0.0.1_linux_amd64.tgz"
   "service.backup-manager_0.0.1_linux_amd64.tgz"
+  "service.mcp_0.0.1_linux_amd64.tgz"
+  "service.ai-memory_0.0.1_linux_amd64.tgz"
+  "service.ai-watcher_0.0.1_linux_amd64.tgz"
+  "service.ai-executor_0.0.1_linux_amd64.tgz"
+  "service.ai-router_0.0.1_linux_amd64.tgz"
   "service.scylla-manager-agent_3.8.1_linux_amd64.tgz"
   "service.scylla-manager_3.8.1_linux_amd64.tgz"
 )
 
 OPTIONAL_WORKLOAD_PKGS=(
   "service.file_0.0.1_linux_amd64.tgz"
+  "service.search_0.0.1_linux_amd64.tgz"
+  "service.media_0.0.1_linux_amd64.tgz"
+  "service.title_0.0.1_linux_amd64.tgz"
+  "service.torrent_0.0.1_linux_amd64.tgz"
 )
 
 CMDS_PKGS=(
@@ -377,6 +386,15 @@ chown root:root "$BOOTSTRAP_FLAG" 2>/dev/null || chown 0:0 "$BOOTSTRAP_FLAG"
 
 log_success "Bootstrap mode enabled: $BOOTSTRAP_FLAG (expires: $(date -d @$EXPIRES_AT '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -r $EXPIRES_AT '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo 'in 30 minutes'))"
 
+# Write bootstrap sa credential file for non-interactive artifact publishing.
+# Permissions 0600, root-owned. Deleted in Phase 5 cleanup.
+BOOTSTRAP_SA_CRED="/var/lib/globular/.bootstrap-sa-password"
+if [[ -n "${GLOBULAR_PASSWORD:-}" ]]; then
+  printf '%s' "$GLOBULAR_PASSWORD" > "$BOOTSTRAP_SA_CRED"
+  chmod 0600 "$BOOTSTRAP_SA_CRED"
+  chown root:root "$BOOTSTRAP_SA_CRED" 2>/dev/null || true
+fi
+
 log_step "ScyllaDB Database"
 if systemctl list-unit-files 2>/dev/null | grep -q "^scylla-server.service"; then
   log_success "ScyllaDB packages already installed"
@@ -389,9 +407,12 @@ if systemctl list-unit-files 2>/dev/null | grep -q "^scylla-server.service"; the
     log_success "ScyllaDB data directories recreated"
   fi
 
-  # Reconfigure TLS and restart (handles wiped /var/lib/scylla/conf symlink)
-  if [[ -x "$SCRIPT_DIR/setup-scylla-tls.sh" ]]; then
-    log_substep "Configuring ScyllaDB TLS..."
+  # TLS setup is handled by scylladb package post-install script when present.
+  # Fallback to external script for packages built without embedded scripts.
+  if [[ -f /etc/scylla/tls/server.crt ]]; then
+    log_substep "ScyllaDB TLS already configured"
+  elif [[ -x "$SCRIPT_DIR/setup-scylla-tls.sh" ]]; then
+    log_substep "Configuring ScyllaDB TLS (fallback)..."
     "$SCRIPT_DIR/setup-scylla-tls.sh" || die "ScyllaDB TLS setup failed"
     log_success "ScyllaDB configured with TLS"
   fi
@@ -442,23 +463,28 @@ else
     DEBIAN_FRONTEND=noninteractive apt-get install -y -qq scylla scylla-server scylla-conf scylla-cqlsh scylla-python3
   fi
 
-  # Move ScyllaDB REST API to port 56093 to avoid conflict with Globular
-  # services (port range 10000-20000). ScyllaDB defaults to api_port 10000
-  # which collides with the persistence service.
-  if [[ -f /etc/scylla/scylla.yaml ]]; then
-    if ! grep -q "^api_port:" /etc/scylla/scylla.yaml; then
-      echo "" >> /etc/scylla/scylla.yaml
-      echo "# Moved to 56093 to avoid conflict with Globular service ports (10000+)" >> /etc/scylla/scylla.yaml
-      echo "api_port: 56093" >> /etc/scylla/scylla.yaml
-      log_substep "Set ScyllaDB api_port to 56093 (avoids port 10000 conflict)"
-    fi
+  # TLS, data dirs, and scylla.yaml are configured by the scylladb package
+  # post-install script when present. Fallback to external script for packages
+  # built without embedded scripts.
+  if [[ -f /etc/scylla/tls/server.crt ]] && [[ -f /etc/scylla/scylla.yaml ]]; then
+    log_substep "ScyllaDB TLS/config already configured (by package post-install)"
+  elif [[ -x "$SCRIPT_DIR/setup-scylla-tls.sh" ]]; then
+    log_substep "Configuring ScyllaDB (TLS, data dirs, scylla.yaml)..."
+    "$SCRIPT_DIR/setup-scylla-tls.sh" || die "ScyllaDB TLS setup failed"
+    log_success "ScyllaDB configured and started"
+  else
+    die "ScyllaDB TLS not configured and setup-scylla-tls.sh not found"
   fi
 
-  # Enable and start ScyllaDB
-  systemctl daemon-reload
+  # Enable service for boot
   systemctl enable scylla-server.service 2>/dev/null || true
+
+  # Ensure ScyllaDB is actually running. The TLS check above may pass from a
+  # previous install's config files, but the service may not be started yet
+  # (apt reinstall can stop it, or the post-install script may not have run).
   if ! systemctl is-active --quiet scylla-server.service; then
-    systemctl start scylla-server.service || log_substep "Warning: failed to start scylla-server (may need scylla_setup)"
+    log_substep "Starting ScyllaDB service..."
+    systemctl start scylla-server.service || log_substep "Warning: failed to start scylla-server"
   fi
 
   # Wait for ScyllaDB to be ready (CQL port 9042). ScyllaDB can take 30-90s
@@ -478,12 +504,6 @@ else
   else
     log_substep "Warning: ScyllaDB started but not yet accepting connections after 90s"
     log_substep "Downstream services may fail on first attempt — re-run installer to retry"
-  fi
-
-  # Configure TLS for the freshly installed ScyllaDB
-  if [[ -x "$SCRIPT_DIR/setup-scylla-tls.sh" ]]; then
-    log_substep "Configuring ScyllaDB TLS..."
-    "$SCRIPT_DIR/setup-scylla-tls.sh" || log_substep "Warning: ScyllaDB TLS setup failed (will retry later)"
   fi
 fi
 
@@ -551,17 +571,25 @@ if id globular >/dev/null 2>&1; then
     log_success "globular user added to scylla group (snapshot management)"
   fi
 
-  # Sudoers: allow globular user to manage services for backup/restore operations
+  # Sudoers: allow globular user to manage Globular services and restore operations.
+  # The backup-manager runs as globular and needs to:
+  # - Restart all services after restore (re-register etcd ports, fix node reachability)
+  # - Stop/start ScyllaDB workload services during schema restore
+  # - Fix sstable upload dir ownership for ScyllaDB restore
   log_substep "Installing sudoers rules for globular user..."
   cat > /etc/sudoers.d/globular <<'SUDOERS'
-# Allow globular user to stop/start/restart Globular-managed services
-# Only systemctl needs sudo — all data dirs are owned by globular:globular
-globular ALL=(root) NOPASSWD: /usr/bin/systemctl stop globular-etcd.service
-globular ALL=(root) NOPASSWD: /usr/bin/systemctl start globular-etcd.service
-globular ALL=(root) NOPASSWD: /usr/bin/systemctl restart globular-etcd.service
-globular ALL=(root) NOPASSWD: /usr/bin/systemctl stop globular-minio.service
-globular ALL=(root) NOPASSWD: /usr/bin/systemctl start globular-minio.service
-globular ALL=(root) NOPASSWD: /usr/bin/systemctl restart globular-minio.service
+# Manage any globular-* systemd service.
+# Needed by: backup-manager (post-restore restarts), node-agent (stop/start
+# workload services during ScyllaDB schema restore, etcd stop/start).
+globular ALL=(root) NOPASSWD: /usr/bin/systemctl stop globular-*.service
+globular ALL=(root) NOPASSWD: /usr/bin/systemctl start globular-*.service
+globular ALL=(root) NOPASSWD: /usr/bin/systemctl restart globular-*.service
+
+# ScyllaDB sstable upload dir ownership fix during restore (safety net).
+# The scylla-manager-agent runs as scylla so this rarely fires, but guards
+# against edge cases where files end up with wrong ownership.
+globular ALL=(root) NOPASSWD: /usr/bin/find /var/lib/scylla/data *
+globular ALL=(root) NOPASSWD: /usr/bin/bash -c find /var/lib/scylla/data *
 SUDOERS
   chmod 0440 /etc/sudoers.d/globular
   log_success "Sudoers rules installed for globular user"
@@ -577,11 +605,23 @@ else
 fi
 
 log_step "MinIO Configuration"
-if [[ -x "$SCRIPT_DIR/setup-minio-contract.sh" ]]; then
+# Contract, credentials, and TLS symlinks are handled by the minio package
+# pre-start.sh script when present. Fallback to external script for packages
+# built without embedded scripts.
+if [[ -f /var/lib/globular/objectstore/minio.json ]]; then
+  log_success "MinIO contract configured (by package pre-start script)"
+elif [[ -x "$SCRIPT_DIR/setup-minio-contract.sh" ]]; then
   "$SCRIPT_DIR/setup-minio-contract.sh"
-  log_success "MinIO contract configured"
+  log_success "MinIO contract configured (fallback)"
 else
-  die "setup-minio-contract.sh not found or not executable"
+  die "MinIO contract not found and setup-minio-contract.sh not available"
+fi
+
+# Verify TLS symlinks exist (created by pre-start.sh or setup-tls.sh).
+# Without these, MinIO runs in HTTP mode — which breaks the HTTPS-only cluster.
+if [[ ! -L /var/lib/globular/.minio/certs/public.crt ]]; then
+  log_substep "Warning: MinIO TLS cert symlink missing — MinIO may be running in HTTP mode"
+  log_substep "Expected: /var/lib/globular/.minio/certs/public.crt → PKI service cert"
 fi
 
 log_substep "Verifying MinIO systemd unit..."
@@ -596,22 +636,30 @@ if ! systemd-analyze verify "$MINIO_UNIT" 2>&1 | grep -v "Transaction order is c
   : # Ignore systemd-analyze errors (they're often spurious)
 fi
 
-log_substep "Starting MinIO service..."
+# Ensure MinIO is running. The installer's start_services step already started
+# it if the package had a spec with that step, but handle the case where the
+# installer didn't start it (old packages or install failures).
+log_substep "Ensuring MinIO service is running..."
 systemctl daemon-reload
 if ! systemctl is-active --quiet globular-minio.service; then
   systemctl start globular-minio.service || die "Failed to start MinIO service"
+  log_success "MinIO service started"
+else
+  log_success "MinIO service already running"
 fi
-log_success "MinIO service started"
 
 log_step "CLI Tools (needed for bucket provisioning)"
 install_list "${CMDS_PKGS[@]}"
 
 log_step "MinIO Bucket Provisioning"
+# On new packages, the post-install.sh script already created buckets during
+# install_list above. The external scripts are idempotent — safe to re-run.
+# On old packages (no embedded scripts), these are the primary bucket creators.
 if [[ -x "$SCRIPT_DIR/ensure-minio-buckets.sh" ]]; then
   "$SCRIPT_DIR/ensure-minio-buckets.sh"
   log_success "MinIO buckets provisioned"
 else
-  log_substep "Warning: ensure-minio-buckets.sh not found, skipping bucket creation"
+  log_substep "ensure-minio-buckets.sh not found — buckets handled by package post-install"
 fi
 
 log_step "Data Layer (persistence)"
@@ -622,7 +670,7 @@ if [[ -x "$SCRIPT_DIR/setup-minio.sh" ]]; then
   "$SCRIPT_DIR/setup-minio.sh"
   log_success "MinIO buckets configured"
 else
-  die "setup-minio.sh not found or not executable"
+  log_substep "setup-minio.sh not found — bucket setup handled by package post-install"
 fi
 
 log_step "Globular Configuration (Protocol=https)"
@@ -630,8 +678,15 @@ if [[ -x "$SCRIPT_DIR/setup-config.sh" ]]; then
   "$SCRIPT_DIR/setup-config.sh"
   log_success "Configuration set to HTTPS"
 
-  # Ensure network.json is readable by all for health checks
+  # Ensure network.json has https protocol and correct permissions.
+  # network.json may exist from a previous run with Protocol=http.
   if [[ -f /var/lib/globular/network.json ]]; then
+    CURRENT_NET_PROTO=$(jq -r '.Protocol // "http"' /var/lib/globular/network.json 2>/dev/null)
+    if [[ "$CURRENT_NET_PROTO" != "https" ]]; then
+      jq '.Protocol = "https"' /var/lib/globular/network.json > /var/lib/globular/network.json.tmp \
+        && mv /var/lib/globular/network.json.tmp /var/lib/globular/network.json
+      log_substep "Updated network.json Protocol to https"
+    fi
     chmod 644 /var/lib/globular/network.json
     log_substep "Set network.json permissions to 644"
   fi
@@ -752,9 +807,18 @@ else
 fi
 
 log_step "DNS Bootstrap (Day-0)"
+# DNS zone/record registration is now handled by the dns package post-install script.
+# On Day 0, the dns service package includes scripts/post-install.sh which runs
+# after health_checks pass. Fallback to external script if post-install didn't run.
 if [[ -x "$SCRIPT_DIR/bootstrap-dns.sh" ]]; then
-  "$SCRIPT_DIR/bootstrap-dns.sh"
-  log_success "DNS records initialized (n0, api)"
+  # Verify DNS records exist; if not, run the legacy bootstrap script.
+  if command -v dig >/dev/null 2>&1 && dig @127.0.0.1 +short "api.${DOMAIN:-globular.internal}" 2>/dev/null | grep -q .; then
+    log_success "DNS records already initialized (by package post-install)"
+  else
+    log_substep "DNS records missing — running bootstrap-dns.sh..."
+    "$SCRIPT_DIR/bootstrap-dns.sh"
+    log_success "DNS records initialized (n0, api)"
+  fi
 else
   log_substep "Warning: bootstrap-dns.sh not found, DNS records not initialized"
 fi
@@ -779,9 +843,11 @@ if [[ -z "$SCYLLA_IP" ]]; then
 fi
 
 # Generate auth token (idempotent)
+# Owned by scylla:globular so the agent (runs as scylla) can read it
+# and backup-manager (runs as globular) can also read it via group.
 if [[ -d /var/lib/globular/scylla-manager-agent ]] && [[ ! -f "$AGENT_TOKEN_FILE" ]]; then
   cat /proc/sys/kernel/random/uuid > "$AGENT_TOKEN_FILE"
-  chown globular:globular "$AGENT_TOKEN_FILE"
+  chown scylla:globular "$AGENT_TOKEN_FILE"
   chmod 0640 "$AGENT_TOKEN_FILE"
 fi
 
@@ -830,7 +896,7 @@ scylla:
   api_port: "56093"
 ${AGENT_S3_BLOCK}
 AGENTEOF
-  chown globular:globular "$AGENT_CONFIG"
+  chown scylla:globular "$AGENT_CONFIG"
   chmod 0640 "$AGENT_CONFIG"
 
   log_success "scylla-manager-agent configured (token generated, port=56090, scylla=${SCYLLA_IP})"
@@ -839,10 +905,13 @@ AGENTEOF
   systemctl restart globular-scylla-manager-agent.service 2>/dev/null || true
 fi
 
-# Always ensure the agent config directory is readable by backup-manager (runs as globular)
+# Always ensure the agent config directory is owned by scylla (agent runs as scylla)
+# with globular group so backup-manager can read auth tokens.
 if [[ -d /var/lib/globular/scylla-manager-agent ]]; then
   chmod 0750 /var/lib/globular/scylla-manager-agent
-  chown globular:globular /var/lib/globular/scylla-manager-agent
+  chown scylla:globular /var/lib/globular/scylla-manager-agent
+  # Fix ownership of all files inside too (covers auth_token.txt, config, etc.)
+  chown scylla:globular /var/lib/globular/scylla-manager-agent/* 2>/dev/null || true
 fi
 
 # Register ScyllaDB cluster in scylla-manager (idempotent — works on fresh install or reinstall)
@@ -850,9 +919,11 @@ if [[ -f "$AGENT_TOKEN_FILE" ]] && command -v sctool &>/dev/null; then
   AGENT_TOKEN=$(cat "$AGENT_TOKEN_FILE")
   log_substep "Ensuring ScyllaDB is registered in scylla-manager..."
 
-  # Wait for agent to be ready (up to 15s)
+  # Wait for agent to be ready (up to 15s).
+  # The agent requires auth, so any HTTP response (even 401) means it's up.
   for i in $(seq 1 15); do
-    if curl -sf --connect-timeout 1 -k "https://127.0.0.1:56090/api/v1/version" &>/dev/null; then
+    HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' --connect-timeout 1 -k "https://127.0.0.1:56090/api/v1/version" 2>/dev/null || echo "000")
+    if [[ "$HTTP_CODE" != "000" ]]; then
       break
     fi
     sleep 1
@@ -970,19 +1041,148 @@ else
   VALIDATION_PASSED=0
 fi
 
-# Seed desired state so the controller tracks all installed services
-log_step "Seed Desired State"
+# Globular CLI path — used by artifact publish and desired-state import below.
 GLOBULAR_CLI="/usr/lib/globular/bin/globularcli"
+
+# ── Day-0 Join Token ─────────────────────────────────────────────────────────
+# Generate a shared join token so the first node can self-register with
+# the cluster controller during bootstrap. Both services must share the
+# same token: controller stores it in state.JoinTokens, node-agent passes
+# it in RequestJoin.
+log_step "Day-0 Join Token provisioning"
+DAY0_TOKEN=$(cat /proc/sys/kernel/random/uuid 2>/dev/null || uuidgen)
+
+# Write token to controller config
+CC_CONFIG="/var/lib/globular/cluster-controller/config.json"
+if [[ -f "$CC_CONFIG" ]]; then
+  jq --arg tok "$DAY0_TOKEN" '.join_token = $tok' "$CC_CONFIG" > "${CC_CONFIG}.tmp" \
+    && mv "${CC_CONFIG}.tmp" "$CC_CONFIG"
+  log_substep "Join token written to controller config"
+else
+  mkdir -p "$(dirname "$CC_CONFIG")"
+  echo "{\"join_token\": \"$DAY0_TOKEN\", \"port\": 12000}" > "$CC_CONFIG"
+  log_substep "Controller config created with join token"
+fi
+
+# Set token as env var for node-agent via systemd drop-in
+NA_DROPIN_DIR="/etc/systemd/system/globular-node-agent.service.d"
+mkdir -p "$NA_DROPIN_DIR"
+cat > "${NA_DROPIN_DIR}/join-token.conf" <<DROPIN
+[Service]
+Environment="NODE_AGENT_JOIN_TOKEN=${DAY0_TOKEN}"
+DROPIN
+log_substep "Join token written to node-agent systemd drop-in"
+
+# Fix controller state if it has stale protocol=http from a previous run.
+CC_STATE="/var/lib/globular/clustercontroller/state.json"
+if [[ -f "$CC_STATE" ]]; then
+  STATE_PROTO=$(jq -r '.cluster_network_spec.protocol // "http"' "$CC_STATE" 2>/dev/null)
+  if [[ "$STATE_PROTO" != "https" ]]; then
+    jq '.cluster_network_spec.protocol = "https"' "$CC_STATE" > "${CC_STATE}.tmp" \
+      && mv "${CC_STATE}.tmp" "$CC_STATE"
+    log_substep "Fixed controller state protocol to https"
+  fi
+fi
+
+# Reload systemd and restart both services so they pick up the token.
+systemctl daemon-reload
+systemctl restart globular-cluster-controller globular-node-agent
+log_substep "Restarted controller and node-agent with shared join token"
+# Wait for services to fully start (TLS initialization, etcd connection, etc.)
+sleep 10
+log_success "Day-0 join token provisioned"
+
+# ── Cluster Bootstrap ────────────────────────────────────────────────────────
+# Register the first node with the cluster controller so heartbeats and
+# desired-state seed can discover installed services. This must run AFTER
+# the controller and node-agent are both running.
+log_step "Cluster Bootstrap (register first node)"
 if [[ -x "$GLOBULAR_CLI" ]]; then
-  log_substep "Importing installed services into controller desired state..."
-  if "$GLOBULAR_CLI" services seed --insecure 2>&1; then
-    log_success "Desired state seeded from installed services"
+  # BootstrapFirstNode is now BLOCKING — it waits for the controller to
+  # become reachable and completes RequestJoin + ApproveJoin before
+  # returning. This can take up to ~60s, so use a long timeout (120s).
+  BOOTSTRAP_OK=0
+  BOOTSTRAP_OUTPUT=""
+  for attempt in $(seq 1 4); do
+    log_substep "  attempt $attempt: calling bootstrap..."
+    BOOTSTRAP_OUTPUT=$("$GLOBULAR_CLI" --insecure --timeout 120s cluster bootstrap \
+        --node "127.0.0.1:11000" \
+        --domain "$DOMAIN" 2>&1) && { BOOTSTRAP_OK=1; break; }
+    log_substep "  attempt $attempt failed: $BOOTSTRAP_OUTPUT"
+    sleep 10
+  done
+  if [[ $BOOTSTRAP_OK -eq 1 ]]; then
+    log_success "First node registered with cluster controller"
+    log_substep "$BOOTSTRAP_OUTPUT"
+    # Give heartbeat time to fire so seed can discover services.
+    sleep 10
   else
-    log_substep "Warning: failed to seed desired state (controller may not be ready yet)"
-    log_substep "Run manually later: globular services seed --insecure"
+    log_substep "ERROR: cluster bootstrap failed after 6 attempts"
+    log_substep "Last output: $BOOTSTRAP_OUTPUT"
+    log_substep "Check logs:"
+    log_substep "  journalctl -u globular-cluster-controller -n 20 --no-pager"
+    log_substep "  journalctl -u globular-node-agent -n 20 --no-pager"
+    die "Cluster bootstrap failed — cannot continue without registered node"
   fi
 else
-  log_substep "Warning: globular CLI not found at $GLOBULAR_CLI, skipping desired-state seed"
+  die "globular CLI not found at $GLOBULAR_CLI — cannot bootstrap"
+fi
+
+# ── 4-Layer State Alignment ──────────────────────────────────────────────────
+# Layer 1 (Artifact): publish packages to the Repository catalog.
+# Layer 2 (Desired Release): import installed services into the controller's
+#          desired state so they are declaratively tracked.
+# Layers 3+4 (Installed Observed / Runtime Health): already populated by the
+#          node-agent and systemd during package installation above.
+#
+# This must run AFTER health validation (services running) and BEFORE seed
+# (so the repository is populated before desired-state references artifacts).
+log_step "Publish Bootstrap Artifacts to Repository (Layer 1: Artifact)"
+if [[ -x "$SCRIPT_DIR/ensure-bootstrap-artifacts.sh" ]]; then
+  # Export PKG_DIR and GLOBULAR_CLI so the helper script can find packages and CLI
+  export PKG_DIR GLOBULAR_CLI
+  if "$SCRIPT_DIR/ensure-bootstrap-artifacts.sh"; then
+    log_success "Bootstrap artifacts published to Repository"
+  else
+    log_substep "Warning: some artifacts failed to publish to Repository"
+    log_substep "Run manually later: PKG_DIR=$PKG_DIR $SCRIPT_DIR/ensure-bootstrap-artifacts.sh"
+  fi
+else
+  log_substep "Warning: ensure-bootstrap-artifacts.sh not found, Repository catalog will be empty"
+  log_substep "Run manually later: $SCRIPT_DIR/ensure-bootstrap-artifacts.sh"
+fi
+
+# Import installed services into desired state (Layer 2: Desired Release).
+# Idempotent — safe to re-run; existing entries are left unchanged.
+log_step "Import Installed Services into Desired State (Layer 2)"
+if [[ -x "$GLOBULAR_CLI" ]]; then
+  log_substep "Importing installed services into controller desired state..."
+  # Node-agent self-registers during bootstrap and begins heartbeats.
+  # Services need time to start and be discovered by the heartbeat loop.
+  # With 20+ services the full discovery can take 30-60s.
+  log_substep "Waiting for node-agent to discover installed services..."
+  sleep 15
+  SEED_OK=0
+  for attempt in $(seq 1 12); do
+    SEED_OUT=$("$GLOBULAR_CLI" --insecure --timeout 60s services seed 2>&1) && {
+      SEED_OK=1
+      break
+    }
+    if [[ $attempt -le 3 ]]; then
+      log_substep "  attempt $attempt: waiting for node registration and service discovery..."
+    fi
+    sleep 10
+  done
+  if [[ $SEED_OK -eq 1 ]]; then
+    log_success "Desired state imported from installed services"
+  else
+    log_substep "Warning: failed to import desired state after 12 attempts"
+    log_substep "Last error: $SEED_OUT"
+    log_substep "Run manually later: globular services seed --insecure"
+    log_substep "Or diagnose with: globular services repair --dry-run --insecure"
+  fi
+else
+  log_substep "Warning: globular CLI not found at $GLOBULAR_CLI, skipping desired-state import"
   log_substep "Run manually later: globular services seed --insecure"
 fi
 
@@ -997,12 +1197,14 @@ if [[ $VALIDATION_PASSED -eq 1 ]]; then
   log_success "All cluster health checks passed!"
 fi
 
-# Phase 2: Disable bootstrap mode (Day-0 complete)
-# Remove the flag file to close the bootstrap window
+# Phase 5: Disable bootstrap mode and clean up credentials (Day-0 complete)
+# Remove the flag file to close the bootstrap window.
+# Remove the bootstrap sa credential file (no longer needed).
 if [[ -f "$BOOTSTRAP_FLAG" ]]; then
   log_substep "Disabling bootstrap mode..."
   rm -f "$BOOTSTRAP_FLAG"
   log_success "Bootstrap mode disabled (Day-0 complete)"
 fi
+rm -f /var/lib/globular/.bootstrap-sa-password 2>/dev/null || true
 
 echo ""

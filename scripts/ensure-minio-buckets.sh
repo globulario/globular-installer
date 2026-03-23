@@ -39,9 +39,9 @@ sudo netstat -tlnp | grep :9001 || echo "    Not listening"
 # Debug: Try to connect to MinIO to see if it's HTTP or HTTPS
 echo "[ensure-minio-buckets] Testing MinIO connectivity..."
 echo "  HTTP test:"
-curl -k -s -o /dev/null -w "    HTTP Status: %{http_code}\n" http://127.0.0.1:9000/minio/health/live 2>&1 || echo "    HTTP failed"
+curl -k -s -o /dev/null -w "    HTTP Status: %{http_code}\n" http://${MINIO_HOST:-$(hostname -I 2>/dev/null | awk '{print $1}')}:9000/minio/health/live 2>&1 || echo "    HTTP failed"
 echo "  HTTPS test:"
-curl -k -s -o /dev/null -w "    HTTPS Status: %{http_code}\n" https://127.0.0.1:9000/minio/health/live 2>&1 || echo "    HTTPS failed"
+curl -k -s -o /dev/null -w "    HTTPS Status: %{http_code}\n" https://${MINIO_HOST:-$(hostname -I 2>/dev/null | awk '{print $1}')}:9000/minio/health/live 2>&1 || echo "    HTTPS failed"
 
 # Debug: Check TLS certificates exist
 echo "[ensure-minio-buckets] Checking TLS certificates..."
@@ -70,7 +70,8 @@ if ! IFS=":" read -r ACCESS_KEY SECRET_KEY < "${CRED_FILE}"; then
 fi
 
 # Configure mc client - try HTTPS first
-export MC_HOST_local="https://${ACCESS_KEY}:${SECRET_KEY}@127.0.0.1:9000"
+MINIO_HOST="${NODE_IP:-$(hostname -I 2>/dev/null | awk '{print $1}')}"
+export MC_HOST_local="https://${ACCESS_KEY}:${SECRET_KEY}@${MINIO_HOST}:9000"
 MC_CONFIG_DIR="${HOME}/.mc"
 mkdir -p "${MC_CONFIG_DIR}/certs/CAs"
 

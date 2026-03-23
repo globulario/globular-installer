@@ -45,7 +45,7 @@ gen_ca() {
         -key "${keyfile}" \
         -out "${crtfile}" \
         -days 3650 \
-        -subj "/CN=Globular Root CA/O=Globular" \
+        -subj "/CN=Globular Root CA/O=globular.internal" \
         -addext "basicConstraints=critical,CA:TRUE" \
         -addext "keyUsage=critical,keyCertSign,cRLSign"
 
@@ -81,13 +81,25 @@ gen_service_cert() {
     local NODE_HOSTNAME=$(hostname -s)
     local NODE_FQDN=$(hostname -f 2>/dev/null || echo "${NODE_HOSTNAME}")
 
-    # Build SANs dynamically
-    local SANS="DNS:localhost,DNS:*.localhost,IP:127.0.0.1,IP:::1"
+    # Build SANs dynamically — routable IPs only, NO 127.0.0.1.
+    # Using 127.0.0.1 in SANs masks multi-node TLS bugs: services appear to
+    # work locally but fail when accessed from other nodes.
+    local SANS="DNS:localhost,DNS:*.localhost"
 
-    # Add node IP if detected and not loopback
-    if [[ -n "${NODE_IP}" ]] && [[ "${NODE_IP}" != "127.0.0.1" ]]; then
-        SANS="${SANS},IP:${NODE_IP}"
-        echo "[setup-tls]   Adding node IP: ${NODE_IP}"
+    # Add ALL routable IPs from this node (not just the first one)
+    local ALL_IPS
+    ALL_IPS=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -v '^$')
+    local IP_COUNT=0
+    for ip in ${ALL_IPS}; do
+        if [[ "${ip}" != "127.0.0.1" && "${ip}" != "::1" ]]; then
+            SANS="${SANS},IP:${ip}"
+            echo "[setup-tls]   Adding node IP: ${ip}"
+            IP_COUNT=$((IP_COUNT + 1))
+        fi
+    done
+    if [[ $IP_COUNT -eq 0 ]]; then
+        echo "[setup-tls] ERROR: No routable IP detected. Cannot generate cert with only loopback." >&2
+        exit 1
     fi
 
     # Add hostname
@@ -102,8 +114,9 @@ gen_service_cert() {
         echo "[setup-tls]   Adding FQDN: ${NODE_FQDN}"
     fi
 
-    # Add globular.internal domain wildcards
-    SANS="${SANS},DNS:*.globular.internal,DNS:globular.internal"
+    # Add cluster domain wildcards (DOMAIN exported by install-day0.sh)
+    local CLUSTER_DOMAIN="${DOMAIN:-globular.internal}"
+    SANS="${SANS},DNS:*.${CLUSTER_DOMAIN},DNS:${CLUSTER_DOMAIN}"
 
     echo "[setup-tls]   SANs: ${SANS}"
 
@@ -111,7 +124,7 @@ gen_service_cert() {
     openssl req -new \
         -key "${keyfile}" \
         -out "${csrfile}" \
-        -subj "/CN=localhost/O=Globular" \
+        -subj "/CN=${NODE_HOSTNAME}/O=globular.internal" \
         -addext "subjectAltName=${SANS}"
 
     # Sign with CA (1 year validity)
@@ -152,6 +165,9 @@ setup_compat_symlinks() {
 }
 
 # Main execution
+# Track whether certs changed so we can restart services if needed.
+CERTS_CHANGED=0
+
 # Check if CA exists and is RSA (idempotent - don't regenerate unnecessarily)
 CA_EXISTS=0
 CA_IS_RSA=0
@@ -175,6 +191,7 @@ else
     fi
     echo "[setup-tls] Generating new RSA CA..."
     gen_ca
+    CERTS_CHANGED=1
 fi
 
 # Check if service certificate exists and is valid
@@ -193,6 +210,7 @@ else
     rm -f "${SERVICE_CERT_DIR}/service.key" "${SERVICE_CERT_DIR}/service.crt"
     rm -f "${MINIO_CERTS_DIR}/public.crt" "${MINIO_CERTS_DIR}/private.key"
     gen_service_cert
+    CERTS_CHANGED=1
 fi
 
 # Always setup MinIO certs (idempotent)
@@ -251,4 +269,30 @@ echo "[setup-tls] TLS bootstrap complete (RSA)"
 echo "[setup-tls]   CA: ${PKI_DIR}/ca.{key,crt,pem} (RSA 4096)"
 echo "[setup-tls]   Service cert: ${SERVICE_CERT_DIR}/{service.crt,service.key} (RSA 2048)"
 echo "[setup-tls]   MinIO certs: ${MINIO_CERTS_DIR}/{public.crt,private.key}"
+echo "[setup-tls]   etcd client certs: ${ETCD_CERT_DIR}/{client.crt,client.key}"
+
+# Restart running Globular services so they pick up the new certificates.
+# Without this, services hold the old CA/cert in memory and get
+# "tls: bad certificate" rejections from etcd and each other.
+if [[ $CERTS_CHANGED -eq 1 ]]; then
+    RUNNING_UNITS=$(systemctl list-units --type=service --state=running --no-legend 'globular-*' 2>/dev/null | awk '{print $1}')
+    if [[ -n "${RUNNING_UNITS}" ]]; then
+        echo "[setup-tls] Certificates changed — restarting Globular services..."
+        # Restart etcd first so it loads the new server cert before clients reconnect.
+        if systemctl is-active --quiet globular-etcd.service 2>/dev/null; then
+            systemctl restart globular-etcd.service
+            echo "[setup-tls]   ✓ globular-etcd restarted"
+            sleep 2
+        fi
+        # Restart remaining services.
+        for unit in ${RUNNING_UNITS}; do
+            if [[ "${unit}" != "globular-etcd.service" ]]; then
+                systemctl restart "${unit}" 2>/dev/null && \
+                    echo "[setup-tls]   ✓ ${unit} restarted" || \
+                    echo "[setup-tls]   ⚠ ${unit} restart failed"
+            fi
+        done
+        echo "[setup-tls] ✓ All running services restarted with new certificates"
+    fi
+fi
 echo "[setup-tls]   etcd client certs: ${ETCD_CERT_DIR}/{client.crt,client.key}"

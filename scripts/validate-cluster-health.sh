@@ -40,9 +40,24 @@ else
     export HOME="${HOME}"
 fi
 
+# Detect TLS cert directory (domain from config, fallback to localhost)
+_TLS_DOMAIN=""
+if [[ -f /var/lib/globular/config.json ]]; then
+    _TLS_DOMAIN=$(jq -r '.Domain // ""' /var/lib/globular/config.json 2>/dev/null || true)
+fi
+CLIENT_TLS_DIR=""
+for _d in "${_TLS_DOMAIN}" "localhost"; do
+    [[ -z "$_d" ]] && continue
+    if [[ -d "$HOME/.config/globular/tls/${_d}" ]]; then
+        CLIENT_TLS_DIR="$HOME/.config/globular/tls/${_d}"
+        break
+    fi
+done
+
 # Ensure root certificates exist
-if [[ $EUID -eq 0 ]] && [[ ! -d "/root/.config/globular/tls/localhost" ]]; then
-    echo -e "${RED}ERROR: Root client certificates not found at /root/.config/globular/tls/localhost${NC}"
+if [[ $EUID -eq 0 ]] && [[ -z "$CLIENT_TLS_DIR" ]]; then
+    echo -e "${RED}ERROR: Root client certificates not found under /root/.config/globular/tls/${NC}"
+    echo "Tried: ${_TLS_DOMAIN:-<none>}, localhost"
     echo "This should have been generated during Day-0 installation."
     echo "Run: sudo /path/to/generate-user-client-cert.sh"
     exit 1
@@ -53,8 +68,8 @@ echo -e "${BLUE}  Day-0 Cluster Health Validation${NC}"
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
 echo "Environment: HOME=$HOME USER=$(whoami)"
-echo "Client certificates: $HOME/.config/globular/tls/localhost/"
-if [[ -d "$HOME/.config/globular/tls/localhost/" ]]; then
+echo "Client certificates: ${CLIENT_TLS_DIR:-NOT FOUND}"
+if [[ -n "$CLIENT_TLS_DIR" ]]; then
     echo "✓ Certificate directory exists"
 else
     echo -e "${RED}✗ Certificate directory NOT FOUND${NC}"
@@ -212,7 +227,7 @@ echo "Waiting for services to stabilize..."
 sleep 5
 
 check "ScyllaDB connection test" \
-    "cqlsh 127.0.0.1 -e 'DESCRIBE KEYSPACES;' 2>/dev/null | grep -q 'local_resource' && echo 'ok'" \
+    "host=\$(awk -F': *' '/^(rpc_address|listen_address)/ {print \$2}' /etc/scylla/scylla.yaml 2>/dev/null | head -n1); host=\${host:-127.0.0.1}; cqlsh \"\$host\" -e 'DESCRIBE KEYSPACES;' 2>/dev/null | grep -q 'local_resource' && echo \"ok (\$host)\"" \
     "ok"
 
 # DNS check with retry (in case service just started)
@@ -274,12 +289,13 @@ echo ""
 # ============================================================================
 echo -e "${YELLOW}[6/7] Checking etcd Health...${NC}"
 
+ETCD_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
 check "etcd cluster health" \
-    "journalctl -u globular-etcd --no-pager -n 50 | grep -q 'serving client traffic securely' && echo 'ok'" \
+    "ETCDCTL_API=3 /usr/lib/globular/bin/etcdctl --endpoints=https://${ETCD_IP}:2379 --cacert=/var/lib/globular/pki/ca.pem endpoint health 2>&1 | grep -q 'is healthy' && echo 'ok'" \
     "ok"
 
 check "etcd using TLS" \
-    "journalctl -u globular-etcd --no-pager -n 50 | grep -q 'starting with client TLS' && echo 'ok'" \
+    "ETCDCTL_API=3 /usr/lib/globular/bin/etcdctl --endpoints=https://${ETCD_IP}:2379 --cacert=/var/lib/globular/pki/ca.pem endpoint status --write-out=table 2>&1 | grep -q '${ETCD_IP}:2379' && echo 'ok'" \
     "ok"
 
 echo ""

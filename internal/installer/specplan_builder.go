@@ -240,6 +240,13 @@ func buildStep(ctx *Context, ss spec.StepSpec) (Step, error) {
 			ValidationTimeoutSec: timeoutSec,
 		}
 		return step, nil
+	case "run_script":
+		script := getStringParam(ss.Params, "script", "post-install.sh")
+		timeout := 5 * time.Minute
+		if d, err := getDurationParam(ss.Params, "timeout"); err == nil && d > 0 {
+			timeout = d
+		}
+		return NewRunScriptStep(script, timeout), nil
 	case "noop":
 		name := ss.ID
 		if name == "" {

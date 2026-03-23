@@ -2,6 +2,7 @@
 set -euo pipefail
 
 STATE_DIR="${STATE_DIR:-/var/lib/globular}"
+NODE_IP="${NODE_IP:-$(hostname -I 2>/dev/null | awk '{print $1}')}"
 CRED_FILE="${STATE_DIR}/minio/credentials"
 CONTRACT_DIR="${STATE_DIR}/objectstore"
 CONTRACT_FILE="${GLOBULAR_MINIO_CONTRACT_PATH:-${CONTRACT_DIR}/minio.json}"
@@ -61,7 +62,7 @@ if [[ -z "${MINIO_ACCESS_KEY}" || -z "${MINIO_SECRET_KEY}" ]]; then
   exit 1
 fi
 
-STATE_DIR="${STATE_DIR}" CRED_FILE="${CRED_FILE}" CONTRACT_FILE="${CONTRACT_FILE}" python3 - <<'PY'
+STATE_DIR="${STATE_DIR}" CRED_FILE="${CRED_FILE}" CONTRACT_FILE="${CONTRACT_FILE}" NODE_IP="${NODE_IP}" python3 - <<'PY'
 import json
 import os
 import sys
@@ -79,9 +80,9 @@ default_domain = (
 
 defaults = {
     "type": "minio",
-    "endpoint": "127.0.0.1:9000",
+    "endpoint": f"{os.environ.get('NODE_IP', '127.0.0.1')}:9000",
     "bucket": "globular",
-    "prefix": "",  # No domain level - direct paths: users/, webroot/, packages-repository/
+    "prefix": "",  # No domain level - direct paths: users/, webroot/, artifacts/
     "secure": True,  # TLS enabled by default
     "caBundlePath": f"{state_dir}/pki/ca.pem",
 }
