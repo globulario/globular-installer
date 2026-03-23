@@ -135,7 +135,7 @@ fi
 # Locate webroot assets directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALLER_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-ASSETS_WEBROOT="${INSTALLER_ROOT}/internal/assets/webroot"
+ASSETS_WEBROOT="${INSTALLER_ROOT}/pkg/assets/webroot"
 
 # Upload webroot content (always upload to ensure clean state)
 echo "[ensure-minio-buckets] Uploading webroot content to: ${WEBROOT_PATH}/"
