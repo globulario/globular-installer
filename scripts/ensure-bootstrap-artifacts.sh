@@ -99,6 +99,10 @@ CORE_PACKAGES=(
   "service.log_*_linux_amd64.tgz"
   "service.backup-manager_*_linux_amd64.tgz"
   "service.mcp_*_linux_amd64.tgz"
+  "service.ai-memory_*_linux_amd64.tgz"
+  "service.ai-watcher_*_linux_amd64.tgz"
+  "service.ai-executor_*_linux_amd64.tgz"
+  "service.ai-router_*_linux_amd64.tgz"
   "service.scylla-manager-agent_*_linux_amd64.tgz"
   "service.scylla-manager_*_linux_amd64.tgz"
   # ── Workload services ──────────────────────────────────────────────
@@ -314,11 +318,13 @@ for pattern in "${CORE_PACKAGES[@]}"; do
       "$GLOBULAR_CLI" --timeout 60s --token "$GLOBULAR_TOKEN" pkg publish \
         --file "$PACKAGE" \
         --repository "$REPO_ADDR" \
+        --force \
         --output json 2>"$PUBLISH_ERR_FILE") || true
   else
     PUBLISH_JSON=$("$GLOBULAR_CLI" --timeout 60s --token "$GLOBULAR_TOKEN" pkg publish \
       --file "$PACKAGE" \
       --repository "$REPO_ADDR" \
+      --force \
       --output json 2>"$PUBLISH_ERR_FILE") || true
   fi
 
