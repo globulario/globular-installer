@@ -336,6 +336,7 @@ OPS_PKGS=(
   "service.ai-watcher_0.0.1_linux_amd64.tgz"
   "service.ai-executor_0.0.1_linux_amd64.tgz"
   "service.ai-router_0.0.1_linux_amd64.tgz"
+  "service.workflow_0.0.1_linux_amd64.tgz"
   "service.scylla-manager-agent_3.8.1_linux_amd64.tgz"
   "service.scylla-manager_3.8.1_linux_amd64.tgz"
 )

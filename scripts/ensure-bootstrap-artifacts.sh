@@ -103,6 +103,7 @@ CORE_PACKAGES=(
   "service.ai-watcher_*_linux_amd64.tgz"
   "service.ai-executor_*_linux_amd64.tgz"
   "service.ai-router_*_linux_amd64.tgz"
+  "service.workflow_*_linux_amd64.tgz"
   "service.scylla-manager-agent_*_linux_amd64.tgz"
   "service.scylla-manager_*_linux_amd64.tgz"
   # ── Workload services ──────────────────────────────────────────────
