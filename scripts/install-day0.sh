@@ -44,6 +44,12 @@ if [[ $EUID -ne 0 ]]; then
   die "This script must be run as root (use sudo)"
 fi
 
+# Ensure /bin/echo exists — apt post-invoke hooks reference it and fail on
+# systems where /bin is not symlinked to /usr/bin (minimal installs, containers).
+if [[ ! -x /bin/echo ]] && [[ -x /usr/bin/echo ]]; then
+  ln -sf /usr/bin/echo /bin/echo
+fi
+
 detect_install_cmd() {
   if "$INSTALLER_BIN" pkg --help >/dev/null 2>&1; then
     if "$INSTALLER_BIN" pkg install --help >/dev/null 2>&1; then
@@ -421,10 +427,13 @@ if systemctl list-unit-files 2>/dev/null | grep -q "^scylla-server.service"; the
   if ! systemctl is-active --quiet scylla-server.service; then
     systemctl start scylla-server.service || log_substep "Warning: failed to start scylla-server"
   fi
-  log_substep "Waiting for ScyllaDB CQL port (9042)..."
+  # ScyllaDB binds to the routable IP, not 127.0.0.1 — extract from scylla.yaml
+  SCYLLA_CQL_HOST=$(grep "^listen_address:" /etc/scylla/scylla.yaml 2>/dev/null | awk '{print $2}' | tr -d "'\"")
+  SCYLLA_CQL_HOST="${SCYLLA_CQL_HOST:-127.0.0.1}"
+  log_substep "Waiting for ScyllaDB CQL port (${SCYLLA_CQL_HOST}:9042)..."
   SCYLLA_READY=0
   for i in $(seq 1 90); do
-    if cqlsh 127.0.0.1 9042 -e "SELECT now() FROM system.local" &>/dev/null; then
+    if cqlsh "$SCYLLA_CQL_HOST" 9042 -e "SELECT now() FROM system.local" &>/dev/null; then
       SCYLLA_READY=1
       break
     fi
@@ -490,10 +499,13 @@ else
   # Wait for ScyllaDB to be ready (CQL port 9042). ScyllaDB can take 30-90s
   # to initialize on first start. Without this wait, downstream services
   # (persistence, scylla-manager) fail to connect on the first install attempt.
-  log_substep "Waiting for ScyllaDB to accept CQL connections (port 9042)..."
+  # ScyllaDB binds to the routable IP, not 127.0.0.1 — extract from scylla.yaml
+  SCYLLA_CQL_HOST=$(grep "^listen_address:" /etc/scylla/scylla.yaml 2>/dev/null | awk '{print $2}' | tr -d "'\"")
+  SCYLLA_CQL_HOST="${SCYLLA_CQL_HOST:-127.0.0.1}"
+  log_substep "Waiting for ScyllaDB to accept CQL connections (${SCYLLA_CQL_HOST}:9042)..."
   SCYLLA_READY=0
   for i in $(seq 1 90); do
-    if cqlsh 127.0.0.1 9042 -e "SELECT now() FROM system.local" &>/dev/null; then
+    if cqlsh "$SCYLLA_CQL_HOST" 9042 -e "SELECT now() FROM system.local" &>/dev/null; then
       SCYLLA_READY=1
       break
     fi

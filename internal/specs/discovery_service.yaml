@@ -2,6 +2,12 @@ version: 1
 
 metadata:
   name: discovery
+  profiles: [core, compute, control-plane]
+  priority: 3
+  managed_unit: true
+  provides_capabilities: [service-discovery]
+  health_check:
+    unit: globular-discovery.service
 
 service:
   name: discovery

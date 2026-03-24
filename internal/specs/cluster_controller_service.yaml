@@ -2,6 +2,8 @@ version: 1
 
 metadata:
   name: cluster-controller
+  profiles: [control-plane]
+  runtime_local_dependencies: [event]
 
 service:
   name: cluster-controller

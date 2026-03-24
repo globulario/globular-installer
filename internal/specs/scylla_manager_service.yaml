@@ -5,6 +5,7 @@ metadata:
   description: "ScyllaDB Manager server for automated repair, backup, and cluster management."
   keywords: [scylla-manager, scylladb, repair, backup, cluster-management]
   license: Proprietary
+  profiles: [control-plane, scylla, database]
 
 steps:
   - id: ensure-user-group

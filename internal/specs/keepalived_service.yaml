@@ -5,6 +5,7 @@ metadata:
   description: "VRRP-based virtual IP failover daemon for high-availability cluster networking."
   keywords: [keepalived, vrrp, failover, high-availability, vip]
   license: GPL-2.0
+  profiles: [gateway]
 
 steps:
   # Note: keepalived runs as root (requires privileges for VRRP and VIP management)

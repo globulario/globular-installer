@@ -2,6 +2,12 @@ version: 1
 
 metadata:
   name: event
+  profiles: [core, compute]
+  priority: 4
+  managed_unit: true
+  provides_capabilities: [event-bus]
+  health_check:
+    unit: globular-event.service
 
 service:
   name: event

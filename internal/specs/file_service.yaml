@@ -2,6 +2,12 @@ version: 1
 
 metadata:
   name: file
+  profiles: [core, compute, storage]
+  priority: 7
+  managed_unit: true
+  runtime_local_dependencies: [event]
+  health_check:
+    unit: globular-file.service
 
 service:
   name: file

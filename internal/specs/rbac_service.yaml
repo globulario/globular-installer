@@ -2,6 +2,12 @@ version: 1
 
 metadata:
   name: rbac
+  profiles: [core, compute]
+  priority: 5
+  managed_unit: true
+  runtime_local_dependencies: [event]
+  health_check:
+    unit: globular-rbac.service
 
 service:
   name: rbac

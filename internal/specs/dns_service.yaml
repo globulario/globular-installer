@@ -2,6 +2,14 @@ version: 1
 
 metadata:
   name: dns
+  profiles: [core, compute, control-plane, dns]
+  priority: 2
+  managed_unit: true
+  provides_capabilities: [dns]
+  runtime_local_dependencies: [event]
+  health_check:
+    unit: globular-dns.service
+    port: 10006
 
 service:
   name: dns

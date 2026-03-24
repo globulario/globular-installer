@@ -5,7 +5,11 @@ metadata:
   description: "High-performance NoSQL database (Cassandra-compatible) for persistent service data."
   keywords: [scylladb, database, nosql, cassandra, persistence]
   license: AGPL-3.0
+  profiles: [core, compute, control-plane, scylla, database]
+  priority: 6
+  install_mode: day0_join
   provides_capabilities: [local-db]
+  systemd_unit: scylla-server.service
   health_check:
     unit: scylla-server.service
     port: 9042

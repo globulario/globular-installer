@@ -5,6 +5,7 @@ metadata:
   description: "Prometheus exporter for hardware and OS-level metrics (CPU, memory, disk, network)."
   keywords: [node-exporter, prometheus, metrics, hardware, monitoring]
   license: Apache-2.0
+  profiles: [core, compute, control-plane]
 
 steps:
   - id: ensure-user-group

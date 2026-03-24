@@ -5,6 +5,7 @@ metadata:
   description: "Time-series monitoring and alerting system for cluster metrics collection."
   keywords: [prometheus, monitoring, metrics, alerting, time-series]
   license: Apache-2.0
+  profiles: [core, compute, control-plane]
 
 steps:
   - id: ensure-user-group

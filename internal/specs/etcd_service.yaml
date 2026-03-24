@@ -5,7 +5,11 @@ metadata:
   description: "Distributed key-value store used for service configuration, leader election, and cluster coordination."
   keywords: [etcd, key-value, distributed, consensus, raft, configuration]
   license: Apache-2.0
+  profiles: [core, compute, control-plane]
+  priority: 1
+  install_mode: day0_join
   provides_capabilities: [config-store]
+  systemd_unit: globular-etcd.service
   health_check:
     unit: globular-etcd.service
     port: 2379
