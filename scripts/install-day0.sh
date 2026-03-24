@@ -30,11 +30,43 @@ if [[ ! -x "$INSTALLER_BIN" ]]; then
 fi
 
 # Visual symbols for output
-die() { echo "  ✗ ERROR: $*" >&2; exit 1; }
+die() { echo "  ✗ ERROR: $*" >&2; trace_step "fatal" "die" "$*" 3; exit 1; }
 log_info() { echo "  → $*"; }
 log_success() { echo "  ✓ $*"; }
 log_step() { echo ""; echo "━━━ $* ━━━"; }
 log_substep() { echo "  • $*"; }
+
+# ── Workflow trace log ─────────────────────────────────────────────────────
+# Writes JSON-lines to DAY0_TRACE_LOG. The workflow service imports this on
+# startup to create a proper workflow run visible in the admin UI.
+DAY0_TRACE_LOG="/var/lib/globular/day0-install.jsonl"
+DAY0_TRACE_SEQ=0
+DAY0_TRACE_START=$(date +%s%3N)
+
+trace_step() {
+  local status="$1" step_key="$2" title="$3" phase="${4:-5}"
+  DAY0_TRACE_SEQ=$((DAY0_TRACE_SEQ + 1))
+  local now_ms=$(date +%s%3N)
+  local dur=$((now_ms - DAY0_TRACE_START))
+  printf '{"seq":%d,"key":"%s","title":"%s","status":"%s","phase":%d,"actor":4,"ts":%d,"dur":%d}\n' \
+    "$DAY0_TRACE_SEQ" "$step_key" "$title" "$status" "$phase" "$now_ms" "$dur" \
+    >> "$DAY0_TRACE_LOG" 2>/dev/null || true
+  DAY0_TRACE_START=$now_ms
+}
+
+trace_start() {
+  mkdir -p "$(dirname "$DAY0_TRACE_LOG")"
+  printf '{"type":"run_start","ts":%d,"hostname":"%s"}\n' \
+    "$(date +%s%3N)" "$(hostname)" > "$DAY0_TRACE_LOG" 2>/dev/null || true
+}
+
+trace_finish() {
+  local status="$1" msg="$2"
+  printf '{"type":"run_finish","status":"%s","msg":"%s","ts":%d}\n' \
+    "$status" "$msg" "$(date +%s%3N)" >> "$DAY0_TRACE_LOG" 2>/dev/null || true
+}
+
+trace_start
 
 [[ -d "$PKG_DIR" ]] || die "Package directory not found: $PKG_DIR"
 [[ -n "$INSTALLER_BIN" ]] && [[ -x "$INSTALLER_BIN" ]] || die "Installer binary not found; set INSTALLER_BIN or build ./bin/globular-installer"
@@ -146,6 +178,7 @@ echo ""
 
 # TLS MUST be set up BEFORE any packages are installed
 log_step "TLS Certificate Bootstrap"
+trace_step "running" "phase.tls" "TLS Certificate Bootstrap" 6
 if [[ -x "$SCRIPT_DIR/setup-tls.sh" ]]; then
   "$SCRIPT_DIR/setup-tls.sh" || die "TLS setup failed"
   log_success "TLS certificates generated (RSA)"
@@ -261,22 +294,27 @@ run_install() {
     set -e
     if [[ $rc -ne 0 ]]; then
       echo "$out" >&2
+      trace_step "failed" "install.$pkgname" "Install $pkgname (spec fallback failed)"
       die "Failed to install $pkgname"
     fi
     log_success "$pkgname installed"
+    trace_step "ok" "install.$pkgname" "Install $pkgname (spec fallback)"
     return 0
   fi
 
   if [[ $rc -ne 0 ]]; then
     if [[ "$TOLERATE_ALREADY_INSTALLED" == "1" ]] && echo "$out" | grep -qiE "already installed|exists|is installed"; then
       log_success "$pkgname (already installed)"
+      trace_step "ok" "install.$pkgname" "Install $pkgname (already installed)"
       return 0
     fi
     echo "$out" >&2
+    trace_step "failed" "install.$pkgname" "Install $pkgname failed"
     die "Failed to install $pkgname"
   fi
 
   log_success "$pkgname installed"
+  trace_step "ok" "install.$pkgname" "Install $pkgname"
 }
 
 install_list() {
@@ -521,6 +559,7 @@ else
 fi
 
 log_step "Infrastructure Layer (etcd + minio)"
+trace_step "running" "phase.infra" "Infrastructure Layer" 5
 install_list "${BOOTSTRAP_MINIO_PKGS[@]}"
 
 # If the user chose a custom MinIO data directory, patch the systemd unit and env file
@@ -764,6 +803,7 @@ if systemctl is-active --quiet globular-envoy.service; then
 fi
 
 log_step "Control Plane Services"
+trace_step "running" "phase.control-plane" "Control Plane Services" 5
 install_list "${CONTROL_PLANE_PKGS[@]}"
 
 # Set cluster_domain in cluster controller config so the admin UI and DNS
@@ -837,6 +877,7 @@ else
 fi
 
 log_step "Operations Services"
+trace_step "running" "phase.ops" "Operations Services" 5
 install_list "${OPS_PKGS[@]}"
 
 # Configure scylla-manager-agent (auth token, port, ScyllaDB API address, MinIO S3 creds)
@@ -969,6 +1010,7 @@ if [[ -f "$AGENT_TOKEN_FILE" ]] && command -v sctool &>/dev/null; then
 fi
 
 log_step "Workload Services"
+trace_step "running" "phase.workloads" "Workload Services" 5
 install_list "${OPTIONAL_WORKLOAD_PKGS[@]}"
 
 # Run conformance tests
@@ -1021,6 +1063,7 @@ fi
 
 # Cluster Health Validation
 log_step "Cluster Health Validation"
+trace_step "running" "phase.health" "Cluster Health Validation" 8
 VALIDATION_SCRIPT="$SCRIPT_DIR/validate-cluster-health.sh"
 
 if [[ -x "$VALIDATION_SCRIPT" ]]; then
@@ -1110,6 +1153,7 @@ log_success "Day-0 join token provisioned"
 # desired-state seed can discover installed services. This must run AFTER
 # the controller and node-agent are both running.
 log_step "Cluster Bootstrap (register first node)"
+trace_step "running" "phase.bootstrap" "Cluster Bootstrap" 8
 if [[ -x "$GLOBULAR_CLI" ]]; then
   # BootstrapFirstNode is now BLOCKING — it waits for the controller to
   # become reachable and completes RequestJoin + ApproveJoin before
@@ -1205,6 +1249,7 @@ echo "║          ✓ INSTALLATION COMPLETE                               ║"
 echo "╚════════════════════════════════════════════════════════════════╝"
 echo ""
 log_success "Globular Day-0 installation successful!"
+trace_finish "ok" "Day-0 installation complete"
 
 if [[ $VALIDATION_PASSED -eq 1 ]]; then
   log_success "All cluster health checks passed!"
