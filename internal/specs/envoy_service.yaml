@@ -1,15 +1,13 @@
 version: 1
 
 metadata:
+  name: envoy
   kind: infrastructure
   description: "L7 edge proxy handling TLS termination, gRPC-Web translation, and dynamic service routing."
   keywords: [envoy, proxy, tls, grpc-web, load-balancer, routing]
   license: Apache-2.0
-  profiles: [gateway]
-  priority: 10
   provides_capabilities: [http-proxy]
   runtime_local_dependencies: [xds]
-  systemd_unit: globular-envoy.service
   health_check:
     unit: globular-envoy.service
     port: 8443

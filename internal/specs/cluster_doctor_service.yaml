@@ -1,13 +1,11 @@
 version: 1
 
 metadata:
-  name: cluster-doctor
-  profiles: [control-plane]
-  runtime_local_dependencies: [event]
+  name: cluster_doctor
 
 service:
-  name: cluster-doctor
-  exec: clusterdoctor_server
+  name: cluster_doctor
+  exec: cluster_doctor_server
 
 steps:
   - id: ensure-user-group
@@ -22,12 +20,12 @@ steps:
     type: ensure_dirs
     dirs:
       - path: "{{.Prefix}}"
-        owner: globular
-        group: globular
+        owner: root
+        group: root
         mode: 0755
       - path: "{{.Prefix}}/bin"
-        owner: globular
-        group: globular
+        owner: root
+        group: root
         mode: 0755
 
       - path: "{{.StateDir}}"
@@ -38,7 +36,7 @@ steps:
         owner: globular
         group: globular
         mode: 0750
-      - path: "{{.StateDir}}/cluster-doctor"
+      - path: "{{.StateDir}}/cluster_doctor"
         owner: globular
         group: globular
         mode: 0750
@@ -48,19 +46,23 @@ steps:
         owner: globular
         group: globular
         mode: 0750
-      - path: "{{.StateDir}}/config/tls"
-        owner: globular
-        group: globular
-        mode: 0750
+      # INV-PKI-1: Removed obsolete config/tls directory - all certs under pki/
 
-  - id: install-cluster-doctor-payload
+  - id: install-cluster_doctor-payload
     type: install_package_payload
     install_bins: true
     install_config: false
     install_spec: false
     install_systemd: false
 
-  - id: install-cluster-doctor-service
+  - id: ensure-cluster_doctor-config
+    type: ensure_service_config
+    service_name: cluster_doctor
+    exec: cluster_doctor_server
+    address_host: auto
+    rewrite_if_out_of_range: true
+
+  - id: install-cluster_doctor-service
     type: install_services
     units:
       - name: globular-cluster-doctor.service
@@ -70,17 +72,20 @@ steps:
         atomic: true
         content: |
           [Unit]
-          Description=Globular Cluster Doctor
-          After=network-online.target
-          Wants=network-online.target
+          Description=Globular cluster_doctor
+          After=network-online.target globular-event.service globular-cluster-controller.service
+          Wants=network-online.target globular-event.service globular-cluster-controller.service
 
           [Service]
           Type=simple
           User=globular
           Group=globular
-          WorkingDirectory={{.StateDir}}/cluster-doctor
+          WorkingDirectory={{.StateDir}}/cluster_doctor
           Environment=GLOBULAR_SERVICES_DIR={{.StateDir}}/services
-          ExecStart={{.Prefix}}/bin/clusterdoctor_server
+          Environment=GLOBULAR_BOOTSTRAP=1
+          ExecStartPre=+/bin/sh -c 'mkdir -p {{.StateDir}}/cluster_doctor && chown globular:globular {{.StateDir}}/cluster_doctor'
+          ExecStartPre=/bin/sh -c 'for i in $(seq 1 60); do [ -f /var/lib/globular/pki/issued/services/service.crt ] && exit 0; sleep 1; done; echo "TLS cert not ready"; exit 1'
+          ExecStart={{.Prefix}}/bin/cluster_doctor_server
           Restart=on-failure
           RestartSec=2
           LimitNOFILE=524288
@@ -88,19 +93,19 @@ steps:
           [Install]
           WantedBy=multi-user.target
 
-  - id: enable-cluster-doctor
+  - id: enable-cluster_doctor
     type: enable_services
     services:
       - globular-cluster-doctor.service
 
-  - id: start-cluster-doctor
+  - id: start-cluster_doctor
     type: start_services
     services:
       - globular-cluster-doctor.service
     binaries:
-      globular-cluster-doctor.service: clusterdoctor_server
+      globular-cluster-doctor.service: cluster_doctor_server
 
-  - id: health-cluster-doctor
+  - id: health-cluster_doctor
     type: health_checks
     services:
       - globular-cluster-doctor.service

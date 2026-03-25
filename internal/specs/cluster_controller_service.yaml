@@ -1,13 +1,11 @@
 version: 1
 
 metadata:
-  name: cluster-controller
-  profiles: [control-plane]
-  runtime_local_dependencies: [event]
+  name: cluster_controller
 
 service:
-  name: cluster-controller
-  exec: cluster_controller
+  name: cluster_controller
+  exec: cluster_controller_server
 
 steps:
   - id: ensure-user-group
@@ -22,12 +20,12 @@ steps:
     type: ensure_dirs
     dirs:
       - path: "{{.Prefix}}"
-        owner: globular
-        group: globular
+        owner: root
+        group: root
         mode: 0755
       - path: "{{.Prefix}}/bin"
-        owner: globular
-        group: globular
+        owner: root
+        group: root
         mode: 0755
 
       - path: "{{.StateDir}}"
@@ -38,7 +36,7 @@ steps:
         owner: globular
         group: globular
         mode: 0750
-      - path: "{{.StateDir}}/cluster-controller"
+      - path: "{{.StateDir}}/cluster_controller"
         owner: globular
         group: globular
         mode: 0750
@@ -48,23 +46,23 @@ steps:
         owner: globular
         group: globular
         mode: 0750
-      - path: "{{.StateDir}}/config/tls"
-        owner: globular
-        group: globular
-        mode: 0750
+      # INV-PKI-1: Removed obsolete config/tls directory - all certs under pki/
 
-  - id: install-cluster-controller-bin
-    type: install_binaries
-
-  # Install packaged payload (binary + config) produced by build.sh
-  - id: install-cluster-controller-payload
+  - id: install-cluster_controller-payload
     type: install_package_payload
     install_bins: true
-    install_config: true
+    install_config: false
     install_spec: false
     install_systemd: false
 
-  - id: install-cluster-controller-service
+  - id: ensure-cluster_controller-config
+    type: ensure_service_config
+    service_name: cluster_controller
+    exec: cluster_controller_server
+    address_host: auto
+    rewrite_if_out_of_range: true
+
+  - id: install-cluster_controller-service
     type: install_services
     units:
       - name: globular-cluster-controller.service
@@ -74,17 +72,20 @@ steps:
         atomic: true
         content: |
           [Unit]
-          Description=Globular Cluster Controller
-          After=network-online.target
-          Wants=network-online.target
+          Description=Globular cluster_controller
+          After=network-online.target globular-event.service
+          Wants=network-online.target globular-event.service
 
           [Service]
           Type=simple
-          User=root
-          Group=root
-          WorkingDirectory={{.StateDir}}/cluster-controller
+          User=globular
+          Group=globular
+          WorkingDirectory={{.StateDir}}/cluster_controller
           Environment=GLOBULAR_SERVICES_DIR={{.StateDir}}/services
-          ExecStart={{.Prefix}}/bin/cluster_controller --state {{.StateDir}}/cluster-controller/state.json
+          Environment=GLOBULAR_BOOTSTRAP=1
+          ExecStartPre=+/bin/sh -c 'mkdir -p {{.StateDir}}/cluster_controller && chown globular:globular {{.StateDir}}/cluster_controller'
+          ExecStartPre=/bin/sh -c 'for i in $(seq 1 60); do [ -f /var/lib/globular/pki/issued/services/service.crt ] && exit 0; sleep 1; done; echo "TLS cert not ready"; exit 1'
+          ExecStart={{.Prefix}}/bin/cluster_controller_server
           Restart=on-failure
           RestartSec=2
           LimitNOFILE=524288
@@ -92,19 +93,19 @@ steps:
           [Install]
           WantedBy=multi-user.target
 
-  - id: enable-cluster-controller
+  - id: enable-cluster_controller
     type: enable_services
     services:
       - globular-cluster-controller.service
 
-  - id: start-cluster-controller
+  - id: start-cluster_controller
     type: start_services
     services:
       - globular-cluster-controller.service
     binaries:
-      globular-cluster-controller.service: cluster_controller
+      globular-cluster-controller.service: cluster_controller_server
 
-  - id: health-cluster-controller
+  - id: health-cluster_controller
     type: health_checks
     services:
       - globular-cluster-controller.service

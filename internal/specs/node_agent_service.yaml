@@ -1,13 +1,13 @@
 version: 1
 
 metadata:
-  name: node-agent
+  name: node_agent
   extra_binaries:
     - globular-upgrader
 
 service:
-  name: node-agent
-  exec: node_agent
+  name: node_agent
+  exec: node_agent_server
 
 steps:
   - id: ensure-user-group
@@ -22,12 +22,12 @@ steps:
     type: ensure_dirs
     dirs:
       - path: "{{.Prefix}}"
-        owner: globular
-        group: globular
+        owner: root
+        group: root
         mode: 0755
       - path: "{{.Prefix}}/bin"
-        owner: globular
-        group: globular
+        owner: root
+        group: root
         mode: 0755
 
       - path: "{{.StateDir}}"
@@ -38,25 +38,33 @@ steps:
         owner: globular
         group: globular
         mode: 0750
+      - path: "{{.StateDir}}/node_agent"
+        owner: globular
+        group: globular
+        mode: 0750
 
       # TLS directories (certificates must be provisioned by Day-0 bootstrap)
       - path: "{{.StateDir}}/pki"
         owner: globular
         group: globular
         mode: 0750
-      - path: "{{.StateDir}}/config/tls"
-        owner: globular
-        group: globular
-        mode: 0750
+      # INV-PKI-1: Removed obsolete config/tls directory - all certs under pki/
 
-  - id: install-node-agent-binary
+  - id: install-node_agent-payload
     type: install_package_payload
     install_bins: true
     install_config: false
     install_spec: false
     install_systemd: false
 
-  - id: install-node-agent-service
+  - id: ensure-node_agent-config
+    type: ensure_service_config
+    service_name: node_agent
+    exec: node_agent_server
+    address_host: auto
+    rewrite_if_out_of_range: true
+
+  - id: install-node_agent-service
     type: install_services
     units:
       - name: globular-node-agent.service
@@ -66,22 +74,20 @@ steps:
         atomic: true
         content: |
           [Unit]
-          Description=Globular Node Agent
-          After=network-online.target
-          Wants=network-online.target
+          Description=Globular node_agent
+          After=network-online.target globular-event.service globular-cluster-controller.service
+          Wants=network-online.target globular-event.service globular-cluster-controller.service
 
           [Service]
           Type=simple
           User=root
           Group=root
-          WorkingDirectory={{.StateDir}}/services
+          WorkingDirectory={{.StateDir}}/node_agent
           Environment=GLOBULAR_SERVICES_DIR={{.StateDir}}/services
-          Environment=NODE_AGENT_TLS_CERT={{.StateDir}}/config/tls/fullchain.pem
-          Environment=NODE_AGENT_TLS_KEY={{.StateDir}}/config/tls/privkey.pem
-          Environment=NODE_AGENT_TLS_CA={{.StateDir}}/pki/ca.pem
-          Environment=NODE_AGENT_CONTROLLER_ENDPOINT=127.0.0.1:12000
-          Environment=GLOBULAR_SKIP_SYSTEMD=1
-          ExecStart={{.Prefix}}/bin/node_agent
+          Environment=GLOBULAR_BOOTSTRAP=1
+          ExecStartPre=+/bin/sh -c 'mkdir -p {{.StateDir}}/node_agent && chown root:root {{.StateDir}}/node_agent'
+          ExecStartPre=/bin/sh -c 'for i in $(seq 1 60); do [ -f /var/lib/globular/pki/issued/services/service.crt ] && exit 0; sleep 1; done; echo "TLS cert not ready"; exit 1'
+          ExecStart={{.Prefix}}/bin/node_agent_server
           Restart=on-failure
           RestartSec=2
           LimitNOFILE=524288
@@ -89,19 +95,19 @@ steps:
           [Install]
           WantedBy=multi-user.target
 
-  - id: enable-node-agent
+  - id: enable-node_agent
     type: enable_services
     services:
       - globular-node-agent.service
 
-  - id: start-node-agent
+  - id: start-node_agent
     type: start_services
     services:
       - globular-node-agent.service
     binaries:
-      globular-node-agent.service: node_agent
+      globular-node-agent.service: node_agent_server
 
-  - id: health-node-agent
+  - id: health-node_agent
     type: health_checks
     services:
       - globular-node-agent.service

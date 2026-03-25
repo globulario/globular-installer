@@ -2,12 +2,6 @@ version: 1
 
 metadata:
   name: rbac
-  profiles: [core, compute]
-  priority: 5
-  managed_unit: true
-  runtime_local_dependencies: [event]
-  health_check:
-    unit: globular-rbac.service
 
 service:
   name: rbac
@@ -26,12 +20,12 @@ steps:
     type: ensure_dirs
     dirs:
       - path: "{{.Prefix}}"
-        owner: globular
-        group: globular
+        owner: root
+        group: root
         mode: 0755
       - path: "{{.Prefix}}/bin"
-        owner: globular
-        group: globular
+        owner: root
+        group: root
         mode: 0755
 
       - path: "{{.StateDir}}"
@@ -52,10 +46,7 @@ steps:
         owner: globular
         group: globular
         mode: 0750
-      - path: "{{.StateDir}}/config/tls"
-        owner: globular
-        group: globular
-        mode: 0750
+      # INV-PKI-1: Removed obsolete config/tls directory - all certs under pki/
 
   - id: install-rbac-payload
     type: install_package_payload
@@ -82,8 +73,8 @@ steps:
         content: |
           [Unit]
           Description=Globular rbac
-          After=network-online.target scylla-server.service
-          Wants=network-online.target scylla-server.service
+          After=network-online.target globular-event.service globular-resource.service scylla-server.service
+          Wants=network-online.target globular-event.service globular-resource.service scylla-server.service
 
           [Service]
           Type=simple
@@ -92,6 +83,8 @@ steps:
           WorkingDirectory={{.StateDir}}/rbac
           Environment=GLOBULAR_SERVICES_DIR={{.StateDir}}/services
           Environment=GLOBULAR_BOOTSTRAP=1
+          ExecStartPre=+/bin/sh -c 'mkdir -p {{.StateDir}}/rbac && chown globular:globular {{.StateDir}}/rbac'
+          ExecStartPre=/bin/sh -c 'for i in $(seq 1 60); do [ -f /var/lib/globular/pki/issued/services/service.crt ] && exit 0; sleep 1; done; echo "TLS cert not ready"; exit 1'
           ExecStartPre=/bin/sh -c 'for i in $(seq 1 90); do ss -lnt | grep -q ":9042 " && exit 0; sleep 1; done; echo "scylla 9042 not ready"; exit 1'
           ExecStart={{.Prefix}}/bin/rbac_server
           Restart=on-failure

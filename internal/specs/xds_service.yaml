@@ -1,14 +1,12 @@
 version: 1
 
 metadata:
-  kind: infrastructure
+  name: xds
+  kind: service
   description: "xDS control plane that provides dynamic Envoy configuration for service discovery and routing."
   keywords: [xds, envoy, service-discovery, control-plane, routing]
   license: MIT
-  profiles: [control-plane, gateway]
-  priority: 9
   provides_capabilities: [service-mesh]
-  systemd_unit: globular-xds.service
   health_check:
     unit: globular-xds.service
 

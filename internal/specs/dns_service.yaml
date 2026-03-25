@@ -2,26 +2,12 @@ version: 1
 
 metadata:
   name: dns
-  profiles: [core, compute, control-plane, dns]
-  priority: 2
-  managed_unit: true
-  provides_capabilities: [dns]
-  runtime_local_dependencies: [event]
-  health_check:
-    unit: globular-dns.service
-    port: 10006
 
 service:
   name: dns
   exec: dns_server
 
 steps:
-  - id: stage-dns-package
-    type: stage_package
-    path: "internal/assets/packages/service.dns_{{.Version}}_linux_amd64.tgz"
-    require_platform_match: true
-    require_type_service: true
-
   - id: ensure-user-group
     type: ensure_user_group
     user: globular
@@ -34,12 +20,12 @@ steps:
     type: ensure_dirs
     dirs:
       - path: "{{.Prefix}}"
-        owner: globular
-        group: globular
+        owner: root
+        group: root
         mode: 0755
       - path: "{{.Prefix}}/bin"
-        owner: globular
-        group: globular
+        owner: root
+        group: root
         mode: 0755
 
       - path: "{{.StateDir}}"
@@ -54,6 +40,13 @@ steps:
         owner: globular
         group: globular
         mode: 0750
+
+      # TLS directories (certificates must be provisioned by Day-0 bootstrap)
+      - path: "{{.StateDir}}/pki"
+        owner: globular
+        group: globular
+        mode: 0750
+      # INV-PKI-1: Removed obsolete config/tls directory - all certs under pki/
 
   - id: install-dns-payload
     type: install_package_payload
@@ -80,8 +73,8 @@ steps:
         content: |
           [Unit]
           Description=Globular dns
-          After=network-online.target
-          Wants=network-online.target
+          After=network-online.target globular-event.service globular-rbac.service globular-resource.service
+          Wants=network-online.target globular-event.service globular-rbac.service globular-resource.service
 
           [Service]
           Type=simple
@@ -89,6 +82,10 @@ steps:
           Group=globular
           WorkingDirectory={{.StateDir}}/dns
           Environment=GLOBULAR_SERVICES_DIR={{.StateDir}}/services
+          Environment=GLOBULAR_BOOTSTRAP=1
+          ExecStartPre=+/bin/sh -c 'mkdir -p {{.StateDir}}/dns && chown globular:globular {{.StateDir}}/dns'
+          ExecStartPre=/bin/sh -c 'for i in $(seq 1 60); do [ -f /var/lib/globular/pki/issued/services/service.crt ] && exit 0; sleep 1; done; echo "TLS cert not ready"; exit 1'
+          AmbientCapabilities=CAP_NET_BIND_SERVICE
           ExecStart={{.Prefix}}/bin/dns_server
           Restart=on-failure
           RestartSec=2

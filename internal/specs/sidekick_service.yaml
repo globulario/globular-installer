@@ -1,11 +1,11 @@
 version: 1
 
 metadata:
+  name: sidekick
   kind: infrastructure
   description: "MinIO Sidekick load balancer for distributing S3 requests across storage nodes."
   keywords: [sidekick, minio, load-balancer, s3, proxy]
   license: AGPL-3.0
-  profiles: [core, compute, storage]
 
 steps:
   - id: ensure-user-group

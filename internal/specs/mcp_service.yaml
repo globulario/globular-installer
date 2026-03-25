@@ -1,11 +1,11 @@
 version: 1
 
 metadata:
+  name: mcp
   kind: infrastructure
   description: "MCP (Model Context Protocol) server exposing read-only Globular operator tools to AI assistants like Claude Code."
   keywords: [mcp, ai, claude, operator, diagnostics, tools]
   license: Apache-2.0
-  profiles: [core, compute]
 
 steps:
   - id: ensure-user-group
@@ -56,7 +56,7 @@ steps:
           {
             "enabled": true,
             "transport": "http",
-            "read_only": true,
+            "read_only": false,
             "default_timeout": "10s",
             "tool_groups": {
               "cluster": true,
@@ -67,6 +67,12 @@ steps:
               "rbac": true,
               "resource": true,
               "composed": true,
+              "cli": true,
+              "governor": true,
+              "memory": true,
+              "skills": true,
+              "workflow": true,
+              "etcd": true,
               "file": false,
               "persistence": false,
               "storage": false,
@@ -83,7 +89,7 @@ steps:
             "max_result_count": 100,
             "max_file_read_bytes": 32768,
             "concurrency_limit": 10,
-            "http_listen_addr": "127.0.0.1:10050",
+            "http_listen_addr": ":10050",
             "http_read_timeout": "30s",
             "http_write_timeout": "60s",
             "redact_fields": [],

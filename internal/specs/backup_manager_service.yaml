@@ -1,11 +1,11 @@
 version: 1
 
 metadata:
-  name: log
+  name: backup_manager
 
 service:
-  name: log
-  exec: log_server
+  name: backup_manager
+  exec: backup_manager_server
 
 steps:
   - id: ensure-user-group
@@ -36,7 +36,7 @@ steps:
         owner: globular
         group: globular
         mode: 0750
-      - path: "{{.StateDir}}/log"
+      - path: "{{.StateDir}}/backup_manager"
         owner: globular
         group: globular
         mode: 0750
@@ -48,31 +48,31 @@ steps:
         mode: 0750
       # INV-PKI-1: Removed obsolete config/tls directory - all certs under pki/
 
-  - id: install-log-payload
+  - id: install-backup_manager-payload
     type: install_package_payload
     install_bins: true
     install_config: false
     install_spec: false
     install_systemd: false
 
-  - id: ensure-log-config
+  - id: ensure-backup_manager-config
     type: ensure_service_config
-    service_name: log
-    exec: log_server
+    service_name: backup_manager
+    exec: backup_manager_server
     address_host: auto
     rewrite_if_out_of_range: true
 
-  - id: install-log-service
+  - id: install-backup_manager-service
     type: install_services
     units:
-      - name: globular-log.service
+      - name: globular-backup-manager.service
         owner: root
         group: root
         mode: 0644
         atomic: true
         content: |
           [Unit]
-          Description=Globular log
+          Description=Globular backup_manager
           After=network-online.target globular-event.service globular-resource.service
           Wants=network-online.target globular-event.service globular-resource.service
 
@@ -80,12 +80,13 @@ steps:
           Type=simple
           User=globular
           Group=globular
-          WorkingDirectory={{.StateDir}}/log
+          WorkingDirectory={{.StateDir}}/backup_manager
           Environment=GLOBULAR_SERVICES_DIR={{.StateDir}}/services
           Environment=GLOBULAR_BOOTSTRAP=1
-          ExecStartPre=+/bin/sh -c 'mkdir -p {{.StateDir}}/log && chown globular:globular {{.StateDir}}/log'
+          ExecStartPre=+/bin/sh -c 'mkdir -p {{.StateDir}}/backup_manager && chown globular:globular {{.StateDir}}/backup_manager'
           ExecStartPre=/bin/sh -c 'for i in $(seq 1 60); do [ -f /var/lib/globular/pki/issued/services/service.crt ] && exit 0; sleep 1; done; echo "TLS cert not ready"; exit 1'
-          ExecStart={{.Prefix}}/bin/log_server
+          Environment=PATH={{.Prefix}}/bin:/usr/local/bin:/usr/bin:/bin
+          ExecStart={{.Prefix}}/bin/backup_manager_server
           Restart=on-failure
           RestartSec=2
           LimitNOFILE=524288
@@ -93,19 +94,19 @@ steps:
           [Install]
           WantedBy=multi-user.target
 
-  - id: enable-log
+  - id: enable-backup_manager
     type: enable_services
     services:
-      - globular-log.service
+      - globular-backup-manager.service
 
-  - id: start-log
+  - id: start-backup_manager
     type: start_services
     services:
-      - globular-log.service
+      - globular-backup-manager.service
     binaries:
-      globular-log.service: log_server
+      globular-backup-manager.service: backup_manager_server
 
-  - id: health-log
+  - id: health-backup_manager
     type: health_checks
     services:
-      - globular-log.service
+      - globular-backup-manager.service

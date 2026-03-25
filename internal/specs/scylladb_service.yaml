@@ -1,15 +1,14 @@
 version: 1
 
 metadata:
+  name: scylladb
   kind: infrastructure
   description: "High-performance NoSQL database (Cassandra-compatible) for persistent service data."
   keywords: [scylladb, database, nosql, cassandra, persistence]
   license: AGPL-3.0
-  profiles: [core, compute, control-plane, scylla, database]
-  priority: 6
-  install_mode: day0_join
+  entrypoint: noop
+  install_bins: false
   provides_capabilities: [local-db]
-  systemd_unit: scylla-server.service
   health_check:
     unit: scylla-server.service
     port: 9042
@@ -35,7 +34,15 @@ steps:
     install_spec: false
     install_systemd: false
 
-  # Install ScyllaDB GPG key and apt repository
+  # Install ScyllaDB GPG key — required before apt can use the repo.
+  # The repo file references signed-by=/etc/apt/keyrings/scylladb.gpg
+  # but the join script does not import this key (Day-0 bootstrap does).
+  # Downloads the armored key from ScyllaDB and converts to binary gpg format.
+  - id: install-scylladb-gpg-key
+    type: run_script
+    script: install-gpg-key.sh
+
+  # Install ScyllaDB apt repository
   - id: install-scylladb-repo
     type: install_files
     files:
@@ -48,7 +55,7 @@ steps:
         content: |
           deb [arch=amd64,arm64 signed-by=/etc/apt/keyrings/scylladb.gpg] https://downloads.scylladb.com/downloads/scylla/deb/debian-ubuntu/scylladb-2025.3 stable main
 
-  # Install ScyllaDB OS packages
+  # Install ScyllaDB OS packages (non-interactive via --force-confold)
   - id: install-scylladb-packages
     type: install_os_packages
     packages:
@@ -58,8 +65,9 @@ steps:
       - scylla-cqlsh
       - scylla-python3
 
-  # Post-install: TLS certs, scylla.yaml, data dirs, systemd overrides, start.
-  # Replaces the external setup-scylla-tls.sh script.
+  # Post-install: TLS certs, data dirs, env file, systemd overrides, start.
+  # IMPORTANT: This script must NOT overwrite /etc/scylla/scylla.yaml if
+  # it already exists (controller-rendered config is the source of truth).
   - id: run-post-install
     type: run_script
     script: post-install.sh

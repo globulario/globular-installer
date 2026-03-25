@@ -1,11 +1,11 @@
 version: 1
 
 metadata:
+  name: node_exporter
   kind: infrastructure
   description: "Prometheus exporter for hardware and OS-level metrics (CPU, memory, disk, network)."
   keywords: [node-exporter, prometheus, metrics, hardware, monitoring]
   license: Apache-2.0
-  profiles: [core, compute, control-plane]
 
 steps:
   - id: ensure-user-group

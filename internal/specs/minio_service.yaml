@@ -1,14 +1,12 @@
 version: 1
 
 metadata:
+  name: minio
   kind: infrastructure
   description: "S3-compatible object storage server for backup artifacts, media files, and blob data."
   keywords: [minio, object-storage, s3, backup, blob]
   license: AGPL-3.0
-  profiles: [core, compute, storage]
-  priority: 6
   provides_capabilities: [object-store]
-  systemd_unit: globular-minio.service
   health_check:
     unit: globular-minio.service
     port: 9000

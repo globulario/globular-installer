@@ -2,20 +2,12 @@ version: 1
 
 metadata:
   name: repository
-  profiles: [core, compute]
-  runtime_local_dependencies: [event]
 
 service:
   name: repository
   exec: repository_server
 
 steps:
-  - id: stage-repository-package
-    type: stage_package
-    path: "internal/assets/packages/service.repository_{{.Version}}_linux_amd64.tgz"
-    require_platform_match: true
-    require_type_service: true
-
   - id: ensure-user-group
     type: ensure_user_group
     user: globular
@@ -28,12 +20,12 @@ steps:
     type: ensure_dirs
     dirs:
       - path: "{{.Prefix}}"
-        owner: globular
-        group: globular
+        owner: root
+        group: root
         mode: 0755
       - path: "{{.Prefix}}/bin"
-        owner: globular
-        group: globular
+        owner: root
+        group: root
         mode: 0755
 
       - path: "{{.StateDir}}"
@@ -49,6 +41,27 @@ steps:
         group: globular
         mode: 0750
 
+      # TLS directories (certificates must be provisioned by Day-0 bootstrap)
+      - path: "{{.StateDir}}/pki"
+        owner: globular
+        group: globular
+        mode: 0750
+      # INV-PKI-1: Removed obsolete config/tls directory - all certs under pki/
+
+  - id: install-repository-payload
+    type: install_package_payload
+    install_bins: true
+    install_config: false
+    install_spec: false
+    install_systemd: false
+
+  - id: ensure-repository-config
+    type: ensure_service_config
+    service_name: repository
+    exec: repository_server
+    address_host: auto
+    rewrite_if_out_of_range: true
+
   - id: install-repository-service
     type: install_services
     units:
@@ -60,8 +73,8 @@ steps:
         content: |
           [Unit]
           Description=Globular repository
-          After=network-online.target
-          Wants=network-online.target
+          After=network-online.target globular-event.service globular-resource.service
+          Wants=network-online.target globular-event.service globular-resource.service
 
           [Service]
           Type=simple
@@ -69,6 +82,9 @@ steps:
           Group=globular
           WorkingDirectory={{.StateDir}}/repository
           Environment=GLOBULAR_SERVICES_DIR={{.StateDir}}/services
+          Environment=GLOBULAR_BOOTSTRAP=1
+          ExecStartPre=+/bin/sh -c 'mkdir -p {{.StateDir}}/repository && chown globular:globular {{.StateDir}}/repository'
+          ExecStartPre=/bin/sh -c 'for i in $(seq 1 60); do [ -f /var/lib/globular/pki/issued/services/service.crt ] && exit 0; sleep 1; done; echo "TLS cert not ready"; exit 1'
           ExecStart={{.Prefix}}/bin/repository_server
           Restart=on-failure
           RestartSec=2
@@ -76,13 +92,6 @@ steps:
 
           [Install]
           WantedBy=multi-user.target
-
-  - id: ensure-repository-config
-    type: ensure_service_config
-    service_name: repository
-    exec: repository_server
-    address_host: auto
-    rewrite_if_out_of_range: true
 
   - id: enable-repository
     type: enable_services

@@ -1,11 +1,11 @@
 version: 1
 
 metadata:
+  name: scylla_manager_agent
   kind: infrastructure
   description: "ScyllaDB Manager agent that runs on each node to execute repair and backup operations."
   keywords: [scylla-manager-agent, scylladb, agent, repair, backup]
   license: Proprietary
-  profiles: [scylla, database]
 
 steps:
   - id: ensure-user-group
