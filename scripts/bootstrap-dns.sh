@@ -9,6 +9,22 @@ echo ""
 export GLOBULAR_SKIP_ETCD_DISCOVERY=1
 
 STATE_DIR="${STATE_DIR:-/var/lib/globular}"
+
+# Enable bootstrap mode so RBAC interceptors allow Day-0 writes.
+# The bootstrap gate has a 30-minute window and restricts to loopback.
+BOOTSTRAP_FILE="${STATE_DIR}/bootstrap.enabled"
+if [[ ! -f "$BOOTSTRAP_FILE" ]]; then
+    NOW_UTC=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    EXPIRES_UTC=$(date -u -d "+30 minutes" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v+30M +%Y-%m-%dT%H:%M:%SZ)
+    cat > "$BOOTSTRAP_FILE" <<BSEOF
+{
+  "enabled_at": "$NOW_UTC",
+  "expires_at": "$EXPIRES_UTC",
+  "created_by": "bootstrap-dns.sh"
+}
+BSEOF
+    echo "[bootstrap-dns] Enabled bootstrap mode (30-minute window)"
+fi
 DOMAIN="${DOMAIN:-globular.internal}"
 
 # Determine user for client certificates (handle sudo context)
