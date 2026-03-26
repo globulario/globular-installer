@@ -12,19 +12,18 @@ STATE_DIR="${STATE_DIR:-/var/lib/globular}"
 
 # Enable bootstrap mode so RBAC interceptors allow Day-0 writes.
 # The bootstrap gate has a 30-minute window and restricts to loopback.
+# Always recreate — a stale file from a previous attempt would be expired.
 BOOTSTRAP_FILE="${STATE_DIR}/bootstrap.enabled"
-if [[ ! -f "$BOOTSTRAP_FILE" ]]; then
-    NOW_UTC=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-    EXPIRES_UTC=$(date -u -d "+30 minutes" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v+30M +%Y-%m-%dT%H:%M:%SZ)
-    cat > "$BOOTSTRAP_FILE" <<BSEOF
+NOW_UTC=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+EXPIRES_UTC=$(date -u -d "+30 minutes" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v+30M +%Y-%m-%dT%H:%M:%SZ)
+cat > "$BOOTSTRAP_FILE" <<BSEOF
 {
   "enabled_at": "$NOW_UTC",
   "expires_at": "$EXPIRES_UTC",
   "created_by": "bootstrap-dns.sh"
 }
 BSEOF
-    echo "[bootstrap-dns] Enabled bootstrap mode (30-minute window)"
-fi
+echo "[bootstrap-dns] Enabled bootstrap mode (30-minute window)"
 DOMAIN="${DOMAIN:-globular.internal}"
 
 # Determine user for client certificates (handle sudo context)
@@ -78,12 +77,31 @@ echo "[bootstrap-dns] CA certificate: $CA_PATH"
 # Override via DNS_GRPC_ADDR env var to skip discovery.
 DNS_GRPC_ADDR="${DNS_GRPC_ADDR:-}"
 
-# Create wrapper function for globular commands with proper HOME and explicit
-# DNS endpoint. The CLI needs HOME to find client certificates for mTLS
-# authentication. NOTE: Do NOT use --ca flag as it disables client certificate
-# loading!
+# Authenticate as sa to get a JWT token for RBAC-protected calls.
+# The sa password is saved during install at .bootstrap-sa-password.
+SA_TOKEN=""
+SA_CRED_FILE="${STATE_DIR}/.bootstrap-sa-password"
+if [[ -f "$SA_CRED_FILE" ]]; then
+    SA_PASS=$(cat "$SA_CRED_FILE")
+    if [[ -n "$SA_PASS" ]]; then
+        echo "[bootstrap-dns] Authenticating as sa..."
+        SA_TOKEN=$(HOME="$CLIENT_HOME" globular --timeout 5s auth login --user sa --password "$SA_PASS" 2>/dev/null | grep "^Token:" | sed 's/^Token: //' || true)
+        if [[ -n "$SA_TOKEN" ]]; then
+            echo "[bootstrap-dns] ✓ Authenticated (token acquired)"
+        else
+            echo "[bootstrap-dns] ⚠ Authentication failed — will try client certs only"
+        fi
+    fi
+fi
+
+# Create wrapper function for globular commands with proper HOME, DNS endpoint,
+# and sa token (if available). Token auth bypasses bootstrap gate restrictions.
 globular_dns() {
-    HOME="$CLIENT_HOME" globular --dns "${DNS_GRPC_ADDR:-localhost:10006}" "$@"
+    local token_flag=""
+    if [[ -n "$SA_TOKEN" ]]; then
+        token_flag="--token $SA_TOKEN"
+    fi
+    HOME="$CLIENT_HOME" globular --dns "${DNS_GRPC_ADDR:-localhost:10006}" $token_flag "$@"
 }
 
 # Probe whether a candidate address actually hosts the DNS gRPC service.
