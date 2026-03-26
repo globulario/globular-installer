@@ -270,7 +270,7 @@ install_from_extracted_spec() {
 
 run_install() {
   local pkgfile="$1"
-  local pkgname="$(basename "$pkgfile" .tgz | sed 's/_linux_amd64$//' | sed 's/^service\.//')"
+  local pkgname="$(basename "$pkgfile" .tgz | sed 's/_linux_amd64$//')"
   local out rc
 
   log_substep "Installing $pkgname..."
@@ -329,74 +329,74 @@ install_list() {
   done
 }
 
-SCYLLADB_PKG="service.scylladb_2025.3.1_linux_amd64.tgz"
+SCYLLADB_PKG="scylladb_2025.3.8_linux_amd64.tgz"
 
 BOOTSTRAP_MINIO_PKGS=(
-  "service.etcd_3.5.14_linux_amd64.tgz"
-  "service.minio_0.0.1_linux_amd64.tgz"
+  "etcd_3.5.14_linux_amd64.tgz"
+  "minio_0.0.1_linux_amd64.tgz"
 )
 
 DATA_LAYER_PKGS=(
-  "service.persistence_0.0.1_linux_amd64.tgz"
+  "persistence_0.0.1_linux_amd64.tgz"
 )
 
 BOOTSTRAP_REST_PKGS=(
-  "service.xds_0.0.1_linux_amd64.tgz"
-  "service.envoy_1.35.3_linux_amd64.tgz"
-  "service.gateway_0.0.1_linux_amd64.tgz"
-  "service.node-agent_0.0.1_linux_amd64.tgz"
-  "service.cluster-controller_0.0.1_linux_amd64.tgz"
-  "service.cluster-doctor_0.0.1_linux_amd64.tgz"
+  "xds_0.0.1_linux_amd64.tgz"
+  "envoy_1.35.3_linux_amd64.tgz"
+  "gateway_0.0.1_linux_amd64.tgz"
+  "node-agent_0.0.1_linux_amd64.tgz"
+  "cluster-controller_0.0.1_linux_amd64.tgz"
+  "cluster-doctor_0.0.1_linux_amd64.tgz"
 )
 
 CONTROL_PLANE_PKGS=(
-  "service.resource_0.0.1_linux_amd64.tgz"
-  "service.rbac_0.0.1_linux_amd64.tgz"
-  "service.authentication_0.0.1_linux_amd64.tgz"
-  "service.discovery_0.0.1_linux_amd64.tgz"
+  "resource_0.0.1_linux_amd64.tgz"
+  "rbac_0.0.1_linux_amd64.tgz"
+  "authentication_0.0.1_linux_amd64.tgz"
+  "discovery_0.0.1_linux_amd64.tgz"
   # DNS must be installed before repository so it gets its default port (10006).
   # The PortAllocator assigns ports in first-come order; repository would otherwise
   # grab 10006 first and force DNS to reallocate to 10007, breaking bootstrap-dns.sh.
-  "service.dns_0.0.1_linux_amd64.tgz"
-  "service.repository_0.0.1_linux_amd64.tgz"
+  "dns_0.0.1_linux_amd64.tgz"
+  "repository_0.0.1_linux_amd64.tgz"
 )
 
 OPS_PKGS=(
-  "service.sidekick_7.0.0_linux_amd64.tgz"
-  "service.node-exporter_1.10.2_linux_amd64.tgz"
-  "service.prometheus_3.5.1_linux_amd64.tgz"
-  "service.monitoring_0.0.1_linux_amd64.tgz"
-  "service.event_0.0.1_linux_amd64.tgz"
-  "service.log_0.0.1_linux_amd64.tgz"
-  "service.backup-manager_0.0.1_linux_amd64.tgz"
-  "service.mcp_0.0.1_linux_amd64.tgz"
-  "service.ai-memory_0.0.1_linux_amd64.tgz"
-  "service.ai-watcher_0.0.1_linux_amd64.tgz"
-  "service.ai-executor_0.0.1_linux_amd64.tgz"
-  "service.ai-router_0.0.1_linux_amd64.tgz"
-  "service.workflow_0.0.1_linux_amd64.tgz"
-  "service.scylla-manager-agent_3.8.1_linux_amd64.tgz"
-  "service.scylla-manager_3.8.1_linux_amd64.tgz"
+  "sidekick_7.0.0_linux_amd64.tgz"
+  "node-exporter_1.10.2_linux_amd64.tgz"
+  "prometheus_3.5.1_linux_amd64.tgz"
+  "monitoring_0.0.1_linux_amd64.tgz"
+  "event_0.0.1_linux_amd64.tgz"
+  "log_0.0.1_linux_amd64.tgz"
+  "backup-manager_0.0.1_linux_amd64.tgz"
+  "mcp_0.0.2_linux_amd64.tgz"
+  "ai-memory_0.0.1_linux_amd64.tgz"
+  "ai-watcher_0.0.1_linux_amd64.tgz"
+  "ai-executor_0.0.1_linux_amd64.tgz"
+  "ai-router_0.0.1_linux_amd64.tgz"
+  "workflow_0.0.1_linux_amd64.tgz"
+  "scylla-manager-agent_3.8.1_linux_amd64.tgz"
+  "scylla-manager_3.8.1_linux_amd64.tgz"
 )
 
 OPTIONAL_WORKLOAD_PKGS=(
-  "service.file_0.0.1_linux_amd64.tgz"
-  "service.search_0.0.1_linux_amd64.tgz"
-  "service.media_0.0.1_linux_amd64.tgz"
-  "service.title_0.0.1_linux_amd64.tgz"
-  "service.torrent_0.0.1_linux_amd64.tgz"
+  "file_0.0.1_linux_amd64.tgz"
+  "search_0.0.1_linux_amd64.tgz"
+  "media_0.0.1_linux_amd64.tgz"
+  "title_0.0.1_linux_amd64.tgz"
+  "torrent_0.0.1_linux_amd64.tgz"
 )
 
 CMDS_PKGS=(
-  "service.mc-cmd_0.0.1_linux_amd64.tgz"
-  "service.globular-cli-cmd_0.0.1_linux_amd64.tgz"
-  "service.etcdctl-cmd_3.5.14_linux_amd64.tgz"
-  "service.rclone-cmd_1.73.1_linux_amd64.tgz"
-  "service.restic-cmd_0.18.1_linux_amd64.tgz"
-  "service.sctool-cmd_3.8.1_linux_amd64.tgz"
-  "service.sha256sum-cmd_9.4.0_linux_amd64.tgz"
-  "service.yt-dlp-cmd_2026.2.21_linux_amd64.tgz"
-  "service.ffmpeg-cmd_7.0.2_linux_amd64.tgz"
+  "mc_0.0.1_linux_amd64.tgz"
+  "globular-cli_0.0.1_linux_amd64.tgz"
+  "etcdctl_3.5.14_linux_amd64.tgz"
+  "rclone_1.73.1_linux_amd64.tgz"
+  "restic_0.18.1_linux_amd64.tgz"
+  "sctool_3.8.1_linux_amd64.tgz"
+  "sha256sum_9.4.0_linux_amd64.tgz"
+  "yt-dlp_2026.2.21_linux_amd64.tgz"
+  "ffmpeg_7.0.2_linux_amd64.tgz"
 )
 
 # Phase 2: Enable bootstrap mode for Day-0 installation
@@ -434,6 +434,10 @@ log_success "Bootstrap mode enabled: $BOOTSTRAP_FLAG (expires: $(date -d @$EXPIR
 # Write bootstrap sa credential file for non-interactive artifact publishing.
 # Permissions 0600, root-owned. Deleted in Phase 5 cleanup.
 BOOTSTRAP_SA_CRED="/var/lib/globular/.bootstrap-sa-password"
+if [[ -z "${GLOBULAR_PASSWORD:-}" ]]; then
+  read -rsp "Password for sa (admin): " GLOBULAR_PASSWORD
+  echo
+fi
 if [[ -n "${GLOBULAR_PASSWORD:-}" ]]; then
   printf '%s' "$GLOBULAR_PASSWORD" > "$BOOTSTRAP_SA_CRED"
   chmod 0600 "$BOOTSTRAP_SA_CRED"
@@ -770,7 +774,7 @@ log_step "Bootstrap Services (xds, envoy, gateway, agents)"
 install_list "${BOOTSTRAP_REST_PKGS[@]}"
 
 # Explicitly ensure cluster-doctor is installed and running (common omission)
-CLUSTER_DOCTOR_PKG="$PKG_DIR/service.cluster-doctor_0.0.1_linux_amd64.tgz"
+CLUSTER_DOCTOR_PKG="$PKG_DIR/cluster-doctor_0.0.1_linux_amd64.tgz"
 if [[ -f "$CLUSTER_DOCTOR_PKG" ]]; then
   if ! systemctl list-unit-files | grep -q "^globular-cluster-doctor.service"; then
     log_substep "cluster-doctor unit missing; reinstalling from package..."
@@ -875,6 +879,11 @@ if [[ -x "$SCRIPT_DIR/bootstrap-dns.sh" ]]; then
 else
   log_substep "Warning: bootstrap-dns.sh not found, DNS records not initialized"
 fi
+
+# Remove bootstrap flag — DNS bootstrap is done, and the expired flag would
+# cause every subsequent gRPC call to fail on first attempt (bootstrap_expired
+# denial before falling through to normal auth), making publish very slow.
+rm -f "${STATE_DIR}/bootstrap.enabled" 2>/dev/null
 
 log_step "Operations Services"
 trace_step "running" "phase.ops" "Operations Services" 5
