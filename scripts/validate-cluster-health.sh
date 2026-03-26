@@ -238,9 +238,24 @@ if [[ ! -x "$GLOBULAR_BIN" ]]; then
     GLOBULAR_BIN="$(command -v globular 2>/dev/null || echo '')"
 fi
 
+# Authenticate as sa to get a token for RBAC-protected gRPC calls.
+SA_TOKEN=""
+STATE_DIR="${STATE_DIR:-/var/lib/globular}"
+SA_CRED_FILE="${STATE_DIR}/.bootstrap-sa-password"
+if [[ -n "$GLOBULAR_BIN" ]] && [[ -f "$SA_CRED_FILE" ]]; then
+    SA_PASS=$(cat "$SA_CRED_FILE")
+    if [[ -n "$SA_PASS" ]]; then
+        SA_TOKEN=$($GLOBULAR_BIN --timeout 5s auth login --user sa --password "$SA_PASS" 2>/dev/null | grep "^Token:" | sed 's/^Token: //' || true)
+    fi
+fi
+TOKEN_FLAG=""
+if [[ -n "$SA_TOKEN" ]]; then
+    TOKEN_FLAG="--token $SA_TOKEN"
+fi
+
 if [[ -n "$GLOBULAR_BIN" ]] && [[ -x "$GLOBULAR_BIN" ]]; then
     check "DNS service responding (gRPC)" \
-        "attempt=0; while [ \$attempt -lt 3 ]; do if $GLOBULAR_BIN --timeout 15s --dns localhost:10006 dns domains get 2>&1 | grep -q 'globular.internal'; then echo 'ok'; exit 0; fi; attempt=\$((attempt + 1)); sleep 3; done; exit 1" \
+        "attempt=0; while [ \$attempt -lt 3 ]; do if $GLOBULAR_BIN --timeout 15s --dns localhost:10006 $TOKEN_FLAG dns domains get 2>&1 | grep -q 'globular.internal'; then echo 'ok'; exit 0; fi; attempt=\$((attempt + 1)); sleep 3; done; exit 1" \
         "ok"
 else
     check "DNS service responding (gRPC)" \
@@ -279,7 +294,7 @@ else
 fi
 
 check "DNS domain configured" \
-    "$GLOBULAR_BIN --timeout 10s --dns localhost:10006 dns domains get 2>&1 | grep -q '\.internal' && echo 'ok'" \
+    "$GLOBULAR_BIN --timeout 10s --dns localhost:10006 $TOKEN_FLAG dns domains get 2>&1 | grep -q '\.internal' && echo 'ok'" \
     "ok"
 
 echo ""
