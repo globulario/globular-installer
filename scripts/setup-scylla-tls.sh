@@ -113,9 +113,9 @@ commitlog_sync_period_in_ms: 10000
 # Auto-tune memory (recommended)
 auto_adjust_flush_quota: true
 
-# REST API port — moved to 56093 to avoid conflict with Globular service
-# ports (10000+). ScyllaDB defaults to 10000 which collides with persistence.
-api_port: 56093
+# REST API port — ScyllaDB default is 10000.
+# Note: the persistence service was moved off 10000 to avoid this conflict.
+api_port: 10000
 api_address: ${LOCAL_IP}
 EOF
 
