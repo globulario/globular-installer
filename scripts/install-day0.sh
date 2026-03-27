@@ -562,6 +562,14 @@ else
   fi
 fi
 
+# TLS ownership fix: certs were generated as root during TLS Bootstrap but
+# infrastructure services (etcd, gateway, etc.) run as the globular user.
+# Fix ownership NOW, before any globular-user service tries to read them.
+if id globular >/dev/null 2>&1 && [[ -d /var/lib/globular/pki ]]; then
+  chown -R globular:globular /var/lib/globular/pki
+  log_substep "TLS files ownership set to globular:globular (pre-infra)"
+fi
+
 log_step "Infrastructure Layer (etcd + minio)"
 trace_step "running" "phase.infra" "Infrastructure Layer" 5
 install_list "${BOOTSTRAP_MINIO_PKGS[@]}"
@@ -883,11 +891,23 @@ fi
 # Remove bootstrap flag — DNS bootstrap is done, and the expired flag would
 # cause every subsequent gRPC call to fail on first attempt (bootstrap_expired
 # denial before falling through to normal auth), making publish very slow.
-rm -f "${STATE_DIR}/bootstrap.enabled" 2>/dev/null
+rm -f "${BOOTSTRAP_FLAG}" 2>/dev/null
 
 log_step "Operations Services"
 trace_step "running" "phase.ops" "Operations Services" 5
 install_list "${OPS_PKGS[@]}"
+
+# Ensure MCP server is running — it's required by ai-watcher/ai-executor/ai-router.
+# The installer may not start it if the binary exits cleanly before deps are ready
+# (Restart=on-failure doesn't recover clean exits). Force-start + patch to Restart=always.
+if [[ -f /etc/systemd/system/globular-mcp.service ]]; then
+  if ! grep -q 'Restart=always' /etc/systemd/system/globular-mcp.service; then
+    sed -i 's/Restart=on-failure/Restart=always/' /etc/systemd/system/globular-mcp.service
+    systemctl daemon-reload
+  fi
+  systemctl restart globular-mcp.service 2>/dev/null || true
+  log_substep "MCP server started (Restart=always)"
+fi
 
 # Configure scylla-manager-agent (auth token, port, ScyllaDB API address, MinIO S3 creds)
 AGENT_CONFIG="/var/lib/globular/scylla-manager-agent/scylla-manager-agent.yaml"
@@ -1204,6 +1224,24 @@ fi
 # This must run AFTER health validation (services running) and BEFORE seed
 # (so the repository is populated before desired-state references artifacts).
 log_step "Publish Bootstrap Artifacts to Repository (Layer 1: Artifact)"
+
+# Clear stale artifacts from MinIO so rebuilt packages replace old ones.
+# Without this, ensure-bootstrap-artifacts.sh sees "already present" and skips,
+# leaving old binaries in the repo that the reconciler re-deploys over fresh installs.
+if command -v mc &>/dev/null || [[ -x /usr/lib/globular/bin/mc ]]; then
+  MC_BIN="${MC_BIN:-$(command -v mc 2>/dev/null || echo /usr/lib/globular/bin/mc)}"
+  MINIO_CRED_FILE="${BOOTSTRAP_DATA_DIR:-/var/lib/globular}/minio/credentials"
+  if [[ -f "$MINIO_CRED_FILE" ]]; then
+    _ak=$(head -1 "$MINIO_CRED_FILE")
+    _sk=$(tail -1 "$MINIO_CRED_FILE")
+    _minio_host="${MINIO_ENDPOINT:-$(hostname -I | awk '{print $1}'):9000}"
+    "$MC_BIN" --insecure alias set _globular "https://${_minio_host}" "$_ak" "$_sk" &>/dev/null || true
+    "$MC_BIN" --insecure rm --recursive --force _globular/globular/globular.internal/artifacts/ &>/dev/null || true
+    "$MC_BIN" --insecure alias rm _globular &>/dev/null || true
+    log_substep "Cleared stale artifacts from MinIO"
+  fi
+fi
+
 if [[ -x "$SCRIPT_DIR/ensure-bootstrap-artifacts.sh" ]]; then
   # Export PKG_DIR and GLOBULAR_CLI so the helper script can find packages and CLI
   export PKG_DIR GLOBULAR_CLI
@@ -1251,6 +1289,16 @@ else
   log_substep "Warning: globular CLI not found at $GLOBULAR_CLI, skipping desired-state import"
   log_substep "Run manually later: globular services seed --insecure"
 fi
+
+# Restart the cluster controller so it picks up fresh gRPC connections to all
+# services. During install, services are started/stopped/restarted in sequence
+# which leaves the controller with stale cached connections. A final restart
+# ensures clean connectivity now that everything is stable.
+log_step "Final Service Stabilization"
+systemctl restart globular-cluster-controller.service 2>/dev/null || true
+systemctl restart globular-gateway.service 2>/dev/null || true
+sleep 3
+log_success "Controller and gateway restarted with fresh connections"
 
 echo ""
 echo "╔════════════════════════════════════════════════════════════════╗"

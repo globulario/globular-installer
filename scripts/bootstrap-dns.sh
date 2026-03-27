@@ -120,7 +120,8 @@ echo "[bootstrap-dns] Waiting for DNS service to be ready..."
 # Wait for DNS service to be fully ready (gRPC responding on correct port + port 53 bound).
 # NOTE: Do NOT use `globular dns domains` (no subcommand) — it prints help and
 # exits 0 without connecting. Use `dns domains get` for a real gRPC call.
-MAX_WAIT=30
+# 90s budget: etcd may wait up to 60s for TLS certs + DNS needs a few seconds after etcd.
+MAX_WAIT=90
 DNS_READY=0
 for i in $(seq 1 $MAX_WAIT); do
     # Discover the actual DNS gRPC port on each iteration until found.

@@ -2,10 +2,12 @@ version: 1
 
 metadata:
   name: mcp
+  version: "0.0.2"
   kind: infrastructure
   description: "MCP (Model Context Protocol) server exposing read-only Globular operator tools to AI assistants like Claude Code."
   keywords: [mcp, ai, claude, operator, diagnostics, tools]
   license: Apache-2.0
+  entrypoint: mcp
 
 steps:
   - id: ensure-user-group
@@ -117,8 +119,10 @@ steps:
           Group=globular
           WorkingDirectory={{.StateDir}}/mcp
           ExecStart={{.Prefix}}/bin/mcp
-          Restart=on-failure
+          Restart=always
           RestartSec=5
+          StartLimitIntervalSec=300
+          StartLimitBurst=10
           LimitNOFILE=524288
           Environment=GLOBULAR_MCP_CONFIG={{.StateDir}}/mcp/config.json
           Environment=GLOBULAR_BOOTSTRAP=1
@@ -131,7 +135,7 @@ steps:
     services:
       - globular-mcp.service
 
-  # No start_services or health_checks — the MCP server starts after all
-  # dependencies (etcd, auth, etc.) are up. During Day-0, other services
-  # aren't running yet. Systemd will start it on next boot or the Day-0
-  # script starts all services together at the end.
+  - id: start-mcp
+    type: start_services
+    services:
+      - globular-mcp.service
