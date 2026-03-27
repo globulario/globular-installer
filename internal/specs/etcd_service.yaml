@@ -2,10 +2,12 @@ version: 1
 
 metadata:
   name: etcd
+  version: "3.5.14"
   kind: infrastructure
   description: "Distributed key-value store used for service configuration, leader election, and cluster coordination."
   keywords: [etcd, key-value, distributed, consensus, raft, configuration]
   license: Apache-2.0
+  entrypoint: etcd
   provides_capabilities: [config-store]
   health_check:
     unit: globular-etcd.service
@@ -137,6 +139,8 @@ steps:
           Description=Globular etcd
           After=network-online.target
           Wants=network-online.target
+          StartLimitBurst=10
+          StartLimitIntervalSec=60
 
           [Service]
           Type=simple
@@ -145,9 +149,10 @@ steps:
           ExecStartPre=+/usr/bin/mkdir -p {{.StateDir}}/etcd
           ExecStartPre=+/usr/bin/chown globular:globular {{.StateDir}}/etcd
           ExecStartPre=+/usr/bin/chmod 0750 {{.StateDir}}/etcd
+          ExecStartPre=+/usr/bin/chown globular:globular {{.StateDir}}/pki/issued/services/service.key {{.StateDir}}/pki/issued/services/service.crt
           ExecStart={{.Prefix}}/bin/etcd --config-file {{.StateDir}}/config/etcd.yaml
           Restart=on-failure
-          RestartSec=2
+          RestartSec=3
           LimitNOFILE=524288
 
           [Install]

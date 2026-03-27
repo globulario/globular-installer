@@ -22,11 +22,20 @@ mkdir -p "${MINIO_CERTS_DIR}"
 chmod 755 "${STATE_DIR}" "${PKI_DIR}"
 
 # Function to generate RSA key (not ECDSA - for XDS compatibility)
+# Writes to a temp file first, then atomically renames into place so that
+# running services never see a missing or half-written key file.
 gen_rsa_key() {
     local keyfile="$1"
     local bits="${2:-2048}"
-    openssl genrsa -out "${keyfile}" "${bits}"
-    chmod 400 "${keyfile}"
+    local tmpfile="${keyfile}.tmp.$$"
+    openssl genrsa -out "${tmpfile}" "${bits}"
+    chmod 400 "${tmpfile}"
+    # Set ownership before the rename so the file is readable by the service
+    # user from the instant it appears at the final path.
+    if [[ $EUID -eq 0 ]] && id globular >/dev/null 2>&1; then
+        chown globular:globular "${tmpfile}"
+    fi
+    mv -f "${tmpfile}" "${keyfile}"
 }
 
 # Function to generate root CA
@@ -149,11 +158,8 @@ setup_minio_certs() {
     echo "[setup-tls] Setting up MinIO certificates..."
 
     # MinIO expects: public.crt and private.key
-    cp "${SERVICE_CERT_DIR}/service.crt" "${MINIO_CERTS_DIR}/public.crt"
-    cp "${SERVICE_CERT_DIR}/service.key" "${MINIO_CERTS_DIR}/private.key"
-
-    chmod 444 "${MINIO_CERTS_DIR}/public.crt"
-    chmod 400 "${MINIO_CERTS_DIR}/private.key"
+    ln -sf "${SERVICE_CERT_DIR}/service.crt" "${MINIO_CERTS_DIR}/public.crt"
+    ln -sf "${SERVICE_CERT_DIR}/service.key" "${MINIO_CERTS_DIR}/private.key"
 
     echo "[setup-tls] ✓ MinIO certificates configured"
 }
@@ -207,7 +213,9 @@ if [[ $CERT_VALID -eq 1 ]]; then
     echo "[setup-tls] ✓ Service certificate is valid, skipping regeneration..."
 else
     echo "[setup-tls] Generating new service certificate..."
-    rm -f "${SERVICE_CERT_DIR}/service.key" "${SERVICE_CERT_DIR}/service.crt"
+    # Do NOT rm the old key/cert before generating the new one.  gen_service_cert
+    # (via gen_rsa_key) writes to a temp file and atomically renames into place,
+    # so running services always see either the old or the new file — never a gap.
     rm -f "${MINIO_CERTS_DIR}/public.crt" "${MINIO_CERTS_DIR}/private.key"
     gen_service_cert
     CERTS_CHANGED=1
@@ -228,13 +236,11 @@ setup_etcd_client_certs() {
     # - /var/lib/globular/pki/issued/etcd/client.key
     # - /var/lib/globular/pki/ca.crt
 
-    # Copy service cert to etcd client cert location (reuse service cert for etcd client)
-    cp "${SERVICE_CERT_DIR}/service.crt" "${ETCD_CERT_DIR}/client.crt"
-    cp "${SERVICE_CERT_DIR}/service.key" "${ETCD_CERT_DIR}/client.key"
+    # Symlink service cert to etcd client cert location (reuse service cert for etcd client)
+    ln -sf "${SERVICE_CERT_DIR}/service.crt" "${ETCD_CERT_DIR}/client.crt"
+    ln -sf "${SERVICE_CERT_DIR}/service.key" "${ETCD_CERT_DIR}/client.key"
 
     chmod 755 "${ETCD_CERT_DIR}"
-    chmod 644 "${ETCD_CERT_DIR}/client.crt"
-    chmod 400 "${ETCD_CERT_DIR}/client.key"
 
     echo "[setup-tls] ✓ etcd client certificates configured at canonical location"
 }

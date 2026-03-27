@@ -78,19 +78,42 @@ echo "[bootstrap-dns] CA certificate: $CA_PATH"
 DNS_GRPC_ADDR="${DNS_GRPC_ADDR:-}"
 
 # Authenticate as sa to get a JWT token for RBAC-protected calls.
-# The sa password is saved during install at .bootstrap-sa-password.
+# Three strategies, tried in order:
+#   1. Use an existing SA token file (written by authentication service at bootstrap)
+#   2. Authenticate via `globular auth login` with saved or default Day-0 password
+#   3. Fall back to client certs only (may be denied by RBAC)
 SA_TOKEN=""
-SA_CRED_FILE="${STATE_DIR}/.bootstrap-sa-password"
-if [[ -f "$SA_CRED_FILE" ]]; then
-    SA_PASS=$(cat "$SA_CRED_FILE")
-    if [[ -n "$SA_PASS" ]]; then
-        echo "[bootstrap-dns] Authenticating as sa..."
-        SA_TOKEN=$(HOME="$CLIENT_HOME" globular --timeout 5s auth login --user sa --password "$SA_PASS" 2>/dev/null | grep "^Token:" | sed 's/^Token: //' || true)
-        if [[ -n "$SA_TOKEN" ]]; then
-            echo "[bootstrap-dns] ✓ Authenticated (token acquired)"
-        else
-            echo "[bootstrap-dns] ⚠ Authentication failed — will try client certs only"
+
+# Strategy 1: Look for pre-generated SA token files under ${STATE_DIR}/tokens/
+if [[ -d "${STATE_DIR}/tokens" ]]; then
+    for _tokfile in "${STATE_DIR}"/tokens/*_token; do
+        if [[ -f "$_tokfile" ]]; then
+            _tok=$(cat "$_tokfile" 2>/dev/null || true)
+            # Sanity check: JWT tokens have 3 dot-separated segments
+            if [[ "$_tok" == *.*.* ]]; then
+                SA_TOKEN="$_tok"
+                echo "[bootstrap-dns] ✓ Using existing SA token from ${_tokfile##*/}"
+                break
+            fi
         fi
+    done
+fi
+
+# Strategy 2: Authenticate via auth service (Day-0 default password: adminadmin)
+if [[ -z "$SA_TOKEN" ]]; then
+    SA_CRED_FILE="${STATE_DIR}/.bootstrap-sa-password"
+    SA_PASS=""
+    if [[ -f "$SA_CRED_FILE" ]]; then
+        SA_PASS=$(cat "$SA_CRED_FILE")
+    fi
+    SA_PASS="${SA_PASS:-adminadmin}"
+
+    echo "[bootstrap-dns] Authenticating as sa..."
+    SA_TOKEN=$(HOME="$CLIENT_HOME" globular --timeout 5s auth login --user sa --password "$SA_PASS" 2>/dev/null | grep "^Token:" | sed 's/^Token: //' || true)
+    if [[ -n "$SA_TOKEN" ]]; then
+        echo "[bootstrap-dns] ✓ Authenticated (token acquired)"
+    else
+        echo "[bootstrap-dns] ⚠ Authentication failed — will try client certs only"
     fi
 fi
 
@@ -115,6 +138,28 @@ _probe_dns_grpc() {
     return 0
 }
 
+# Ensure etcd is running before waiting for DNS — DNS cannot start without it.
+# During Day-0 install, etcd can hit systemd's restart rate limiter if TLS certs
+# were briefly unreadable during regeneration.  Reset and restart it.
+_ensure_etcd() {
+    if ! systemctl is-active --quiet globular-etcd.service 2>/dev/null; then
+        echo "[bootstrap-dns] etcd is not running — attempting recovery..."
+        systemctl reset-failed globular-etcd.service 2>/dev/null || true
+        # Ensure cert ownership is correct before starting
+        if [[ -d "${STATE_DIR}/pki" ]] && id globular >/dev/null 2>&1; then
+            chown -R globular:globular "${STATE_DIR}/pki" 2>/dev/null || true
+        fi
+        systemctl start globular-etcd.service 2>/dev/null || true
+        sleep 2
+        if systemctl is-active --quiet globular-etcd.service 2>/dev/null; then
+            echo "[bootstrap-dns] ✓ etcd recovered"
+        else
+            echo "[bootstrap-dns] ⚠ etcd still not running — DNS may fail to start"
+        fi
+    fi
+}
+_ensure_etcd
+
 echo "[bootstrap-dns] Waiting for DNS service to be ready..."
 
 # Wait for DNS service to be fully ready (gRPC responding on correct port + port 53 bound).
@@ -123,7 +168,15 @@ echo "[bootstrap-dns] Waiting for DNS service to be ready..."
 # 90s budget: etcd may wait up to 60s for TLS certs + DNS needs a few seconds after etcd.
 MAX_WAIT=90
 DNS_READY=0
+ETCD_RECOVERY_ATTEMPTED=0
 for i in $(seq 1 $MAX_WAIT); do
+    # If DNS still hasn't appeared after 30s, try recovering etcd again — it may
+    # have been rate-limited by systemd after the first _ensure_etcd call.
+    if [[ $i -eq 30 ]] && [[ $ETCD_RECOVERY_ATTEMPTED -eq 0 ]]; then
+        ETCD_RECOVERY_ATTEMPTED=1
+        _ensure_etcd
+    fi
+
     # Discover the actual DNS gRPC port on each iteration until found.
     # The service defaults to 10006 but reallocates if there is a port conflict.
     if [[ -z "$DNS_GRPC_ADDR" ]]; then

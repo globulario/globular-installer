@@ -6,6 +6,7 @@ metadata:
 service:
   name: media
   exec: media_server
+  runtime_local_dependencies: [ffmpeg, yt-dlp]
 
 steps:
   - id: ensure-user-group
@@ -82,7 +83,7 @@ steps:
           Group=globular
           WorkingDirectory={{.StateDir}}/media
           Environment=GLOBULAR_SERVICES_DIR={{.StateDir}}/services
-          Environment=GLOBULAR_BOOTSTRAP=1
+
           ExecStartPre=+/bin/sh -c 'mkdir -p {{.StateDir}}/media && chown globular:globular {{.StateDir}}/media'
           ExecStartPre=/bin/sh -c 'for i in $(seq 1 60); do [ -f /var/lib/globular/pki/issued/services/service.crt ] && exit 0; sleep 1; done; echo "TLS cert not ready"; exit 1'
           ExecStart={{.Prefix}}/bin/media_server

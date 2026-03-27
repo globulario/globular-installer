@@ -433,11 +433,10 @@ log_success "Bootstrap mode enabled: $BOOTSTRAP_FLAG (expires: $(date -d @$EXPIR
 
 # Write bootstrap sa credential file for non-interactive artifact publishing.
 # Permissions 0600, root-owned. Deleted in Phase 5 cleanup.
+# On Day-0 the sa account always starts with the default password (adminadmin).
+# No interactive prompt needed — it would block unattended installs for no benefit.
 BOOTSTRAP_SA_CRED="/var/lib/globular/.bootstrap-sa-password"
-if [[ -z "${GLOBULAR_PASSWORD:-}" ]]; then
-  read -rsp "Password for sa (admin): " GLOBULAR_PASSWORD
-  echo
-fi
+GLOBULAR_PASSWORD="${GLOBULAR_PASSWORD:-adminadmin}"
 if [[ -n "${GLOBULAR_PASSWORD:-}" ]]; then
   printf '%s' "$GLOBULAR_PASSWORD" > "$BOOTSTRAP_SA_CRED"
   chmod 0600 "$BOOTSTRAP_SA_CRED"
@@ -872,6 +871,22 @@ else
 fi
 
 log_step "DNS Bootstrap (Day-0)"
+
+# Ensure etcd is running — DNS depends on it and etcd may have been rate-limited
+# by systemd if TLS certs were briefly unreadable during regeneration.
+if ! systemctl is-active --quiet globular-etcd.service 2>/dev/null; then
+  log_substep "etcd not running — resetting and restarting..."
+  systemctl reset-failed globular-etcd.service 2>/dev/null || true
+  chown -R globular:globular /var/lib/globular/pki 2>/dev/null || true
+  systemctl start globular-etcd.service 2>/dev/null || true
+  sleep 3
+  if systemctl is-active --quiet globular-etcd.service 2>/dev/null; then
+    log_success "etcd recovered"
+  else
+    log_substep "Warning: etcd still not running — DNS bootstrap may fail"
+  fi
+fi
+
 # DNS zone/record registration is now handled by the dns package post-install script.
 # On Day 0, the dns service package includes scripts/post-install.sh which runs
 # after health_checks pass. Fallback to external script if post-install didn't run.
