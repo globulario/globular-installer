@@ -180,6 +180,14 @@ func buildStep(ctx *Context, ss spec.StepSpec) (Step, error) {
 		}
 		step.Packages = packages
 		return step, nil
+	case "install_local_debs":
+		step := NewInstallLocalDebsStep()
+		if sub, ok := ss.Params["debs_subdir"]; ok {
+			if s, ok := sub.(string); ok && s != "" {
+				step.DebsSubdir = s
+			}
+		}
+		return step, nil
 	case "fetch_file":
 		step, err := buildFetchFileStep(ss)
 		if err != nil {
@@ -246,7 +254,9 @@ func buildStep(ctx *Context, ss spec.StepSpec) (Step, error) {
 		if d, err := getDurationParam(ss.Params, "timeout"); err == nil && d > 0 {
 			timeout = d
 		}
-		return NewRunScriptStep(script, timeout), nil
+		step := NewRunScriptStep(script, timeout)
+		step.Required = getBoolParam(ss.Params, "required", false)
+		return step, nil
 	case "noop":
 		name := ss.ID
 		if name == "" {
