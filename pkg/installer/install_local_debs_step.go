@@ -62,7 +62,10 @@ func (s *InstallLocalDebsStep) Apply(ctx *Context) error {
 	log.Printf("[install-local-debs] installing %d .deb files from %s", len(debs), debsDir)
 
 	// Install all debs in one dpkg call for dependency resolution.
-	args := append([]string{"-i", "--force-confold"}, debs...)
+	// Use --force-confmiss to install config files that were removed (e.g. by
+	// a previous wipe). Without this, dpkg treats "deleted = old config" and
+	// skips creating the file, leaving /etc/<service>/ missing.
+	args := append([]string{"-i", "--force-confmiss"}, debs...)
 	cmd := exec.Command("dpkg", args...)
 	cmd.Env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
 	cmd.Stdout = os.Stdout
