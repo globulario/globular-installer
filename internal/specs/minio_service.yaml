@@ -2,10 +2,12 @@ version: 1
 
 metadata:
   name: minio
+  version: "0.0.1"
   kind: infrastructure
   description: "S3-compatible object storage server for backup artifacts, media files, and blob data."
   keywords: [minio, object-storage, s3, backup, blob]
   license: AGPL-3.0
+  entrypoint: minio
   provides_capabilities: [object-store]
   health_check:
     unit: globular-minio.service
@@ -122,8 +124,8 @@ steps:
         content: |
           [Unit]
           Description=Globular MinIO
-          After=network-online.target
-          Wants=network-online.target
+          After=network-online.target globular-etcd.service
+          Wants=network-online.target globular-etcd.service
 
           [Service]
           Type=simple

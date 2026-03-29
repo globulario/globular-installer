@@ -2,10 +2,13 @@ version: 1
 
 metadata:
   name: prometheus
+  version: "3.5.1"
   kind: infrastructure
   description: "Time-series monitoring and alerting system for cluster metrics collection."
   keywords: [prometheus, monitoring, metrics, alerting, time-series]
   license: Apache-2.0
+  entrypoint: prometheus
+  extra_binaries: [promtool]
 
 steps:
   - id: ensure-user-group
@@ -143,8 +146,8 @@ steps:
         content: |
           [Unit]
           Description=Globular Prometheus
-          After=network-online.target
-          Wants=network-online.target
+          After=network-online.target globular-etcd.service
+          Wants=network-online.target globular-etcd.service
 
           [Service]
           Type=simple

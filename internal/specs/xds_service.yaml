@@ -2,6 +2,7 @@ version: 1
 
 metadata:
   name: xds
+  version: "0.0.1"
   kind: service
   description: "xDS control plane that provides dynamic Envoy configuration for service discovery and routing."
   keywords: [xds, envoy, service-discovery, control-plane, routing]
@@ -115,8 +116,8 @@ steps:
         content: |
           [Unit]
           Description=Globular xDS Control Plane
-          After=network-online.target
-          Wants=network-online.target
+          After=network-online.target globular-etcd.service
+          Wants=network-online.target globular-etcd.service
 
           [Service]
           Type=simple
