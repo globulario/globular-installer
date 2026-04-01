@@ -222,6 +222,7 @@ func (s *NormalizeScyllaConfigStep) normalizeConfig(content string) (string, err
 	scanner := bufio.NewScanner(strings.NewReader(content))
 
 	// Track which settings we've set
+	setClusterName := false
 	setListenAddress := false
 	setRPCAddress := false
 	setBroadcastAddress := false
@@ -260,6 +261,13 @@ func (s *NormalizeScyllaConfigStep) normalizeConfig(content string) (string, err
 		// Skip native_transport_port_ssl if TLS is disabled
 		if strings.HasPrefix(trimmed, "native_transport_port_ssl:") && !clientEncryptionEnabled {
 			buf.WriteString("# " + line + " # Commented out: TLS disabled\n")
+			continue
+		}
+
+		// Ensure cluster_name is set
+		if strings.HasPrefix(trimmed, "cluster_name:") {
+			buf.WriteString("cluster_name: 'globular.internal'\n")
+			setClusterName = true
 			continue
 		}
 
@@ -325,6 +333,9 @@ func (s *NormalizeScyllaConfigStep) normalizeConfig(content string) (string, err
 
 	// Append missing settings if not found
 	result := buf.String()
+	if !setClusterName {
+		result = "cluster_name: 'globular.internal'\n" + result
+	}
 	if !setListenAddress && s.ListenAddress != "" {
 		result += fmt.Sprintf("\nlisten_address: %s\n", s.ListenAddress)
 	}
