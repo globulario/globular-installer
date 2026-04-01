@@ -213,6 +213,15 @@ fi
 systemctl daemon-reload
 echo ""
 
+# Disable ScyllaDB housekeeping timers — they auto-restart ScyllaDB
+# which breaks Raft quorum in multi-node clusters.
+for timer in scylla-housekeeping-restart.timer scylla-housekeeping-daily.timer; do
+    systemctl disable "$timer" 2>/dev/null || true
+    systemctl stop "$timer" 2>/dev/null || true
+    systemctl mask "$timer" 2>/dev/null || true
+done
+echo "  ✓ ScyllaDB housekeeping timers disabled"
+
 # Check if ScyllaDB is running
 if systemctl is-active --quiet scylla-server.service; then
     echo "→ Restarting ScyllaDB service..."
