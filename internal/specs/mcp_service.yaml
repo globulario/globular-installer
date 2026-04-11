@@ -91,7 +91,7 @@ steps:
             "max_result_count": 100,
             "max_file_read_bytes": 32768,
             "concurrency_limit": 10,
-            "http_listen_addr": ":10050",
+            "http_listen_addr": ":10260",
             "http_read_timeout": "30s",
             "http_write_timeout": "60s",
             "redact_fields": [],
@@ -117,12 +117,10 @@ steps:
           Type=simple
           User=globular
           Group=globular
-          WorkingDirectory={{.StateDir}}/mcp
+          WorkingDirectory={{.StateDir}}
           ExecStart={{.Prefix}}/bin/mcp
-          Restart=always
+          Restart=on-failure
           RestartSec=5
-          StartLimitIntervalSec=300
-          StartLimitBurst=10
           LimitNOFILE=524288
           Environment=GLOBULAR_MCP_CONFIG={{.StateDir}}/mcp/config.json
           Environment=GLOBULAR_BOOTSTRAP=1
@@ -135,7 +133,7 @@ steps:
     services:
       - globular-mcp.service
 
-  - id: start-mcp
-    type: start_services
-    services:
-      - globular-mcp.service
+  # No start_services or health_checks — the MCP server starts after all
+  # dependencies (etcd, auth, etc.) are up. During Day-0, other services
+  # aren't running yet. Systemd will start it on next boot or the Day-0
+  # script starts all services together at the end.
