@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/globulario/globular-installer/pkg/assets"
+	"github.com/globulario/globular-installer/internal/assets"
 	"github.com/globulario/globular-installer/pkg/installer/manifest"
 	"github.com/globulario/globular-installer/pkg/installer/spec"
 	"github.com/globulario/globular-installer/pkg/platform"
@@ -157,7 +157,22 @@ func NewContext(opts Options) (*Context, error) {
 
 	minioDataDir := opts.MinioDataDir
 	if minioDataDir == "" {
-		minioDataDir = filepath.Join(stateDir, "minio", "data")
+		// Auto-pick a non-root disk when one is available; otherwise fall
+		// back to {StateDir}/minio/data on the root filesystem. In
+		// interactive mode we then offer the user a chance to confirm or
+		// change the pick (with a table of candidates + free/total bytes),
+		// so they always see what the installer is about to use.
+		defaultDir := filepath.Join(stateDir, "minio", "data")
+		picked, picker := pickBestMinioDataDir(defaultDir)
+		minioDataDir = picked
+		if !opts.NonInteractive {
+			if candidates := scanDataMounts(); len(candidates) > 0 {
+				minioDataDir = promptUserForMinioDisk(defaultDir, candidates, picker)
+			}
+		} else if logger != nil && picker != nil {
+			logger.Infof("auto-selected MinIO data dir %s (%s, %s free)",
+				minioDataDir, picker.FSType, fmtHumanBytes(picker.FreeBytes))
+		}
 	}
 
 	nodeIP := "127.0.0.1"

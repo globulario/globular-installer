@@ -5,7 +5,7 @@ echo ""
 echo "━━━ Fixing etcd Client Certificate Requirement ━━━"
 echo ""
 
-ETCD_CONFIG="/var/lib/globular/etcd/etcd.yaml"
+ETCD_CONFIG="/var/lib/globular/config/etcd.yaml"
 
 if [[ $EUID -ne 0 ]]; then
     echo "ERROR: This script must be run as root (use sudo)" >&2

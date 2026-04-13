@@ -2,6 +2,7 @@ version: 1
 
 metadata:
   name: scylladb
+  version: "2025.3.8"
   kind: infrastructure
   description: "High-performance NoSQL database (Cassandra-compatible) for persistent service data."
   keywords: [scylladb, database, nosql, cassandra, persistence]
@@ -12,16 +13,19 @@ metadata:
   health_check:
     unit: scylla-server.service
     port: 9042
+  # Bundle .deb files at build time so install doesn't need internet access.
+  bundle_debs:
+    - scylla
+    - scylla-server
+    - scylla-conf
+    - scylla-cqlsh
+    - scylla-python3
 
 steps:
   - id: ensure-dirs
     type: ensure_dirs
     dirs:
       - path: "{{.Prefix}}/bin"
-        owner: root
-        group: root
-        mode: 0755
-      - path: /etc/apt/keyrings
         owner: root
         group: root
         mode: 0755
@@ -34,40 +38,28 @@ steps:
     install_spec: false
     install_systemd: false
 
-  # Install ScyllaDB GPG key — required before apt can use the repo.
-  # The repo file references signed-by=/etc/apt/keyrings/scylladb.gpg
-  # but the join script does not import this key (Day-0 bootstrap does).
-  # Downloads the armored key from ScyllaDB and converts to binary gpg format.
-  - id: install-scylladb-gpg-key
+  # CRITICAL: Prevent dpkg from auto-starting ScyllaDB during package install.
+  # ScyllaDB's first start bootstraps an irreversible Raft topology. If it starts
+  # with default config (listen_address: localhost, self-only seeds), the node
+  # becomes a standalone cluster that can NEVER join another cluster.
+  # The config must be correct BEFORE the first start.
+  - id: prevent-autostart
     type: run_script
-    script: install-gpg-key.sh
+    script: prevent-autostart.sh
 
-  # Install ScyllaDB apt repository
-  - id: install-scylladb-repo
-    type: install_files
-    files:
-      - path: /etc/apt/sources.list.d/scylla.list
-        owner: root
-        group: root
-        mode: 0644
-        atomic: true
-        skip_if_exists: true
-        content: |
-          deb [arch=amd64,arm64 signed-by=/etc/apt/keyrings/scylladb.gpg] https://downloads.scylladb.com/downloads/scylla/deb/debian-ubuntu/scylladb-2025.3 stable main
+  # Install .deb packages bundled in the artifact (offline, no internet needed).
+  - id: install-scylladb-debs
+    type: install_local_debs
 
-  # Install ScyllaDB OS packages (non-interactive via --force-confold)
-  - id: install-scylladb-packages
-    type: install_os_packages
-    packages:
-      - scylla
-      - scylla-server
-      - scylla-conf
-      - scylla-cqlsh
-      - scylla-python3
+  # Remove the autostart prevention now that dpkg is done.
+  # Post-install will handle the controlled first start.
+  - id: allow-autostart
+    type: run_script
+    script: allow-autostart.sh
 
-  # Post-install: TLS certs, data dirs, env file, systemd overrides, start.
-  # IMPORTANT: This script must NOT overwrite /etc/scylla/scylla.yaml if
-  # it already exists (controller-rendered config is the source of truth).
+  # Post-install: TLS certs, data dirs, env file, config, controlled first start.
+  # This script ensures ScyllaDB data is clean and config is correct before
+  # the first start. ScyllaDB's Raft bootstrap is a one-way door.
   - id: run-post-install
     type: run_script
     script: post-install.sh

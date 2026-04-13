@@ -1,14 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INSTALLER_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-PKG_DIR="${PKG_DIR:-"$INSTALLER_ROOT/internal/assets/packages"}"
+# ── Globular Day-0 Uninstaller ──────────────────────────────────────────────
+#
+# Discovers what is installed from systemd unit state and known binary paths,
+# then stops, disables, and removes everything. Does NOT require .tgz package
+# files to be present.
 
-INSTALLER_BIN="$INSTALLER_ROOT/bin/globular-installer"
-if [[ ! -x "$INSTALLER_BIN" ]]; then
-  INSTALLER_BIN="$(command -v globular-installer || true)"
-fi
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+PREFIX="${PREFIX:-/usr/lib/globular}"
+STATE_DIR="${STATE_DIR:-/var/lib/globular}"
+CONFIG_DIR="${CONFIG_DIR:-/etc/globular}"
+SYSTEMD_DIR="/etc/systemd/system"
+BIN_DIR="$PREFIX/bin"
+SPEC_DIR="$STATE_DIR/specs"
 
 # Visual helper functions
 die() { echo "  ✗ ERROR: $*" >&2; exit 1; }
@@ -18,336 +24,306 @@ log_warn() { echo "  ⚠ $*"; }
 log_step() { echo ""; echo "━━━ $* ━━━"; echo ""; }
 log_substep() { echo "  • $*"; }
 
-[[ -d "$PKG_DIR" ]] || die "Package directory not found: $PKG_DIR"
-[[ -n "$INSTALLER_BIN" ]] && [[ -x "$INSTALLER_BIN" ]] || die "globular-installer not found; set INSTALLER_BIN or build ./bin/globular-installer"
+# ── Service registry ─────────────────────────────────────────────────────────
+# Each entry: "display_name|unit1 unit2|binary1 binary2"
+# Units and binaries that don't exist on disk are silently skipped.
+# Order: reverse dependency (leaf services first, infrastructure last).
+SERVICES=(
+  # AI services
+  "ai-watcher|globular-ai-watcher.service|ai_watcher_server"
+  "ai-executor|globular-ai-executor.service|ai_executor_server"
+  "ai-router|globular-ai-router.service|ai_router_server"
+  "ai-memory|globular-ai-memory.service|ai_memory_server"
+
+  # Application services
+  "scylla-manager|globular-scylla-manager.service|"
+  "scylla-manager-agent|globular-scylla-manager-agent.service|"
+  "backup-manager|globular-backup-manager.service|backup_manager_server"
+  "file|globular-file.service|file_server"
+  "log|globular-log.service|log_server"
+  "monitoring|globular-monitoring.service|monitoring_server"
+  "prometheus|globular-prometheus.service|prometheus"
+  "sidekick|globular-sidekick.service|sidekick"
+  "node-exporter|globular-node-exporter.service|node_exporter"
+
+  # Optional services
+  "blog|globular-blog.service|blog_server"
+  "catalog|globular-catalog.service|catalog_server"
+  "conversation|globular-conversation.service|conversation_server"
+  "echo|globular-echo.service|echo_server"
+  "ldap|globular-ldap.service|ldap_server"
+  "media|globular-media.service|media_server"
+  "persistence|globular-persistence.service|persistence_server"
+  "search|globular-search.service|search_server"
+  "sql|globular-sql.service|sql_server"
+  "storage|globular-storage.service|storage_server"
+  "title|globular-title.service|title_server"
+  "torrent|globular-torrent.service|torrent_server"
+
+  # Core services
+  "event|globular-event.service|event_server"
+  "dns|globular-dns.service|dns_server"
+  "repository|globular-repository.service|repository_server"
+  "discovery|globular-discovery.service|discovery_server"
+  "authentication|globular-authentication.service|authentication_server"
+  "rbac|globular-rbac.service|rbac_server"
+  "resource|globular-resource.service|resource_server"
+  "mcp|globular-mcp.service|mcp"
+
+  # CLI tools (no units, just binaries)
+  "yt-dlp||yt-dlp"
+  "ffmpeg||ffmpeg ffprobe"
+  "sha256sum||sha256sum"
+  "sctool||sctool"
+  "restic||restic"
+  "rclone||rclone"
+  "etcdctl||etcdctl"
+  "globular-cli||globularcli"
+  "mc||mc"
+
+  # Control plane
+  "cluster-doctor|globular-cluster-doctor.service|cluster_doctor_server"
+  "cluster-controller|globular-cluster-controller.service|cluster_controller_server"
+  "node-agent|globular-node-agent.service|node_agent_server"
+  "gateway|globular-gateway.service|gateway"
+
+  # Data plane
+  "xds|globular-xds.service|xds_server"
+  "envoy|globular-envoy.service envoy.service|envoy"
+
+  # Infrastructure
+  "minio|globular-minio.service|minio"
+  "etcd|globular-etcd.service|etcd"
+  "scylladb|scylla-server.service|"
+)
+
+FAILED=0
+STOPPED=0
+REMOVED=0
+SKIPPED=0
+
+# ── Banner ───────────────────────────────────────────────────────────────────
 
 echo ""
 echo "╔════════════════════════════════════════════════════════════════╗"
-echo "║          GLOBULAR DAY-0 UNINSTALLATION                         ║"
+echo "║          GLOBULAR DAY-0 UNINSTALLATION                       ║"
 echo "╚════════════════════════════════════════════════════════════════╝"
 echo ""
 
-detect_uninstall_cmd() {
-  if "$INSTALLER_BIN" uninstall --help >/dev/null 2>&1; then
-    if "$INSTALLER_BIN" uninstall --help 2>&1 | grep -q -- "--package"; then
-      echo "uninstall_flag"; return 0
-    fi
-    echo "uninstall_arg"; return 0
-  fi
-
-  die "Could not detect uninstall command form for $INSTALLER_BIN"
-}
-
-UNINSTALL_MODE="$(detect_uninstall_cmd)"
-TOLERATE_NOT_INSTALLED="${TOLERATE_NOT_INSTALLED:-1}"
-UNINSTALL_TIMEOUT="${UNINSTALL_TIMEOUT:-120}"
-TIMEOUT_BIN="${TIMEOUT_BIN:-$(command -v timeout || true)}"
-
-if [[ -z "$TIMEOUT_BIN" ]]; then
-  die "timeout command not found; install coreutils (timeout) or set TIMEOUT_BIN"
-fi
-
-FAILED=0
-UNINSTALLED=0
-SKIPPED=0
-
 log_step "Configuration"
-log_info "Installer: $(basename "$INSTALLER_BIN")"
-log_info "Uninstall mode: $UNINSTALL_MODE"
-log_info "Package directory: $PKG_DIR"
-log_info "Timeout: ${UNINSTALL_TIMEOUT}s"
+log_info "Prefix:     $PREFIX"
+log_info "State dir:  $STATE_DIR"
+log_info "Systemd:    $SYSTEMD_DIR"
 
-# Check for external domain registrations
+# ── External domain warning ──────────────────────────────────────────────────
+
 log_step "External Domain Warning"
 echo ""
-echo "⚠️  IMPORTANT: External Domain DNS Records"
-echo ""
-echo "This uninstall script removes local services and etcd data, but does NOT"
-echo "automatically clean up external DNS records published to DNS providers"
-echo "(CloudFlare, Route53, etc.)."
+echo "  This script removes local services and data, but does NOT clean up"
+echo "  external DNS records published to DNS providers (CloudFlare, etc.)."
 echo ""
 
-# Try to check if domains are registered (if globular CLI is available)
 if command -v globular >/dev/null 2>&1; then
   DOMAIN_COUNT=0
   if systemctl is-active --quiet globular-etcd 2>/dev/null; then
-    # Try to query domains (may fail if certs not set up)
-    DOMAIN_CHECK=$(globular domain status 2>&1 | grep -c "globular\\.app\|globular\\.cloud" || echo "0")
-    if [[ "$DOMAIN_CHECK" != "0" ]]; then
-      DOMAIN_COUNT=$DOMAIN_CHECK
-    fi
+    DOMAIN_COUNT=$(globular domain status 2>&1 \
+      | grep -cE "globular\\.app|globular\\.cloud" || true)
+    DOMAIN_COUNT="${DOMAIN_COUNT:-0}"
   fi
 
-  if [[ $DOMAIN_COUNT -gt 0 ]]; then
-    echo "  ⚠️  Detected external domain registrations in etcd!"
+  if [[ "$DOMAIN_COUNT" -gt 0 ]] 2>/dev/null; then
+    echo "  ⚠️  Detected $DOMAIN_COUNT external domain registration(s)!"
     echo ""
-    echo "  To properly clean up external DNS records, run BEFORE uninstalling:"
-    echo ""
-    echo "    globular domain status                              # List domains"
-    echo "    globular domain remove --fqdn <domain> --cleanup-dns  # Remove each"
-    echo ""
-    echo "  Without --cleanup-dns flag, DNS records will persist in your provider"
-    echo "  and domains will continue to resolve even after uninstall."
-    echo ""
-  else
-    echo "  ℹ️  No external domains detected in current etcd state"
-    echo "     (or unable to query - etcd may not be running)"
+    echo "  Run BEFORE uninstalling:"
+    echo "    globular domain status"
+    echo "    globular domain remove --fqdn <domain> --cleanup-dns"
     echo ""
   fi
-else
-  echo "  ℹ️  Cannot check for external domains (globular CLI not available)"
-  echo ""
 fi
 
-echo "If you previously registered external domains (globular.app, globular.cloud, etc.),"
-echo "you may need to manually remove DNS records from your DNS provider after uninstall."
-echo ""
-echo "DNS Provider Interfaces:"
-echo "  - CloudFlare: https://dash.cloudflare.com → DNS → Records"
-echo "  - Route53:    AWS Console → Route53 → Hosted Zones"
-echo "  - Other:      Check your DNS provider's management interface"
+echo "  If you registered external domains, manually remove DNS records after uninstall."
 echo ""
 
 # Give user a chance to abort
-if [[ -t 0 ]]; then  # Check if running interactively
+if [[ -t 0 ]]; then
   echo "Press Enter to continue with uninstall, or Ctrl+C to abort..."
   read -r
 else
   echo "Non-interactive mode - continuing in 5 seconds... (Ctrl+C to abort)"
   sleep 5
 fi
-echo ""
 
-pkg_base_from_filename() {
-  local base
-  base="$(basename "$1")"
-  echo "$base" | awk -F'_' '{print $1}'
+# ── Helper: check if a unit is known to systemd ─────────────────────────────
+
+unit_exists() {
+  systemctl list-unit-files "$1" --no-pager --no-legend 2>/dev/null | grep -q "$1" \
+    || systemctl list-units --all --no-pager --no-legend --plain 2>/dev/null | grep -q "$1"
 }
 
-units_for_pkg() {
-  case "$1" in
-    service.etcd)               echo "globular-etcd.service" ;;
-    service.minio)              echo "globular-minio.service" ;;
-    service.envoy)              echo "globular-envoy.service envoy.service" ;;
-    service.xds)                echo "globular-xds.service" ;;
-    service.gateway)            echo "globular-gateway.service" ;;
-    service.node-agent)         echo "globular-node-agent.service" ;;
-    service.cluster-controller) echo "globular-cluster-controller.service" ;;
-    service.discovery)          echo "globular-discovery.service" ;;
-    service.repository)         echo "globular-repository.service" ;;
-    service.dns)                echo "globular-dns.service" ;;
-    service.authentication)     echo "globular-authentication.service" ;;
-    service.rbac)               echo "globular-rbac.service" ;;
-    service.resource)           echo "globular-resource.service" ;;
-    service.event)              echo "globular-event.service" ;;
-    service.log)                echo "globular-log.service" ;;
-    service.file)               echo "globular-file.service" ;;
-    service.persistence)        echo "globular-persistence.service" ;;
-    service.ldap)               echo "globular-ldap.service" ;;
-    service.blog)               echo "globular-blog.service" ;;
-    service.catalog)            echo "globular-catalog.service" ;;
-    service.conversation)       echo "globular-conversation.service" ;;
-    service.echo)               echo "globular-echo.service" ;;
-    service.media)              echo "globular-media.service" ;;
-    service.monitoring)         echo "globular-monitoring.service" ;;
-    service.search)             echo "globular-search.service" ;;
-    service.sql)                echo "globular-sql.service" ;;
-    service.storage)            echo "globular-storage.service" ;;
-    service.title)              echo "globular-title.service" ;;
-    service.torrent)            echo "globular-torrent.service" ;;
-    *)                          echo "" ;;
-  esac
-}
+# ── Phase 1: Stop and disable services ───────────────────────────────────────
 
-is_installed() {
-  local name="$1"
-  local units
-  units="$(units_for_pkg "$name")"
+log_step "Stopping Services"
 
-  local unit_files units_all
-  unit_files="$(LC_ALL=C systemctl list-unit-files --no-pager --no-legend 2>/dev/null | awk '{print $1}')"
-  units_all="$(LC_ALL=C systemctl list-units --all --no-pager --no-legend --plain 2>/dev/null \
-    | awk '{print $1}' \
-    | sed 's/^●//')"
+for entry in "${SERVICES[@]}"; do
+  IFS='|' read -r name units bins <<< "$entry"
+  [[ -z "$units" ]] && continue
 
-  if [[ -n "$units" ]]; then
-    for u in $units; do
-      if echo "$unit_files" | grep -qx "$u"; then
-        return 0
-      fi
-      if echo "$units_all" | grep -qx "$u"; then
-        return 0
-      fi
-    done
-    return 1
-  fi
-  local st
-  st="$("$INSTALLER_BIN" status 2>&1 || true)"
-  echo "$st" | grep -qF "$name"
-}
-
-run_uninstall() {
-  local pkgfile="$1"
-  local pkgname
-  pkgname="$(pkg_base_from_filename "$pkgfile")"
-  local display_name
-  display_name="$(basename "$pkgfile" .tgz | sed 's/_0\.0\.1_linux_amd64$//' | sed 's/_[0-9.]*_linux_amd64$//' | sed 's/^service\.//')"
-
-  local out rc
-  local units
-  units="$(units_for_pkg "$pkgname")"
-
-  # Stop and disable systemd units first
-  if [[ -n "$units" ]]; then
-    for u in $units; do
-      systemctl stop "$u" >/dev/null 2>&1 || true
-      systemctl disable "$u" >/dev/null 2>&1 || true
-    done
-    systemctl daemon-reload >/dev/null 2>&1 || true
-  fi
-
-  if ! is_installed "$pkgname"; then
-    log_substep "Not detected as installed, attempting anyway: $display_name"
-  fi
-
-  try_cmd() {
-    out="$("$@" 2>&1)"
-    rc=$?
-    return 0
-  }
-
-  set +e
-  case "$UNINSTALL_MODE" in
-    uninstall_flag)
-      if [[ -n "$TIMEOUT_BIN" ]]; then
-        try_cmd "$TIMEOUT_BIN" "$UNINSTALL_TIMEOUT" "$INSTALLER_BIN" --non-interactive uninstall --package "$pkgfile"
-      else
-        try_cmd "$INSTALLER_BIN" --non-interactive uninstall --package "$pkgfile"
-      fi
-      ;;
-    uninstall_arg)
-      try_cmd "$TIMEOUT_BIN" "$UNINSTALL_TIMEOUT" "$INSTALLER_BIN" --non-interactive uninstall "$pkgfile"
-      ;;
-    *) out="Unknown uninstall mode: $UNINSTALL_MODE"; rc=2 ;;
-  esac
-  set -e
-
-  if [[ $rc -eq 0 ]]; then
-    log_success "$display_name"
-    UNINSTALLED=$((UNINSTALLED + 1))
-    return 0
-  fi
-
-  if [[ "$TOLERATE_NOT_INSTALLED" == "1" ]] && echo "$out" | grep -qiE "not installed|no such|does not exist"; then
-    log_substep "Not installed (skipped): $display_name"
-    SKIPPED=$((SKIPPED + 1))
-    return 0
-  fi
-
-  if echo "$out" | grep -qiE 'plan "uninstall" has no steps|has no steps'; then
-    log_substep "No uninstall steps, retrying by name: $display_name"
-    set +e
-    out="$("$INSTALLER_BIN" uninstall "$pkgname" 2>&1)"; rc=$?
-    set -e
-    if [[ $rc -eq 0 ]]; then
-      log_success "$display_name (by name)"
-      UNINSTALLED=$((UNINSTALLED + 1))
-      return 0
+  for u in $units; do
+    if unit_exists "$u"; then
+      log_info "Stopping $u"
+      systemctl stop "$u" 2>/dev/null || log_warn "Could not stop $u"
+      systemctl disable "$u" 2>/dev/null || log_warn "Could not disable $u"
+      STOPPED=$((STOPPED + 1))
     fi
-    if echo "$out" | grep -qiE 'plan "uninstall" has no steps|has no steps'; then
-      log_substep "No uninstall steps for $display_name, skipping"
-      SKIPPED=$((SKIPPED + 1))
-      return 0
-    fi
-  fi
-
-  echo "$out" >&2
-  log_warn "Failed to uninstall $display_name"
-  FAILED=1
-  return 0
-}
-
-# Uninstall order: reverse dependency order (application services, then infrastructure)
-REMOVE_ORDER=(
-  # Application services (high-level)
-  "service.file_0.0.1_linux_amd64.tgz"
-  "service.log_0.0.1_linux_amd64.tgz"
-  "service.event_0.0.1_linux_amd64.tgz"
-
-  # Optional services
-  "service.blog_0.0.1_linux_amd64.tgz"
-  "service.catalog_0.0.1_linux_amd64.tgz"
-  "service.conversation_0.0.1_linux_amd64.tgz"
-  "service.echo_0.0.1_linux_amd64.tgz"
-  "service.ldap_0.0.1_linux_amd64.tgz"
-  "service.media_0.0.1_linux_amd64.tgz"
-  "service.monitoring_0.0.1_linux_amd64.tgz"
-  "service.persistence_0.0.1_linux_amd64.tgz"
-  "service.search_0.0.1_linux_amd64.tgz"
-  "service.sql_0.0.1_linux_amd64.tgz"
-  "service.storage_0.0.1_linux_amd64.tgz"
-  "service.title_0.0.1_linux_amd64.tgz"
-  "service.torrent_0.0.1_linux_amd64.tgz"
-
-  # Core services
-  "service.dns_0.0.1_linux_amd64.tgz"
-  "service.repository_0.0.1_linux_amd64.tgz"
-  "service.discovery_0.0.1_linux_amd64.tgz"
-  "service.authentication_0.0.1_linux_amd64.tgz"
-  "service.rbac_0.0.1_linux_amd64.tgz"
-  "service.resource_0.0.1_linux_amd64.tgz"
-
-  # CLI tools
-  "service.globular-cli-cmd_0.0.1_linux_amd64.tgz"
-  "service.mc-cmd_0.0.1_linux_amd64.tgz"
-
-  # Control plane
-  "service.cluster-controller_0.0.1_linux_amd64.tgz"
-  "service.node-agent_0.0.1_linux_amd64.tgz"
-  "service.gateway_0.0.1_linux_amd64.tgz"
-
-  # Data plane
-  "service.xds_0.0.1_linux_amd64.tgz"
-  "service.envoy_1.35.3_linux_amd64.tgz"
-
-  # Infrastructure
-  "service.minio_0.0.1_linux_amd64.tgz"
-  "service.etcd_3.5.14_linux_amd64.tgz"
-)
-
-log_step "Uninstalling Services"
-
-for f in "${REMOVE_ORDER[@]}"; do
-  pkg_path="$PKG_DIR/$f"
-  if [[ ! -f "$pkg_path" ]]; then
-    log_substep "Package not found (skipped): $(basename "$f" .tgz | sed 's/_0\.0\.1_linux_amd64$//' | sed 's/_[0-9.]*_linux_amd64$//' | sed 's/^service\.//')"
-    SKIPPED=$((SKIPPED + 1))
-    continue
-  fi
-  run_uninstall "$pkg_path"
+  done
 done
 
-echo ""
+# Catch any globular-* units not in our registry
+while IFS= read -r extra_unit; do
+  [[ -z "$extra_unit" ]] && continue
+  # Check if already handled
+  already=0
+  for entry in "${SERVICES[@]}"; do
+    IFS='|' read -r _ units _ <<< "$entry"
+    for u in $units; do
+      [[ "$u" == "$extra_unit" ]] && already=1
+    done
+  done
+  if [[ $already -eq 0 ]]; then
+    log_info "Stopping extra unit: $extra_unit"
+    systemctl stop "$extra_unit" 2>/dev/null || true
+    systemctl disable "$extra_unit" 2>/dev/null || true
+    STOPPED=$((STOPPED + 1))
+  fi
+done < <(systemctl list-unit-files 'globular-*' --no-pager --no-legend 2>/dev/null | awk '{print $1}')
+
+systemctl daemon-reload 2>/dev/null || true
+
+# ── Phase 1b: Force-kill any surviving processes ─────────────────────────────
+# Some services hold listeners open and don't exit on SIGTERM. Kill them.
+
+log_step "Force-Killing Surviving Processes"
+
+for entry in "${SERVICES[@]}"; do
+  IFS='|' read -r name units bins <<< "$entry"
+  [[ -z "$bins" ]] && continue
+
+  for b in $bins; do
+    if pgrep -x "$b" >/dev/null 2>&1; then
+      log_warn "Process $b still running — sending SIGKILL"
+      pkill -9 -x "$b" 2>/dev/null || true
+    fi
+  done
+done
+
+# Catch any remaining globular processes not in registry
+remaining_procs=$(pgrep -a '_server$' 2>/dev/null | grep -v grep || true)
+if [[ -n "$remaining_procs" ]]; then
+  log_warn "Killing remaining *_server processes:"
+  echo "$remaining_procs" | while read -r pid cmd; do
+    log_substep "PID $pid: $cmd"
+    kill -9 "$pid" 2>/dev/null || true
+  done
+fi
+
+# Wait briefly for processes to die
+sleep 1
+
+# ── Phase 2: Remove unit files ───────────────────────────────────────────────
+
+log_step "Removing Unit Files"
+
+for entry in "${SERVICES[@]}"; do
+  IFS='|' read -r name units bins <<< "$entry"
+  [[ -z "$units" ]] && continue
+
+  for u in $units; do
+    unit_path="$SYSTEMD_DIR/$u"
+    if [[ -f "$unit_path" ]]; then
+      rm -f "$unit_path"
+      log_success "Removed $u"
+      REMOVED=$((REMOVED + 1))
+    fi
+  done
+done
+
+# Catch any remaining globular-* unit files
+for unit_file in "$SYSTEMD_DIR"/globular-*.service; do
+  [[ -f "$unit_file" ]] || continue
+  rm -f "$unit_file"
+  log_success "Removed extra: $(basename "$unit_file")"
+  REMOVED=$((REMOVED + 1))
+done
+
+systemctl daemon-reload 2>/dev/null || true
+
+# ── Phase 3: Remove binaries ─────────────────────────────────────────────────
+
+log_step "Removing Binaries"
+
+for entry in "${SERVICES[@]}"; do
+  IFS='|' read -r name units bins <<< "$entry"
+  [[ -z "$bins" ]] && continue
+
+  for b in $bins; do
+    bin_path="$BIN_DIR/$b"
+    if [[ -f "$bin_path" ]]; then
+      rm -f "$bin_path"
+      log_success "Removed $b"
+      REMOVED=$((REMOVED + 1))
+    fi
+  done
+done
+
+# Remove any remaining binaries in the bin directory
+if [[ -d "$BIN_DIR" ]]; then
+  remaining=$(find "$BIN_DIR" -type f 2>/dev/null | wc -l)
+  if [[ "$remaining" -gt 0 ]]; then
+    log_info "Removing $remaining remaining file(s) in $BIN_DIR"
+    rm -rf "$BIN_DIR"
+    REMOVED=$((REMOVED + remaining))
+  fi
+fi
+
+# ── Phase 4: Remove installed specs ──────────────────────────────────────────
+
+if [[ -d "$SPEC_DIR" ]]; then
+  log_step "Removing Installed Specs"
+  spec_count=$(find "$SPEC_DIR" -type f 2>/dev/null | wc -l)
+  if [[ "$spec_count" -gt 0 ]]; then
+    rm -rf "$SPEC_DIR"
+    log_success "Removed $spec_count spec file(s)"
+  fi
+fi
+
+# ── Phase 5: Cleanup ─────────────────────────────────────────────────────────
+
 log_step "Cleanup"
 
-# Remove state directories if they exist
-if [[ -d /var/lib/globular ]]; then
-  log_info "Removing /var/lib/globular..."
-  rm -rf /var/lib/globular || log_warn "Could not remove /var/lib/globular"
+# Remove state directory
+if [[ -d "$STATE_DIR" ]]; then
+  log_info "Removing $STATE_DIR..."
+  rm -rf "$STATE_DIR" || log_warn "Could not remove $STATE_DIR"
   log_success "State directory removed"
 else
   log_substep "State directory already removed"
 fi
 
-if [[ -d /etc/globular ]]; then
-  log_info "Removing /etc/globular..."
-  rm -rf /etc/globular || log_warn "Could not remove /etc/globular"
+# Remove config directory
+if [[ -d "$CONFIG_DIR" ]]; then
+  log_info "Removing $CONFIG_DIR..."
+  rm -rf "$CONFIG_DIR" || log_warn "Could not remove $CONFIG_DIR"
   log_success "Config directory removed"
 else
   log_substep "Config directory already removed"
 fi
 
-# Remove user client certificates (prevents stale certs on reinstall)
+# Remove prefix directory if empty
+if [[ -d "$PREFIX" ]]; then
+  rmdir "$PREFIX" 2>/dev/null && log_success "Removed empty $PREFIX" || true
+fi
+
+# Remove user client certificates
 log_info "Removing user client certificates..."
 CERT_CLEANUP_COUNT=0
 for user_home in /home/*; do
@@ -359,7 +335,6 @@ for user_home in /home/*; do
   fi
 done
 
-# Also clean root's certificates
 if [[ -d /root/.config/globular ]]; then
   log_substep "Cleaning certificates for root"
   rm -rf /root/.config/globular || log_warn "Could not remove /root/.config/globular"
@@ -372,7 +347,7 @@ else
   log_substep "No user certificates found"
 fi
 
-# Remove globular user/group if they exist
+# Remove globular user/group
 if id globular >/dev/null 2>&1; then
   log_info "Removing globular user..."
   userdel globular 2>/dev/null || log_warn "Could not remove globular user"
@@ -389,29 +364,14 @@ else
   log_substep "Group already removed"
 fi
 
+# ── Summary ──────────────────────────────────────────────────────────────────
+
 echo ""
 echo "╔════════════════════════════════════════════════════════════════╗"
-
-if [[ "$FAILED" -ne 0 ]]; then
-  echo "║     ⚠ UNINSTALL COMPLETED WITH WARNINGS                       ║"
-  echo "╚════════════════════════════════════════════════════════════════╝"
-  echo ""
-  echo "Summary:"
-  echo "  Uninstalled: $UNINSTALLED packages"
-  echo "  Skipped:     $SKIPPED packages"
-  echo "  Warnings:    Some services could not be removed"
-  echo ""
-  echo "Check warnings above for details."
-  exit 1
-else
-  echo "║     ✓ UNINSTALL COMPLETE                                       ║"
-  echo "╚════════════════════════════════════════════════════════════════╝"
-  echo ""
-  echo "Summary:"
-  echo "  Uninstalled: $UNINSTALLED packages"
-  echo "  Skipped:     $SKIPPED packages"
-  echo ""
-  echo "  🎉 System cleaned successfully!"
-fi
-
+echo "║     ✓ UNINSTALL COMPLETE                                     ║"
+echo "╚════════════════════════════════════════════════════════════════╝"
+echo ""
+echo "Summary:"
+echo "  Stopped:  $STOPPED unit(s)"
+echo "  Removed:  $REMOVED file(s)"
 echo ""

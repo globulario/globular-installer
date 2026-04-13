@@ -2,8 +2,8 @@ version: 1
 
 metadata:
   name: node_agent
-  extra_binaries:
-    - globular-upgrader
+  profiles: [core, compute]
+  priority: 1000
 
 service:
   name: node_agent
@@ -82,9 +82,9 @@ steps:
           Type=simple
           User=root
           Group=root
-          WorkingDirectory={{.StateDir}}/node_agent
+          WorkingDirectory={{.StateDir}}
           Environment=GLOBULAR_SERVICES_DIR={{.StateDir}}/services
-          Environment=GLOBULAR_BOOTSTRAP=1
+
           ExecStartPre=+/bin/sh -c 'mkdir -p {{.StateDir}}/node_agent && chown root:root {{.StateDir}}/node_agent'
           ExecStartPre=/bin/sh -c 'for i in $(seq 1 60); do [ -f /var/lib/globular/pki/issued/services/service.crt ] && exit 0; sleep 1; done; echo "TLS cert not ready"; exit 1'
           ExecStart={{.Prefix}}/bin/node_agent_server

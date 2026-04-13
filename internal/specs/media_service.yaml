@@ -2,11 +2,12 @@ version: 1
 
 metadata:
   name: media
+  profiles: [core, compute]
+  priority: 1000
 
 service:
   name: media
   exec: media_server
-  runtime_local_dependencies: [ffmpeg, yt-dlp]
 
 steps:
   - id: ensure-user-group
@@ -81,7 +82,7 @@ steps:
           Type=simple
           User=globular
           Group=globular
-          WorkingDirectory={{.StateDir}}/media
+          WorkingDirectory={{.StateDir}}
           Environment=GLOBULAR_SERVICES_DIR={{.StateDir}}/services
 
           ExecStartPre=+/bin/sh -c 'mkdir -p {{.StateDir}}/media && chown globular:globular {{.StateDir}}/media'

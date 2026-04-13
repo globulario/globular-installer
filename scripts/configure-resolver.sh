@@ -2,11 +2,14 @@
 set -euo pipefail
 
 # Globular DNS System Resolver Configuration
-# Configures system resolver to use Globular DNS for .globular.internal domain
+# Configures system resolver to use Globular DNS for the cluster domain
 #
 # Environment Variables:
+#   DOMAIN          - Cluster domain (default: globular.internal, set by install-day0.sh)
 #   JOIN_DNS_SERVER - DNS server IP for Day-1+ nodes (e.g., 10.0.0.63)
 #                     If not set, uses 127.0.0.1 (Day-0 mode)
+
+DOMAIN="${DOMAIN:-globular.internal}"
 
 echo ""
 echo "━━━ System Resolver Configuration ━━━"
@@ -104,8 +107,8 @@ if systemctl is-active --quiet systemd-resolved 2>/dev/null; then
 # Use Globular DNS as primary resolver
 DNS=${GLOBULAR_DNS_SERVER}
 
-# Search + routing domain for short names and .globular.internal
-Domains=~globular.internal globular.internal
+# Search + routing domain for short names and .${DOMAIN}
+Domains=~${DOMAIN} ${DOMAIN}
 
 # Allow fallback to other DNS servers for external domains
 FallbackDNS=1.1.1.1 8.8.8.8
@@ -164,7 +167,7 @@ EOF
             # Add Globular DNS as primary, keep existing as fallback
             nmcli connection modify "$CONN" \
                 +ipv4.dns "${GLOBULAR_DNS_SERVER}" \
-                +ipv4.dns-search "globular.internal" 2>/dev/null || {
+                +ipv4.dns-search "${DOMAIN}" 2>/dev/null || {
                 echo "  ⚠ Warning: Could not modify connection $CONN"
                 continue
             }
@@ -186,10 +189,76 @@ else
     echo "    Create /etc/systemd/resolved.conf.d/globular-dns.conf with:"
     echo "    [Resolve]"
     echo "    DNS=${GLOBULAR_DNS_SERVER}"
-    echo "    Domains=~globular.internal globular.internal"
+    echo "    Domains=~${DOMAIN} ${DOMAIN}"
     echo "    FallbackDNS=1.1.1.1 8.8.8.8"
     echo ""
 fi
+
+echo ""
+echo "[configure-resolver] Step 2b: Add MinIO /etc/hosts fallback..."
+# MinIO must be reachable before DNS/ScyllaDB/repository services start.
+# /etc/hosts ensures resolution works even if systemd-resolved or the
+# Globular DNS service is not yet running. On Day-0, only the local node
+# runs MinIO; additional nodes are added by the node agent after join.
+sed -i '/minio\.globular\.internal/d' /etc/hosts
+if [[ -n "${NODE_IP}" ]]; then
+    echo "${NODE_IP} minio.globular.internal  # MinIO (local)" >> /etc/hosts
+    echo "  ✓ minio.globular.internal -> ${NODE_IP}"
+else
+    echo "  ⚠ No node IP detected, skipping /etc/hosts entry"
+fi
+if [[ -n "${JOIN_DNS_SERVER:-}" && "${JOIN_DNS_SERVER}" != "${NODE_IP}" ]]; then
+    echo "${JOIN_DNS_SERVER} minio.globular.internal  # MinIO (bootstrap)" >> /etc/hosts
+    echo "  ✓ minio.globular.internal -> ${JOIN_DNS_SERVER} (bootstrap)"
+fi
+
+echo ""
+echo "[configure-resolver] Step 3a: Ensure NSS resolve module..."
+# Without libnss-resolve, Go binaries use glibc's stub resolver which doesn't
+# honor systemd-resolved routing domains (~globular.internal). The mdns4_minimal
+# module with [NOTFOUND=return] blocks .internal lookups before reaching DNS.
+if ! dpkg -l libnss-resolve 2>/dev/null | grep -q '^ii'; then
+    apt-get install -y libnss-resolve >/dev/null 2>&1 || true
+    echo "  ✓ libnss-resolve installed"
+else
+    echo "  → libnss-resolve already installed"
+fi
+if grep -q 'mdns4_minimal.*NOTFOUND.*return' /etc/nsswitch.conf; then
+    sed -i 's/^hosts:.*/hosts:          files resolve dns myhostname/' /etc/nsswitch.conf
+    echo "  ✓ nsswitch.conf updated (resolve before dns)"
+else
+    echo "  → nsswitch.conf already configured"
+fi
+
+echo ""
+echo "[configure-resolver] Step 3b: Configure log management..."
+# Globular services produce verbose audit logs that can grow syslog to 300GB+
+# in hours if the reconcile loop encounters persistent errors.
+
+# rsyslog: rate-limit to 500 messages per 10 seconds
+if systemctl is-active --quiet rsyslog 2>/dev/null; then
+    mkdir -p /etc/rsyslog.d
+    cat > /etc/rsyslog.d/50-globular-rate-limit.conf <<'RSYSLOG_RL'
+# Globular: rate-limit to prevent audit log flood filling disk
+$SystemLogRateLimitInterval 10
+$SystemLogRateLimitBurst 500
+RSYSLOG_RL
+    systemctl restart rsyslog 2>/dev/null || true
+    echo "  ✓ rsyslog rate-limited (500 msg / 10s)"
+else
+    echo "  → rsyslog not active, skipping"
+fi
+
+# journald: cap total disk usage to 2GB, keep max 7 days
+mkdir -p /etc/systemd/journald.conf.d
+cat > /etc/systemd/journald.conf.d/50-globular.conf <<'JOURNALD_CONF'
+[Journal]
+SystemMaxUse=2G
+SystemKeepFree=10G
+MaxRetentionSec=7day
+JOURNALD_CONF
+systemctl restart systemd-journald 2>/dev/null || true
+echo "  ✓ journald capped at 2GB / 7 days"
 
 echo ""
 echo "[configure-resolver] Step 4: Configure firewall (Day-0 only)..."
@@ -242,11 +311,11 @@ fi
 echo ""
 echo "[configure-resolver] Step 5: Verification..."
 
-TEST_DOMAIN="api.globular.internal"
+TEST_DOMAIN="api.${DOMAIN}"
 verify_ok=1
 
 echo "  → Verifying DNS resolution for ${TEST_DOMAIN}"
-echo "    Expected resolver for .globular.internal: ${GLOBULAR_DNS_SERVER} (node type: ${NODE_TYPE})"
+echo "    Expected resolver for .${DOMAIN}: ${GLOBULAR_DNS_SERVER} (node type: ${NODE_TYPE})"
 
 # Test connectivity for joining nodes
 if [[ "$NODE_TYPE" == "joining" ]]; then
@@ -310,7 +379,7 @@ if [[ $verify_ok -eq 1 ]]; then
 else
     VERIFY_RESULT="FAIL"
     echo "  ⚠ DNS resolution verification FAILED for ${TEST_DOMAIN}"
-    echo "    - Ensure .globular.internal routes to ${GLOBULAR_DNS_SERVER}"
+    echo "    - Ensure .${DOMAIN} routes to ${GLOBULAR_DNS_SERVER}"
     echo "    - Check firewall rules for port 53/udp and 53/tcp"
     echo "    - Try: dig @${GLOBULAR_DNS_SERVER} ${TEST_DOMAIN} +trace"
     if [[ "$NODE_TYPE" == "joining" ]]; then
@@ -332,7 +401,7 @@ cat > /etc/globular-dns.conf <<EOF
 # Globular DNS Configuration Info
 NODE_TYPE=${NODE_TYPE}
 DNS_SERVER=${GLOBULAR_DNS_SERVER}
-SEARCH_DOMAIN=globular.internal
+SEARCH_DOMAIN=${DOMAIN}
 CONFIGURED_DATE=$(date -Iseconds)
 NODE_IP=${NODE_IP}
 HOSTNAME=${HOSTNAME}
@@ -341,17 +410,17 @@ EOF
 echo "Configuration Summary:"
 echo "  • Node Type: ${NODE_TYPE}"
 echo "  • DNS Server: ${GLOBULAR_DNS_SERVER}"
-echo "  • Search Domain: globular.internal"
+echo "  • Search Domain: ${DOMAIN}"
 echo "  • Fallback DNS: 1.1.1.1, 8.8.8.8"
 echo "  • Configuration: /etc/globular-dns.conf"
 echo ""
 echo "Testing:"
 if [[ "$NODE_TYPE" == "day0" ]]; then
-    echo "  ping ${HOSTNAME}.globular.internal"
-    echo "  curl -k -I https://${HOSTNAME}.globular.internal:8443"
+    echo "  ping ${HOSTNAME}.${DOMAIN}"
+    echo "  curl -k -I https://${HOSTNAME}.${DOMAIN}:8443"
 else
     echo "  # After cluster join:"
-    echo "  ping ${HOSTNAME}.globular.internal"
+    echo "  ping ${HOSTNAME}.${DOMAIN}"
 fi
 echo ""
 echo "For Day-1+ nodes joining this cluster:"

@@ -75,7 +75,8 @@ func (s *InstallOSPackagesStep) installDebianPackages(ctx *Context) error {
 	// Fix any broken/half-configured packages first — an unrelated broken
 	// package (e.g. globular-minio) can cause dpkg to return non-zero even
 	// when the packages we requested installed fine.
-	fixCmd := exec.Command("dpkg", "--configure", "-a")
+	// --force-confold: keep existing config files, never prompt interactively.
+	fixCmd := exec.Command("dpkg", "--configure", "-a", "--force-confold")
 	fixCmd.Env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
 	if out, err := fixCmd.CombinedOutput(); err != nil {
 		if ctx != nil && ctx.Logger != nil {
@@ -84,7 +85,13 @@ func (s *InstallOSPackagesStep) installDebianPackages(ctx *Context) error {
 	}
 
 	// Install packages
-	args := []string{"install", "-y", "--no-install-recommends"}
+	// -o Dpkg::Options::=--force-confold: keep existing config files during
+	// package install/upgrade — prevents dpkg from blocking on interactive
+	// conffile prompts in non-interactive environments.
+	args := []string{
+		"-o", "Dpkg::Options::=--force-confold",
+		"install", "-y", "--no-install-recommends",
+	}
 	args = append(args, s.Packages...)
 
 	cmd := exec.Command("apt-get", args...)

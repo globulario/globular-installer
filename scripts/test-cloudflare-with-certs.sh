@@ -32,9 +32,9 @@ log_step() { echo -e "${CYAN}▶${NC} ${MAGENTA}$*${NC}"; }
 
 # Configuration - Default to apex domain (NOT node-specific)
 # INV-DNS-EXT-1: Only publish cluster public domain, never node-specific hostnames
-FQDN="${1:-globular.io}"
-ZONE="${2:-globular.io}"
-ACME_EMAIL="${3:-admin@globular.io}"
+FQDN="${1:-globular.cloud}"
+ZONE="${2:-globular.cloud}"
+ACME_EMAIL="${3:-admin@globular.cloud}"
 PROVIDER_NAME="cloudflare-app"
 
 # Ensure we're running as the user (not root) so HOME is correct
@@ -44,7 +44,7 @@ if [[ "${USER}" == "root" ]]; then
 fi
 
 # Verify client certificates exist (CLI auto-discovers them)
-CERT_DIR="${HOME}/.config/globular/tls/localhost"
+CERT_DIR="${HOME}/.config/globular/tls/globular.internal"
 if [[ ! -f "$CERT_DIR/client.crt" ]] || [[ ! -f "$CERT_DIR/client.key" ]]; then
     log_error "Client certificates not found in: $CERT_DIR"
     log_error "Make sure you have client certificates set up"

@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/globulario/globular-installer/pkg/assets"
+	"github.com/globulario/globular-installer/internal/assets"
 	"github.com/globulario/globular-installer/pkg/platform"
 )
 

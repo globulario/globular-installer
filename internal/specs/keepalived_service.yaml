@@ -2,6 +2,7 @@ version: 1
 
 metadata:
   name: keepalived
+  version: "0.0.1"
   kind: infrastructure
   description: "VRRP-based virtual IP failover daemon for high-availability cluster networking."
   keywords: [keepalived, vrrp, failover, high-availability, vip]

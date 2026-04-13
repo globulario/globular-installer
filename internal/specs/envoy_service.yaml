@@ -2,10 +2,12 @@ version: 1
 
 metadata:
   name: envoy
+  version: "1.35.3"
   kind: infrastructure
   description: "L7 edge proxy handling TLS termination, gRPC-Web translation, and dynamic service routing."
   keywords: [envoy, proxy, tls, grpc-web, load-balancer, routing]
   license: Apache-2.0
+  entrypoint: envoy
   provides_capabilities: [http-proxy]
   runtime_local_dependencies: [xds]
   health_check:

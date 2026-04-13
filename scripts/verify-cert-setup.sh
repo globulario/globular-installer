@@ -58,7 +58,22 @@ echo "3. Checking client certificates..."
 check_user_certs() {
     local user=$1
     local home=$(eval echo ~$user)
-    local cert_dir="$home/.config/globular/tls/localhost"
+    # Find cert dir: try domain from config, then localhost
+    local _domain=""
+    if [[ -f /var/lib/globular/config.json ]]; then
+        _domain=$(jq -r '.Domain // ""' /var/lib/globular/config.json 2>/dev/null || true)
+    fi
+    local cert_dir=""
+    for _d in "$_domain" "localhost"; do
+        [[ -z "$_d" ]] && continue
+        if [[ -d "$home/.config/globular/tls/$_d" ]]; then
+            cert_dir="$home/.config/globular/tls/$_d"
+            break
+        fi
+    done
+    if [[ -z "$cert_dir" ]]; then
+        cert_dir="$home/.config/globular/tls/${_domain:-localhost}"
+    fi
 
     echo "   User: $user"
 

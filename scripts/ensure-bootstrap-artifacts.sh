@@ -70,66 +70,66 @@ fi
 # so the full catalog is available for cluster management from the start.
 CORE_PACKAGES=(
   # ── Infrastructure ──────────────────────────────────────────────────
-  "service.etcd_*_linux_amd64.tgz"
-  "service.minio_*_linux_amd64.tgz"
-  "service.keepalived_*_linux_amd64.tgz"
-  "service.scylladb_*_linux_amd64.tgz"
+  "etcd_*_linux_amd64.tgz"
+  "minio_*_linux_amd64.tgz"
+  "keepalived_*_linux_amd64.tgz"
+  "scylladb_*_linux_amd64.tgz"
   # Data layer
-  "service.persistence_*_linux_amd64.tgz"
+  "persistence_*_linux_amd64.tgz"
   # ── Bootstrap services ─────────────────────────────────────────────
-  "service.xds_*_linux_amd64.tgz"
-  "service.envoy_*_linux_amd64.tgz"
-  "service.gateway_*_linux_amd64.tgz"
-  "service.node-agent_*_linux_amd64.tgz"
-  "service.cluster-controller_*_linux_amd64.tgz"
-  "service.cluster-doctor_*_linux_amd64.tgz"
+  "xds_*_linux_amd64.tgz"
+  "envoy_*_linux_amd64.tgz"
+  "gateway_*_linux_amd64.tgz"
+  "node-agent_*_linux_amd64.tgz"
+  "cluster-controller_*_linux_amd64.tgz"
+  "cluster-doctor_*_linux_amd64.tgz"
   # ── Control plane ──────────────────────────────────────────────────
-  "service.resource_*_linux_amd64.tgz"
-  "service.rbac_*_linux_amd64.tgz"
-  "service.authentication_*_linux_amd64.tgz"
-  "service.discovery_*_linux_amd64.tgz"
-  "service.dns_*_linux_amd64.tgz"
-  "service.repository_*_linux_amd64.tgz"
+  "resource_*_linux_amd64.tgz"
+  "rbac_*_linux_amd64.tgz"
+  "authentication_*_linux_amd64.tgz"
+  "discovery_*_linux_amd64.tgz"
+  "dns_*_linux_amd64.tgz"
+  "repository_*_linux_amd64.tgz"
   # ── Operations ─────────────────────────────────────────────────────
-  "service.sidekick_*_linux_amd64.tgz"
-  "service.node-exporter_*_linux_amd64.tgz"
-  "service.prometheus_*_linux_amd64.tgz"
-  "service.monitoring_*_linux_amd64.tgz"
-  "service.event_*_linux_amd64.tgz"
-  "service.log_*_linux_amd64.tgz"
-  "service.backup-manager_*_linux_amd64.tgz"
-  "service.mcp_*_linux_amd64.tgz"
-  "service.ai-memory_*_linux_amd64.tgz"
-  "service.ai-watcher_*_linux_amd64.tgz"
-  "service.ai-executor_*_linux_amd64.tgz"
-  "service.ai-router_*_linux_amd64.tgz"
-  "service.workflow_*_linux_amd64.tgz"
-  "service.scylla-manager-agent_*_linux_amd64.tgz"
-  "service.scylla-manager_*_linux_amd64.tgz"
+  "sidekick_*_linux_amd64.tgz"
+  "node-exporter_*_linux_amd64.tgz"
+  "prometheus_*_linux_amd64.tgz"
+  "monitoring_*_linux_amd64.tgz"
+  "event_*_linux_amd64.tgz"
+  "log_*_linux_amd64.tgz"
+  "backup-manager_*_linux_amd64.tgz"
+  "mcp_*_linux_amd64.tgz"
+  "ai-memory_*_linux_amd64.tgz"
+  "ai-watcher_*_linux_amd64.tgz"
+  "ai-executor_*_linux_amd64.tgz"
+  "ai-router_*_linux_amd64.tgz"
+  "workflow_*_linux_amd64.tgz"
+  "scylla-manager-agent_*_linux_amd64.tgz"
+  "scylla-manager_*_linux_amd64.tgz"
   # ── Workload services ──────────────────────────────────────────────
-  "service.file_*_linux_amd64.tgz"
-  "service.blog_*_linux_amd64.tgz"
-  "service.catalog_*_linux_amd64.tgz"
-  "service.conversation_*_linux_amd64.tgz"
-  "service.echo_*_linux_amd64.tgz"
-  "service.ldap_*_linux_amd64.tgz"
-  "service.mail_*_linux_amd64.tgz"
-  "service.media_*_linux_amd64.tgz"
-  "service.search_*_linux_amd64.tgz"
-  "service.sql_*_linux_amd64.tgz"
-  "service.storage_*_linux_amd64.tgz"
-  "service.title_*_linux_amd64.tgz"
-  "service.torrent_*_linux_amd64.tgz"
+  "file_*_linux_amd64.tgz"
+  "blog_*_linux_amd64.tgz"
+  "catalog_*_linux_amd64.tgz"
+  "conversation_*_linux_amd64.tgz"
+  "echo_*_linux_amd64.tgz"
+  "ldap_*_linux_amd64.tgz"
+  "mail_*_linux_amd64.tgz"
+  "media_*_linux_amd64.tgz"
+  "search_*_linux_amd64.tgz"
+  "sql_*_linux_amd64.tgz"
+  "storage_*_linux_amd64.tgz"
+  "title_*_linux_amd64.tgz"
+  "torrent_*_linux_amd64.tgz"
   # ── CLI tools ──────────────────────────────────────────────────────
-  "service.globular-cli-cmd_*_linux_amd64.tgz"
-  "service.etcdctl-cmd_*_linux_amd64.tgz"
-  "service.mc-cmd_*_linux_amd64.tgz"
-  "service.sctool-cmd_*_linux_amd64.tgz"
-  "service.ffmpeg-cmd_*_linux_amd64.tgz"
-  "service.yt-dlp-cmd_*_linux_amd64.tgz"
-  "service.sha256sum-cmd_*_linux_amd64.tgz"
-  "service.restic-cmd_*_linux_amd64.tgz"
-  "service.rclone-cmd_*_linux_amd64.tgz"
+  "globular-cli_*_linux_amd64.tgz"
+  "etcdctl_*_linux_amd64.tgz"
+  "mc_*_linux_amd64.tgz"
+  "sctool_*_linux_amd64.tgz"
+  "ffmpeg_*_linux_amd64.tgz"
+  "yt-dlp_*_linux_amd64.tgz"
+  "sha256sum_*_linux_amd64.tgz"
+  "restic_*_linux_amd64.tgz"
+  "rclone_*_linux_amd64.tgz"
 )
 
 # ── Resolve real user home (handles sudo) ────────────────────────────────────
@@ -280,14 +280,15 @@ export GLOBULAR_TOKEN
 # ── Step 3: Publish each core package ────────────────────────────────────────
 
 # Extract a human-readable name and version from the .tgz filename.
-# e.g. "service.etcd_3.5.14_linux_amd64.tgz" → name="etcd" version="3.5.14"
+# e.g. "etcd_3.5.14_linux_amd64.tgz" → name="etcd" version="3.5.14"
+# Handles hyphenated names like "scylla-manager_3.8.1_linux_amd64.tgz"
 parse_pkg_label() {
   local base="$1"
   base="${base%.tgz}"                         # strip .tgz
-  base="${base#service.}"                     # strip service. prefix
-  local name="${base%%_*}"                    # everything before first _
-  local rest="${base#*_}"                     # everything after first _
-  local version="${rest%%_*}"                 # version = next segment before _
+  base="${base%_linux_*}"                     # strip _linux_amd64
+  # Split on last _ to separate name from version
+  local version="${base##*_}"                 # version = after last _
+  local name="${base%_*}"                     # name = before last _
   echo "${name} ${version}"
 }
 

@@ -144,6 +144,27 @@ if [[ "$FORCE_REINSTALL" == "1" ]]; then
 fi
 
 echo ""
+# ── Logo ──────────────────────────────────────────────────────────────────────
+# Display logo in terminal if chafa is available; install it silently if missing.
+LOGO_FILE="${SCRIPT_DIR}/../assets/logo.png"
+if [[ ! -f "$LOGO_FILE" ]]; then
+  # Fallback paths
+  for p in "$HOME/Pictures/logo.png" "$HOME/pictures/logo.png" /usr/share/globular/logo.png; do
+    [[ -f "$p" ]] && LOGO_FILE="$p" && break
+  done
+fi
+
+if [[ -f "$LOGO_FILE" ]]; then
+  if ! command -v chafa >/dev/null 2>&1; then
+    apt-get install -y -qq chafa >/dev/null 2>&1 || true
+  fi
+  if command -v chafa >/dev/null 2>&1; then
+    echo ""
+    chafa --size=80x25 --symbols=all --colors=full "$LOGO_FILE" 2>/dev/null || true
+    echo ""
+  fi
+fi
+
 echo "╔════════════════════════════════════════════════════════════════╗"
 echo "║          GLOBULAR DAY-0 INSTALLATION                           ║"
 echo "╚════════════════════════════════════════════════════════════════╝"
@@ -365,6 +386,7 @@ OPS_PKGS=(
   "sidekick_7.0.0_linux_amd64.tgz"
   "node-exporter_1.10.2_linux_amd64.tgz"
   "prometheus_3.5.1_linux_amd64.tgz"
+  "alertmanager_0.28.1_linux_amd64.tgz"
   "monitoring_0.0.1_linux_amd64.tgz"
   "event_0.0.1_linux_amd64.tgz"
   "log_0.0.1_linux_amd64.tgz"
@@ -725,6 +747,52 @@ else
   log_substep "ensure-minio-buckets.sh not found — buckets handled by package post-install"
 fi
 
+log_step "Cluster Config (shared via MinIO)"
+# Create the cluster config bucket and upload critical shared files.
+# These are available to all nodes via MinIO — survives any single node loss.
+MC_BIN="/usr/local/bin/mc"
+MINIO_ALIAS="local"
+if [[ -x "$MC_BIN" ]]; then
+  # Configure mc alias (uses credentials from minio.json or defaults).
+  MINIO_ENDPOINT="https://127.0.0.1:9000"
+  MINIO_ACCESS=$(cat /var/lib/globular/objectstore/minio.json 2>/dev/null | jq -r '.AccessKey // "minioadmin"')
+  MINIO_SECRET=$(cat /var/lib/globular/objectstore/minio.json 2>/dev/null | jq -r '.SecretKey // "minioadmin"')
+  "$MC_BIN" alias set "$MINIO_ALIAS" "$MINIO_ENDPOINT" "$MINIO_ACCESS" "$MINIO_SECRET" --insecure 2>/dev/null || true
+
+  # Create config bucket.
+  "$MC_BIN" mb --ignore-existing "${MINIO_ALIAS}/globular-config" --insecure 2>/dev/null || true
+
+  # Upload CA certificate and key (cluster-wide PKI).
+  if [[ -f /var/lib/globular/pki/ca.pem ]]; then
+    "$MC_BIN" cp /var/lib/globular/pki/ca.pem "${MINIO_ALIAS}/globular-config/pki/ca.pem" --insecure 2>/dev/null && \
+      log_success "CA certificate uploaded to MinIO (cluster-shared)" || \
+      log_substep "Warning: CA cert upload to MinIO failed (non-fatal)"
+  fi
+  if [[ -f /var/lib/globular/pki/ca.key ]]; then
+    "$MC_BIN" cp /var/lib/globular/pki/ca.key "${MINIO_ALIAS}/globular-config/pki/ca.key" --insecure 2>/dev/null && \
+      log_success "CA key uploaded to MinIO (cluster-shared)" || \
+      log_substep "Warning: CA key upload to MinIO failed (non-fatal)"
+  fi
+
+  # Upload RBAC cluster roles if present.
+  if [[ -f /var/lib/globular/policy/rbac/cluster-roles.json ]]; then
+    "$MC_BIN" cp /var/lib/globular/policy/rbac/cluster-roles.json \
+      "${MINIO_ALIAS}/globular-config/policy/rbac/cluster-roles.json" --insecure 2>/dev/null || true
+    log_success "RBAC policies uploaded to MinIO"
+  fi
+
+  # Upload AI operational rules (CLUSTER_CLAUDE.md → ai/CLAUDE.md in MinIO).
+  # The ai_executor reads this via config.GetClusterConfig("ai/CLAUDE.md").
+  CLAUDE_MD="${SCRIPT_DIR}/CLUSTER_CLAUDE.md"
+  if [[ -f "$CLAUDE_MD" ]]; then
+    "$MC_BIN" cp "$CLAUDE_MD" "${MINIO_ALIAS}/globular-config/ai/CLAUDE.md" --insecure 2>/dev/null && \
+      log_success "AI operational rules uploaded to MinIO (cluster-shared)" || \
+      log_substep "Warning: CLAUDE.md upload to MinIO failed (non-fatal)"
+  fi
+else
+  log_substep "Warning: mc not found — cluster config sharing deferred"
+fi
+
 log_step "Data Layer (persistence)"
 install_list "${DATA_LAYER_PKGS[@]}"
 
@@ -735,6 +803,131 @@ if [[ -x "$SCRIPT_DIR/setup-minio.sh" ]]; then
 else
   log_substep "setup-minio.sh not found — bucket setup handled by package post-install"
 fi
+
+# ── Workflow-driven installation ─────────────────────────────────────────
+# If USE_WORKFLOW=1 (default), install the node-agent, copy workflow
+# definitions, start the node-agent, and delegate all remaining package
+# installation to the day0.bootstrap workflow. This replaces the manual
+# install_list calls below with a single declarative workflow run.
+USE_WORKFLOW="${USE_WORKFLOW:-0}"
+if [[ "$USE_WORKFLOW" == "1" ]]; then
+  log_step "Workflow-Driven Bootstrap"
+
+  # Install node-agent (the workflow runner).
+  NODE_AGENT_PKG="$PKG_DIR/node-agent_0.0.1_linux_amd64.tgz"
+  if [[ -f "$NODE_AGENT_PKG" ]]; then
+    run_install "$NODE_AGENT_PKG"
+  else
+    die "node-agent package not found at $NODE_AGENT_PKG"
+  fi
+
+  # Copy all .tgz packages to the local fallback directory so the workflow
+  # can install them without needing the repository service (which isn't
+  # running yet during Day-0).
+  log_substep "Staging packages for local install..."
+  mkdir -p /var/lib/globular/packages
+  cp "$PKG_DIR"/*.tgz /var/lib/globular/packages/ 2>/dev/null || true
+  chown -R globular:globular /var/lib/globular/packages 2>/dev/null || true
+  PKG_COUNT=$(ls /var/lib/globular/packages/*.tgz 2>/dev/null | wc -l)
+  log_success "$PKG_COUNT packages staged in /var/lib/globular/packages/"
+
+  # Copy workflow definitions to disk so the node-agent can find them.
+  WORKFLOW_DEFS_SRC="${SCRIPT_DIR}/../../services/golang/workflow/definitions"
+  if [[ ! -d "$WORKFLOW_DEFS_SRC" ]]; then
+    WORKFLOW_DEFS_SRC="/home/dave/Documents/github.com/globulario/services/golang/workflow/definitions"
+  fi
+  if [[ -d "$WORKFLOW_DEFS_SRC" ]]; then
+    mkdir -p /var/lib/globular/workflows
+    cp "$WORKFLOW_DEFS_SRC"/*.yaml /var/lib/globular/workflows/
+    chown -R globular:globular /var/lib/globular/workflows 2>/dev/null || true
+    log_success "Workflow definitions deployed to /var/lib/globular/workflows/"
+  else
+    log_substep "Warning: workflow definitions source not found at $WORKFLOW_DEFS_SRC"
+  fi
+
+  # Globular configuration (Protocol=https) — needed before node-agent starts.
+  if [[ -x "$SCRIPT_DIR/setup-config.sh" ]]; then
+    "$SCRIPT_DIR/setup-config.sh"
+    log_success "Configuration set to HTTPS"
+  fi
+
+  # Start the node-agent.
+  log_substep "Starting node-agent..."
+  systemctl enable globular-node-agent.service 2>/dev/null || true
+  systemctl start globular-node-agent.service || die "Failed to start node-agent"
+
+  # Wait for node-agent to be ready on :11000.
+  log_substep "Waiting for node-agent to be ready..."
+  for i in $(seq 1 30); do
+    if timeout 2 bash -c "echo >/dev/tcp/127.0.0.1/11000" 2>/dev/null; then
+      log_success "Node-agent ready on :11000"
+      break
+    fi
+    if [[ $i -eq 30 ]]; then
+      die "Node-agent not ready after 60 seconds"
+    fi
+    sleep 2
+  done
+
+  # Detect local hostname and IP for workflow inputs.
+  NODE_HOSTNAME="$(hostname)"
+  NODE_IP="$(ip route get 8.8.8.8 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1); exit}')"
+  NODE_IP="${NODE_IP:-$(hostname -I 2>/dev/null | awk '{print $1}')}"
+
+  # Trigger the day0.bootstrap workflow via gRPC to the local node-agent.
+  # The node-agent uses TLS with the cluster CA.
+  CA_CERT="/var/lib/globular/pki/ca.crt"
+  SVC_CERT="/var/lib/globular/pki/issued/services/service.crt"
+  SVC_KEY="/var/lib/globular/pki/issued/services/service.key"
+
+  NODE_ID="$(cat /var/lib/globular/nodeagent/node_id 2>/dev/null || echo 'bootstrap')"
+
+  GRPC_REQUEST="{\"workflow_name\":\"day0.bootstrap\",\"inputs\":{\"cluster_id\":\"$DOMAIN\",\"bootstrap_node_id\":\"$NODE_ID\",\"bootstrap_node_hostname\":\"$NODE_HOSTNAME\",\"domain\":\"$DOMAIN\"}}"
+
+  log_substep "Triggering day0.bootstrap workflow..."
+  log_substep "  Request: $GRPC_REQUEST"
+
+  GRPCURL="$(command -v grpcurl 2>/dev/null || true)"
+  if [[ -n "$GRPCURL" ]]; then
+    "$GRPCURL" -insecure \
+      -cert "$SVC_CERT" -key "$SVC_KEY" \
+      -d "$GRPC_REQUEST" \
+      -max-time 1800 \
+      127.0.0.1:11000 node_agent.NodeAgentService/RunWorkflow 2>&1 | while IFS= read -r line; do
+        echo "  [workflow] $line"
+      done
+    WORKFLOW_RC=${PIPESTATUS[0]}
+  else
+    # No grpcurl — try the globular CLI with a RunWorkflow-equivalent command.
+    GLOBULAR_CLI="/usr/lib/globular/bin/globularcli"
+    if [[ ! -x "$GLOBULAR_CLI" ]]; then
+      GLOBULAR_CLI="$(command -v globular 2>/dev/null || true)"
+    fi
+    if [[ -n "$GLOBULAR_CLI" ]] && [[ -x "$GLOBULAR_CLI" ]]; then
+      "$GLOBULAR_CLI" --insecure --timeout 1800s workflow run day0.bootstrap \
+        --node 127.0.0.1:11000 2>&1 | while IFS= read -r line; do
+          echo "  [workflow] $line"
+        done
+      WORKFLOW_RC=${PIPESTATUS[0]}
+    else
+      die "Neither grpcurl nor globular CLI available to trigger workflow"
+    fi
+  fi
+
+  if [[ "${WORKFLOW_RC:-1}" -ne 0 ]]; then
+    log_substep "Warning: Workflow returned non-zero exit code: ${WORKFLOW_RC}"
+    log_substep "Falling back to manual installation..."
+    USE_WORKFLOW=0
+    # Fall through to manual installation below.
+  else
+    log_success "Day-0 bootstrap workflow completed successfully"
+    trace_finish "ok" "Day-0 installation via workflow completed"
+    exit 0
+  fi
+fi
+
+# ── Manual Installation (legacy or workflow fallback) ────────────────────
+# This path runs if USE_WORKFLOW=0 or if the workflow failed and fell back.
 
 log_step "Globular Configuration (Protocol=https)"
 if [[ -x "$SCRIPT_DIR/setup-config.sh" ]]; then
@@ -931,7 +1124,8 @@ AGENT_TOKEN_FILE="/var/lib/globular/scylla-manager-agent/auth_token.txt"
 # Detect ScyllaDB listen address (needed for agent config and cluster registration)
 SCYLLA_IP=""
 if [[ -f /etc/scylla/scylla.yaml ]]; then
-  SCYLLA_IP=$(grep "^listen_address:" /etc/scylla/scylla.yaml 2>/dev/null | awk '{print $2}')
+  # Strip quotes and whitespace from value (YAML may wrap IPs in single/double quotes)
+  SCYLLA_IP=$(grep "^listen_address:" /etc/scylla/scylla.yaml 2>/dev/null | awk '{print $2}' | tr -d "'\"")
 fi
 if [[ -z "$SCYLLA_IP" ]]; then
   SCYLLA_IP=$(ip route get 8.8.8.8 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1); exit}')
@@ -988,10 +1182,11 @@ https: 0.0.0.0:56090
 prometheus: 0.0.0.0:56091
 debug: 127.0.0.1:56092
 
-# ScyllaDB API address — must match api_address in scylla.yaml
+# ScyllaDB API address — must match api_address/api_port in scylla.yaml
+# Scylla's REST API listens on port 10000 by default (see /etc/scylla/scylla.yaml).
 scylla:
   api_address: "${SCYLLA_IP}"
-  api_port: "56093"
+  api_port: "10000"
 ${AGENT_S3_BLOCK}
 AGENTEOF
   chown scylla:globular "$AGENT_CONFIG"
@@ -1316,6 +1511,26 @@ sleep 3
 log_success "Controller and gateway restarted with fresh connections"
 
 echo ""
+# ── AI credential access ─────────────────────────────────────────────────────
+# Allow the globular service user to read Claude Code credentials from the
+# installer user's home directory. The ai_executor auto-discovers credentials
+# from /home/* and seeds them to etcd for cluster-wide sharing.
+# Must run AFTER package installation (which creates the globular user).
+INSTALLER_USER="${SUDO_USER:-}"
+if [[ -n "$INSTALLER_USER" ]] && id globular >/dev/null 2>&1; then
+  INSTALLER_HOME=$(eval echo "~$INSTALLER_USER")
+  CLAUDE_CREDS="$INSTALLER_HOME/.claude/.credentials.json"
+  if [[ -f "$CLAUDE_CREDS" ]]; then
+    log_substep "Enabling AI credential access for globular user..."
+    usermod -aG "$INSTALLER_USER" globular 2>/dev/null || true
+    chmod 750 "$INSTALLER_HOME/.claude" 2>/dev/null || true
+    chmod 640 "$CLAUDE_CREDS" 2>/dev/null || true
+    # Restart ai_executor so it picks up the new group membership.
+    systemctl restart globular-ai-executor.service 2>/dev/null || true
+    log_success "AI credentials accessible (ai_executor will auto-seed to etcd)"
+  fi
+fi
+
 echo "╔════════════════════════════════════════════════════════════════╗"
 echo "║          ✓ INSTALLATION COMPLETE                               ║"
 echo "╚════════════════════════════════════════════════════════════════╝"

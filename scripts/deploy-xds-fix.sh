@@ -46,6 +46,18 @@ else
     exit 1
 fi
 
+# Envoy has PartOf=globular-xds.service, so stopping xDS also stops Envoy.
+# But PartOf does NOT auto-start dependents — we must restart Envoy explicitly.
+echo "→ Restarting Envoy (depends on XDS)..."
+systemctl start globular-envoy.service
+sleep 2
+
+if systemctl is-active --quiet globular-envoy.service; then
+    echo "  ✓ Envoy restarted successfully"
+else
+    echo "  ✗ Envoy failed to start — check: journalctl -u globular-envoy.service -n 50" >&2
+fi
+
 echo ""
 echo "━━━ XDS Fix Deployed Successfully ━━━"
 echo ""

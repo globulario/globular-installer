@@ -15,10 +15,25 @@ fi
 
 # Get the actual user's home directory
 ACTUAL_HOME=$(eval echo ~${ACTUAL_USER})
-CERT_DIR="${ACTUAL_HOME}/.config/globular/tls/localhost"
+# Find cert dir — try domain from config, then localhost (legacy)
+DOMAIN="${DOMAIN:-}"
+if [[ -z "$DOMAIN" ]] && [[ -f /var/lib/globular/config.json ]]; then
+    DOMAIN=$(jq -r '.Domain // ""' /var/lib/globular/config.json 2>/dev/null || true)
+fi
 
-if [[ ! -d "${CERT_DIR}" ]]; then
-    echo "ERROR: Certificate directory not found: ${CERT_DIR}" >&2
+CERT_DIR=""
+for _d in "${DOMAIN}" "localhost"; do
+    [[ -z "$_d" ]] && continue
+    _candidate="${ACTUAL_HOME}/.config/globular/tls/${_d}"
+    if [[ -d "$_candidate" ]]; then
+        CERT_DIR="$_candidate"
+        break
+    fi
+done
+
+if [[ -z "${CERT_DIR}" ]]; then
+    echo "ERROR: Certificate directory not found under ${ACTUAL_HOME}/.config/globular/tls/" >&2
+    echo "       Tried: ${DOMAIN:-<none>}, localhost" >&2
     echo "       Run generate-user-client-cert.sh first" >&2
     exit 1
 fi

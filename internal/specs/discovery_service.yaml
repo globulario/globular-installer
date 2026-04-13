@@ -2,6 +2,8 @@ version: 1
 
 metadata:
   name: discovery
+  profiles: [core, compute, control-plane]
+  priority: 3
 
 service:
   name: discovery
@@ -80,9 +82,9 @@ steps:
           Type=simple
           User=globular
           Group=globular
-          WorkingDirectory={{.StateDir}}/discovery
+          WorkingDirectory={{.StateDir}}
           Environment=GLOBULAR_SERVICES_DIR={{.StateDir}}/services
-          Environment=GLOBULAR_BOOTSTRAP=1
+
           ExecStartPre=+/bin/sh -c 'mkdir -p {{.StateDir}}/discovery && chown globular:globular {{.StateDir}}/discovery'
           ExecStartPre=/bin/sh -c 'for i in $(seq 1 60); do [ -f /var/lib/globular/pki/issued/services/service.crt ] && exit 0; sleep 1; done; echo "TLS cert not ready"; exit 1'
           ExecStart={{.Prefix}}/bin/discovery_server

@@ -139,8 +139,6 @@ steps:
           Description=Globular etcd
           After=network-online.target
           Wants=network-online.target
-          StartLimitBurst=10
-          StartLimitIntervalSec=60
 
           [Service]
           Type=simple
@@ -149,10 +147,9 @@ steps:
           ExecStartPre=+/usr/bin/mkdir -p {{.StateDir}}/etcd
           ExecStartPre=+/usr/bin/chown globular:globular {{.StateDir}}/etcd
           ExecStartPre=+/usr/bin/chmod 0750 {{.StateDir}}/etcd
-          ExecStartPre=+/usr/bin/chown globular:globular {{.StateDir}}/pki/issued/services/service.key {{.StateDir}}/pki/issued/services/service.crt
           ExecStart={{.Prefix}}/bin/etcd --config-file {{.StateDir}}/config/etcd.yaml
           Restart=on-failure
-          RestartSec=3
+          RestartSec=2
           LimitNOFILE=524288
 
           [Install]

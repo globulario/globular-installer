@@ -48,8 +48,8 @@ steps:
         content: |
           [Unit]
           Description=Globular Node Exporter
-          After=network-online.target globular-etcd.service
-          Wants=network-online.target globular-etcd.service
+          After=network-online.target
+          Wants=network-online.target
 
           [Service]
           Type=simple

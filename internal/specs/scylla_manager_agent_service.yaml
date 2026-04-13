@@ -2,10 +2,12 @@ version: 1
 
 metadata:
   name: scylla_manager_agent
+  version: "3.8.1"
   kind: infrastructure
   description: "ScyllaDB Manager agent that runs on each node to execute repair and backup operations."
   keywords: [scylla-manager-agent, scylladb, agent, repair, backup]
   license: Proprietary
+  entrypoint: scylla_manager_agent
 
 steps:
   - id: ensure-user-group
@@ -77,7 +79,7 @@ steps:
           User=scylla
           Group=scylla
           SupplementaryGroups=globular
-          WorkingDirectory={{.StateDir}}/scylla-manager-agent
+          WorkingDirectory={{.StateDir}}
           ExecStart={{.Prefix}}/bin/scylla_manager_agent --config-file {{.StateDir}}/scylla-manager-agent/scylla-manager-agent.yaml
           Restart=on-failure
           RestartSec=5

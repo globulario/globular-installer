@@ -13,9 +13,10 @@ import (
 // It behaves like a deb postinst: the script is discovered from the staging
 // area and executed with well-known environment variables.
 type RunScriptStep struct {
-	Script  string        // script filename (default "post-install.sh")
-	Timeout time.Duration // execution timeout (default 5m)
-	applied bool
+	Script   string        // script filename (default "post-install.sh")
+	Timeout  time.Duration // execution timeout (default 5m)
+	Required bool          // if true, missing script is an error instead of skip
+	applied  bool
 }
 
 func NewRunScriptStep(script string, timeout time.Duration) *RunScriptStep {
@@ -38,6 +39,9 @@ func (s *RunScriptStep) Check(ctx *Context) (StepStatus, error) {
 	}
 	scriptPath := s.resolveScript(ctx)
 	if scriptPath == "" {
+		if s.Required {
+			return StatusUnknown, fmt.Errorf("required script %s not found in %s/scripts/", s.Script, ctx.StagingDir)
+		}
 		return StatusSkipped, nil
 	}
 	return StatusNeedsApply, nil
@@ -46,6 +50,9 @@ func (s *RunScriptStep) Check(ctx *Context) (StepStatus, error) {
 func (s *RunScriptStep) Apply(ctx *Context) error {
 	scriptPath := s.resolveScript(ctx)
 	if scriptPath == "" {
+		if s.Required {
+			return fmt.Errorf("required script %s not found in %s/scripts/", s.Script, ctx.StagingDir)
+		}
 		return nil
 	}
 
