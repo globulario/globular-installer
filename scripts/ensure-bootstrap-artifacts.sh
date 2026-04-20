@@ -258,16 +258,15 @@ log_success "Repository endpoint: $REPO_ADDR"
 
 # ── Step 2: Acquire auth token ───────────────────────────────────────────────
 
-if [[ -z "${GLOBULAR_TOKEN:-}" ]]; then
-  GLOBULAR_USER="${GLOBULAR_USER:-sa}"
+# Always resolve user/password so the mid-run token refresh can use them.
+GLOBULAR_USER="${GLOBULAR_USER:-sa}"
+BOOTSTRAP_CRED_GLOBAL="/var/lib/globular/.bootstrap-sa-password"
+if [[ -z "${GLOBULAR_PASSWORD:-}" && -f "$BOOTSTRAP_CRED_GLOBAL" && -r "$BOOTSTRAP_CRED_GLOBAL" ]]; then
+  GLOBULAR_PASSWORD=$(cat "$BOOTSTRAP_CRED_GLOBAL")
+fi
 
-  # Resolve password: env var → bootstrap credential file → interactive prompt.
-  if [[ -z "${GLOBULAR_PASSWORD:-}" ]]; then
-    BOOTSTRAP_CRED="/var/lib/globular/.bootstrap-sa-password"
-    if [[ -f "$BOOTSTRAP_CRED" && -r "$BOOTSTRAP_CRED" ]]; then
-      GLOBULAR_PASSWORD=$(cat "$BOOTSTRAP_CRED")
-    fi
-  fi
+if [[ -z "${GLOBULAR_TOKEN:-}" ]]; then
+  # Resolve password: env var (already done above) → interactive prompt.
   if [[ -z "${GLOBULAR_PASSWORD:-}" ]]; then
     read -rsp "Password for $GLOBULAR_USER: " GLOBULAR_PASSWORD
     echo
@@ -344,6 +343,17 @@ FAILED=0
 TOTAL=0
 FAILED_LIST=""
 
+# Local state file: maps entrypoint_checksum → 1 for each successfully published binary.
+# This is the idempotency key — the repository assigns its own version counter (0.0.x)
+# and has no dedup by content. Without this, every run creates a new version entry.
+PUBLISHED_CHECKSUMS_FILE="${STATE_DIR}/.bootstrap-artifacts-checksums"
+declare -A PUBLISHED_CHECKSUMS
+if [[ -f "$PUBLISHED_CHECKSUMS_FILE" ]]; then
+  while IFS= read -r _cs; do
+    [[ -n "$_cs" ]] && PUBLISHED_CHECKSUMS["$_cs"]=1
+  done < "$PUBLISHED_CHECKSUMS_FILE"
+fi
+
 for pattern in "${CORE_PACKAGES[@]}"; do
   # Resolve glob pattern to actual file
   # shellcheck disable=SC2206
@@ -357,34 +367,42 @@ for pattern in "${CORE_PACKAGES[@]}"; do
   read -r SVC_NAME SVC_VER <<< "$(parse_pkg_label "$PKG_NAME")"
   TOTAL=$((TOTAL + 1))
 
-  # Publish the package.  Capture stdout (JSON) and stderr separately
-  # so the JSON parser doesn't choke on progress output.
-  # Run as the real user (not root) so the CLI finds client certs.
+  # Refresh token every 10 packages to avoid expiry mid-run.
+  if (( TOTAL % 10 == 0 )); then
+    _fresh=$("$GLOBULAR_CLI" --ca "$CA_CERT" auth login \
+      --user "$GLOBULAR_USER" --password "$GLOBULAR_PASSWORD" 2>/dev/null \
+      | grep "^Token:" | sed 's/^Token: //' || true)
+    [[ -n "$_fresh" ]] && GLOBULAR_TOKEN="$_fresh"
+  fi
+
+  # Idempotency: extract the entrypoint_checksum from the package and skip
+  # if we've already successfully published this exact binary.
+  PKG_CHECKSUM=$(tar xOf "$PACKAGE" ./package.json 2>/dev/null \
+    | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('entrypoint_checksum',''))" 2>/dev/null || true)
+
+  if [[ -n "$PKG_CHECKSUM" && -n "${PUBLISHED_CHECKSUMS[$PKG_CHECKSUM]+x}" ]]; then
+    log_success "$(printf '%-28s %s (already present)' "$SVC_NAME" "$SVC_VER")"
+    SKIPPED=$((SKIPPED + 1))
+    continue
+  fi
+
+  # Publish — no --force so the repository doesn't bump the version counter
+  # if the binary is already there under a different version label.
   PUBLISH_ERR_FILE="/tmp/publish-err-$$.log"
   PUBLISH_JSON=$("$GLOBULAR_CLI" --ca "$CA_CERT" --timeout 60s --token "$GLOBULAR_TOKEN" pkg publish \
     --file "$PACKAGE" \
     --repository "$REPO_ADDR" \
-    --force \
     --output json 2>"$PUBLISH_ERR_FILE") || true
 
-  # Parse the JSON result.
-  STATUS=$(echo "$PUBLISH_JSON" | python3 -c "
+  # Parse status and descriptor_action from JSON response.
+  read -r STATUS DESC_ACTION < <(echo "$PUBLISH_JSON" | python3 -c "
 import sys, json
 try:
     data = json.load(sys.stdin)
-    print(data.get('status', ''))
+    print(data.get('status',''), data.get('descriptor_action',''))
 except:
-    print('')
-" 2>/dev/null || true)
-
-  DESC_ACTION=$(echo "$PUBLISH_JSON" | python3 -c "
-import sys, json
-try:
-    data = json.load(sys.stdin)
-    print(data.get('descriptor_action', ''))
-except:
-    print('')
-" 2>/dev/null || true)
+    print('', '')
+" 2>/dev/null || echo " ")
 
   if [[ "$STATUS" == "success" ]]; then
     if [[ "$DESC_ACTION" == "unchanged" || "$DESC_ACTION" == "skipped" ]]; then
@@ -394,9 +412,14 @@ except:
       log_success "$(printf '%-28s %s (published)' "$SVC_NAME" "$SVC_VER")"
       PUBLISHED=$((PUBLISHED + 1))
     fi
+    # Record checksum so re-runs skip this binary.
+    if [[ -n "$PKG_CHECKSUM" ]]; then
+      PUBLISHED_CHECKSUMS["$PKG_CHECKSUM"]=1
+      echo "$PKG_CHECKSUM" >> "$PUBLISHED_CHECKSUMS_FILE"
+    fi
   else
     # Check for "already exists" style errors in the raw output
-    if echo "$PUBLISH_JSON" | grep -qiE "already exists|duplicate|conflict"; then
+    if echo "$PUBLISH_JSON $DESC_ACTION" | grep -qiE "already exists|duplicate|conflict|unchanged|skipped"; then
       log_success "$(printf '%-28s %s (already present)' "$SVC_NAME" "$SVC_VER")"
       SKIPPED=$((SKIPPED + 1))
     else
@@ -423,6 +446,40 @@ except:
   fi
   rm -f "$PUBLISH_ERR_FILE" 2>/dev/null || true
 done
+
+# ── Step 4: Register default upstream source ─────────────────────────────────
+#
+# Writes the default globulario GitHub Releases upstream into etcd so the
+# cluster can sync future releases via `repository.sync.upstream` workflows.
+# This is idempotent: re-running overwrites with the same value.
+#
+# The etcd key is /globular/repository/upstreams/globulario-github.
+# The value is protojson-serialized UpstreamSource (camelCase fields).
+
+UPSTREAM_KEY="/globular/repository/upstreams/globulario-github"
+
+# Check if already registered.
+EXISTING_UPSTREAM=$(etcdctl \
+    --endpoints="https://${NODE_IP}:2379" \
+    --cacert="${STATE_DIR}/pki/ca.crt" \
+    --cert="${STATE_DIR}/pki/issued/services/service.crt" \
+    --key="${STATE_DIR}/pki/issued/services/service.key" \
+    get "$UPSTREAM_KEY" --print-value-only 2>/dev/null || true)
+
+if [[ -z "$EXISTING_UPSTREAM" ]]; then
+  UPSTREAM_JSON='{"name":"globulario-github","type":"GITHUB_RELEASE","indexUrl":"https://github.com/globulario/services/releases/download/{tag}/release-index.json","channel":"stable","platform":"linux_amd64","enabled":true}'
+
+  etcdctl \
+      --endpoints="https://${NODE_IP}:2379" \
+      --cacert="${STATE_DIR}/pki/ca.crt" \
+      --cert="${STATE_DIR}/pki/issued/services/service.crt" \
+      --key="${STATE_DIR}/pki/issued/services/service.key" \
+      put "$UPSTREAM_KEY" "$UPSTREAM_JSON" > /dev/null 2>&1 && \
+    log_success "Upstream source 'globulario-github' registered" || \
+    log_warn "Failed to register upstream source in etcd (non-fatal)"
+else
+  log_success "Upstream source 'globulario-github' already registered"
+fi
 
 # ── Summary ──────────────────────────────────────────────────────────────────
 
