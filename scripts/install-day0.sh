@@ -24,9 +24,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALLER_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PKG_DIR="${PKG_DIR:-"$INSTALLER_ROOT/internal/assets/packages"}"
 
-INSTALLER_BIN="$INSTALLER_ROOT/bin/globular-installer"
-if [[ ! -x "$INSTALLER_BIN" ]]; then
-  INSTALLER_BIN="$(command -v globular-installer || true)"
+# Respect INSTALLER_BIN if already set by a parent script (e.g. install.sh in the
+# release tarball places globular-installer at the tarball root, not in bin/).
+# Fall back to the dev/build layout, then PATH.
+if [[ -z "${INSTALLER_BIN:-}" ]] || [[ ! -x "${INSTALLER_BIN}" ]]; then
+  INSTALLER_BIN="$INSTALLER_ROOT/bin/globular-installer"
+  if [[ ! -x "$INSTALLER_BIN" ]]; then
+    INSTALLER_BIN="$(command -v globular-installer || true)"
+  fi
 fi
 
 # Visual symbols for output
