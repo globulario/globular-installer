@@ -96,11 +96,11 @@ fi
 echo "[bootstrap-dns] Using client certificates for user: $CLIENT_USER"
 echo "[bootstrap-dns] CA certificate: $CA_PATH"
 
-# Pick DNS gRPC endpoint: the service may reallocate from its default port
-# (10006) if another service occupies it at startup time. We probe candidate
-# ports and pick the first one that actually responds as dns.DnsService.
-# Override via DNS_GRPC_ADDR env var to skip discovery.
-DNS_GRPC_ADDR="${DNS_GRPC_ADDR:-}"
+# Pick DNS gRPC endpoint: etcd is the source of truth for all service endpoints.
+# If etcd has the DNS service registered, use that address.
+# If not yet registered, fall back to ss to find what port dns_server is listening on.
+# Never use hardcoded port numbers or env var overrides.
+DNS_GRPC_ADDR=""
 
 # Authenticate as sa to get a JWT token for RBAC-protected calls.
 # Three strategies, tried in order:
@@ -179,9 +179,8 @@ globular_dns() {
         token_flag="--token $SA_TOKEN"
     fi
     # Do NOT use --insecure here: it strips client certificates from the TLS handshake,
-    # causing RBAC to reject with "authentication required". The server cert has
-    # DNS:localhost in its SANs so full mTLS to localhost:10006 works without --insecure.
-    HOME="$CLIENT_HOME" globular --dns "${DNS_GRPC_ADDR:-${NODE_IP}:10006}" $token_flag "$@"
+    # causing RBAC to reject with "authentication required".
+    HOME="$CLIENT_HOME" globular --dns "${DNS_GRPC_ADDR}" $token_flag "$@"
 }
 
 # Probe whether a candidate address actually hosts the DNS gRPC service.
@@ -234,17 +233,36 @@ for i in $(seq 1 $MAX_WAIT); do
         _ensure_etcd
     fi
 
-    # Discover the actual DNS gRPC port on each iteration until found.
-    # The service defaults to 10006 but reallocates if there is a port conflict.
+    # Discover the DNS gRPC endpoint: etcd is authoritative.
+    # If etcd doesn't have it yet, ask ss what port the dns_server process is on.
     if [[ -z "$DNS_GRPC_ADDR" ]]; then
-        for _port in 10006 10007 10008 10009; do
-            if _probe_dns_grpc "${NODE_IP}:$_port"; then
-                DNS_GRPC_ADDR="${NODE_IP}:$_port"
-                [[ "$_port" != "10006" ]] && \
-                    echo "[bootstrap-dns] Note: DNS service found on port $_port (port conflict forced reallocation from 10006)"
-                break
+        _ETCD_EP_DNS="https://${NODE_IP}:2379"
+        _DNS_ETCD=$(etcdctl --endpoints="$_ETCD_EP_DNS" \
+            --cacert="${STATE_DIR}/pki/ca.crt" \
+            --cert="${STATE_DIR}/pki/issued/services/service.crt" \
+            --key="${STATE_DIR}/pki/issued/services/service.key" \
+            get /globular/services/dns.DnsService/config --print-value-only 2>/dev/null \
+          | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('Address','')+'!'+str(d.get('Port','')))" 2>/dev/null || true)
+        _DNS_ETCD_IP="${_DNS_ETCD%%!*}"
+        _DNS_ETCD_PORT="${_DNS_ETCD##*!}"
+        if [[ -n "$_DNS_ETCD_IP" && -n "$_DNS_ETCD_PORT" && "$_DNS_ETCD_PORT" != "0" ]]; then
+            _candidate="${_DNS_ETCD_IP}:${_DNS_ETCD_PORT}"
+            if _probe_dns_grpc "$_candidate"; then
+                DNS_GRPC_ADDR="$_candidate"
             fi
-        done
+        fi
+        # Fallback: probe what the dns_server process is actually listening on.
+        if [[ -z "$DNS_GRPC_ADDR" ]]; then
+            _DNS_SS_PORT=$(ss -tlnp 2>/dev/null \
+              | awk '/dns_server/{match($4,/[^:]+$/); print substr($4,RSTART,RLENGTH)}' \
+              | head -1 || true)
+            if [[ -n "$_DNS_SS_PORT" ]]; then
+                _candidate="${NODE_IP}:${_DNS_SS_PORT}"
+                if _probe_dns_grpc "$_candidate"; then
+                    DNS_GRPC_ADDR="$_candidate"
+                fi
+            fi
+        fi
     fi
 
     # Require both: gRPC port discovered AND port 53 UDP bound
@@ -263,7 +281,7 @@ if [[ $DNS_READY -eq 0 ]]; then
         echo "  DNS gRPC endpoint: $DNS_GRPC_ADDR" >&2
         echo "  gRPC status: $(globular_dns --timeout 5s dns domains get 2>&1 | head -1)" >&2
     else
-        echo "  DNS gRPC: not found on ports 10006-10009" >&2
+        echo "  DNS gRPC: not found via etcd or ss probe" >&2
     fi
     echo "  Port 53 status: $(ss -ulnp 2>/dev/null | grep ':53\s' || echo 'not listening')" >&2
     exit 1
