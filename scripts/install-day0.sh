@@ -508,7 +508,7 @@ if systemctl list-unit-files 2>/dev/null | grep -q "^scylla-server.service"; the
     systemctl start scylla-server.service || log_substep "Warning: failed to start scylla-server"
   fi
   # ScyllaDB binds to the routable IP, not 127.0.0.1 — extract from scylla.yaml
-  SCYLLA_CQL_HOST=$(grep "^listen_address:" /etc/scylla/scylla.yaml 2>/dev/null | awk '{print $2}' | tr -d "'\"")
+  SCYLLA_CQL_HOST=$(grep "^listen_address:" /etc/scylla/scylla.yaml 2>/dev/null | awk '{print $2}' | tr -d "'\"" || true)
   SCYLLA_CQL_HOST="${SCYLLA_CQL_HOST:-$(hostname -I | awk '{print $1}')}"
   log_substep "Waiting for ScyllaDB CQL port (${SCYLLA_CQL_HOST}:9042)..."
   SCYLLA_READY=0
@@ -576,7 +576,7 @@ else
   # to initialize on first start. Without this wait, downstream services
   # (persistence, scylla-manager) fail to connect on the first install attempt.
   # ScyllaDB binds to the routable IP, not 127.0.0.1 — extract from scylla.yaml
-  SCYLLA_CQL_HOST=$(grep "^listen_address:" /etc/scylla/scylla.yaml 2>/dev/null | awk '{print $2}' | tr -d "'\"")
+  SCYLLA_CQL_HOST=$(grep "^listen_address:" /etc/scylla/scylla.yaml 2>/dev/null | awk '{print $2}' | tr -d "'\"" || true)
   SCYLLA_CQL_HOST="${SCYLLA_CQL_HOST:-$(hostname -I | awk '{print $1}')}"
   log_substep "Waiting for ScyllaDB to accept CQL connections (${SCYLLA_CQL_HOST}:9042)..."
   SCYLLA_READY=0
@@ -760,7 +760,7 @@ _KEY="/var/lib/globular/pki/issued/services/service.key"
 
 # --- ScyllaDB hosts ---
 # Detect ScyllaDB listen IP from scylla.yaml (same logic as the readiness check above).
-_SCYLLA_IP=$(grep "^listen_address:" /etc/scylla/scylla.yaml 2>/dev/null | awk '{print $2}' | tr -d "'\"")
+_SCYLLA_IP=$(grep "^listen_address:" /etc/scylla/scylla.yaml 2>/dev/null | awk '{print $2}' | tr -d "'\"" || true)
 if [[ -z "$_SCYLLA_IP" ]]; then
   _SCYLLA_IP="$_NODE_IP_LOCAL"
 fi
@@ -933,8 +933,8 @@ if [[ "$USE_WORKFLOW" == "1" ]]; then
   # Never hardcode 11000 — the port lives in the unit file, not in this script.
   _NA_IP=$(ip route get 8.8.8.8 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1); exit}')
   _NA_IP="${_NA_IP:-$(hostname -I | awk '{print $1}')}"
-  _NA_PORT=$(grep -oP '(?<=--port[= ])\d+' /etc/systemd/system/globular-node-agent.service 2>/dev/null | head -1)
-  _NA_PORT="${_NA_PORT:-$(grep -oP '(?<=--port[= ])\d+' /etc/systemd/system/globular-node-agent.service.d/*.conf 2>/dev/null | head -1)}"
+  _NA_PORT=$(grep -oP '(?<=--port[= ])\d+' /etc/systemd/system/globular-node-agent.service 2>/dev/null | head -1 || true)
+  _NA_PORT="${_NA_PORT:-$(grep -oP '(?<=--port[= ])\d+' /etc/systemd/system/globular-node-agent.service.d/*.conf 2>/dev/null | head -1 || true)}"
   [[ -n "$_NA_PORT" ]] || die "Could not determine node-agent port from installed systemd unit"
 
   # Wait for node-agent to be ready on its routable IP.
@@ -1219,7 +1219,7 @@ AGENT_TOKEN_FILE="/var/lib/globular/scylla-manager-agent/auth_token.txt"
 SCYLLA_IP=""
 if [[ -f /etc/scylla/scylla.yaml ]]; then
   # Strip quotes and whitespace from value (YAML may wrap IPs in single/double quotes)
-  SCYLLA_IP=$(grep "^listen_address:" /etc/scylla/scylla.yaml 2>/dev/null | awk '{print $2}' | tr -d "'\"")
+  SCYLLA_IP=$(grep "^listen_address:" /etc/scylla/scylla.yaml 2>/dev/null | awk '{print $2}' | tr -d "'\"" || true)
 fi
 if [[ -z "$SCYLLA_IP" ]]; then
   SCYLLA_IP=$(ip route get 8.8.8.8 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1); exit}')
@@ -1527,8 +1527,8 @@ trace_finish "ok" "Day-0 installation complete"
 # so the controller can reach back. Never hardcode the port — read it from the unit.
 _BOOTSTRAP_IP=$(ip route get 8.8.8.8 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1); exit}')
 _BOOTSTRAP_IP="${_BOOTSTRAP_IP:-$(hostname -I | awk '{print $1}')}"
-_NA_UNIT_PORT=$(grep -oP '(?<=--port[= ])\d+' /etc/systemd/system/globular-node-agent.service 2>/dev/null | head -1)
-_NA_UNIT_PORT="${_NA_UNIT_PORT:-$(grep -oP '(?<=--port[= ])\d+' /etc/systemd/system/globular-node-agent.service.d/*.conf 2>/dev/null | head -1)}"
+_NA_UNIT_PORT=$(grep -oP '(?<=--port[= ])\d+' /etc/systemd/system/globular-node-agent.service 2>/dev/null | head -1 || true)
+_NA_UNIT_PORT="${_NA_UNIT_PORT:-$(grep -oP '(?<=--port[= ])\d+' /etc/systemd/system/globular-node-agent.service.d/*.conf 2>/dev/null | head -1 || true)}"
 _BOOTSTRAP_NODE="${_BOOTSTRAP_IP}:${_NA_UNIT_PORT}"
 
 echo ""

@@ -131,7 +131,8 @@ if [[ -z "$SA_TOKEN" ]]; then
     SA_PASS="${SA_PASS:-adminadmin}"
 
     # Resolve auth service port from installed systemd unit (never hardcode).
-    _AUTH_PORT=$(grep -oP '(?<=--port[= ])\d+' /etc/systemd/system/globular-authentication.service 2>/dev/null | head -1)
+    # || true: grep exits 1 when pattern not found; with set -euo pipefail that would abort the script.
+    _AUTH_PORT=$(grep -oP '(?<=--port[= ])\d+' /etc/systemd/system/globular-authentication.service 2>/dev/null | head -1 || true)
     _AUTH_PORT="${_AUTH_PORT:-$(grep -oP '(?<=--port[= ])\d+' /etc/systemd/system/globular-authentication.service.d/*.conf 2>/dev/null | head -1 || true)}"
     _AUTH_PORT="${_AUTH_PORT:-10000}"
     _AUTH_DIRECT="localhost:${_AUTH_PORT}"
