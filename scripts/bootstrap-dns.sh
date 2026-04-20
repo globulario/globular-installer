@@ -143,29 +143,42 @@ if [[ -z "$SA_TOKEN" ]]; then
     _ETCD_CA="${STATE_DIR}/pki/ca.crt"
     _ETCD_CERT="${STATE_DIR}/pki/issued/services/service.crt"
     _ETCD_KEY="${STATE_DIR}/pki/issued/services/service.key"
+    # etcd --print-value-only emits multi-line JSON objects concatenated together.
+    # Use raw_decode to walk the stream and extract each object individually.
     _AUTH_DIRECT=$(etcdctl --endpoints="$_ETCD_EP" \
         --cacert="$_ETCD_CA" --cert="$_ETCD_CERT" --key="$_ETCD_KEY" \
         get /globular/services/ --prefix --print-value-only 2>/dev/null \
       | python3 -c "
 import json, sys
-for line in sys.stdin:
-    line = line.strip()
-    if not line: continue
+dec = json.JSONDecoder()
+buf = sys.stdin.read()
+pos = 0
+while pos < len(buf):
+    # skip whitespace between objects
+    while pos < len(buf) and buf[pos] in ' \t\r\n':
+        pos += 1
+    if pos >= len(buf):
+        break
     try:
-        d = json.loads(line)
-        if d.get('Name') != 'authentication.AuthenticationService': continue
+        d, end = dec.raw_decode(buf, pos)
+        pos = end
+        if d.get('Name') != 'authentication.AuthenticationService':
+            continue
         addr = d.get('Address', '')
         port = int(d.get('Port', 0))
         host = addr.rsplit(':', 1)[0] if ':' in addr else addr
         if host and port:
             print(f'{host}:{port}')
             break
-    except: pass
+    except Exception:
+        pos += 1
 " 2>/dev/null || true)
     # If etcd has no record yet, find what port authentication_server is actually on.
+    # NOTE: Linux truncates comm names to 15 chars in ss output, so "authentication_server"
+    # appears as "authentication_" — match on the truncated prefix.
     if [[ -z "$_AUTH_DIRECT" ]]; then
-        _AUTH_PORT=$(ss -tlnp 2>/dev/null \
-          | awk '/authentication_server/{match($4,/[^:]+$/); print substr($4,RSTART,RLENGTH)}' \
+        _AUTH_PORT=$(sudo ss -tlnp 2>/dev/null \
+          | awk '/authentication_/{match($4,/[^:]+$/); print substr($4,RSTART,RLENGTH)}' \
           | head -1 || true)
         [[ -n "$_AUTH_PORT" ]] && _AUTH_DIRECT="${NODE_IP}:${_AUTH_PORT}"
     fi
@@ -249,6 +262,7 @@ for i in $(seq 1 $MAX_WAIT); do
     if [[ -z "$DNS_GRPC_ADDR" ]]; then
         # etcd service records use UUIDs as keys; scan all /globular/services/ entries
         # and match by Name field — never use a hardcoded key path.
+        # etcd --print-value-only emits multi-line JSON; use raw_decode to parse.
         _DNS_CANDIDATE=$(etcdctl \
             --endpoints="https://${NODE_IP}:2379" \
             --cacert="${STATE_DIR}/pki/ca.crt" \
@@ -257,19 +271,27 @@ for i in $(seq 1 $MAX_WAIT); do
             get /globular/services/ --prefix --print-value-only 2>/dev/null \
           | python3 -c "
 import json, sys
-for line in sys.stdin:
-    line = line.strip()
-    if not line: continue
+dec = json.JSONDecoder()
+buf = sys.stdin.read()
+pos = 0
+while pos < len(buf):
+    while pos < len(buf) and buf[pos] in ' \t\r\n':
+        pos += 1
+    if pos >= len(buf):
+        break
     try:
-        d = json.loads(line)
-        if d.get('Name') != 'dns.DnsService': continue
+        d, end = dec.raw_decode(buf, pos)
+        pos = end
+        if d.get('Name') != 'dns.DnsService':
+            continue
         addr = d.get('Address', '')
         port = int(d.get('Port', 0))
         host = addr.rsplit(':', 1)[0] if ':' in addr else addr
         if host and port:
             print(f'{host}:{port}')
             break
-    except: pass
+    except Exception:
+        pos += 1
 " 2>/dev/null || true)
         if [[ -n "$_DNS_CANDIDATE" ]]; then
             if _probe_dns_grpc "$_DNS_CANDIDATE"; then
@@ -277,8 +299,9 @@ for line in sys.stdin:
             fi
         fi
         # Fallback: probe what the dns_server process is actually listening on.
+        # "dns_server" is 10 chars — fits within Linux's 15-char comm limit, no truncation.
         if [[ -z "$DNS_GRPC_ADDR" ]]; then
-            _DNS_SS_PORT=$(ss -tlnp 2>/dev/null \
+            _DNS_SS_PORT=$(sudo ss -tlnp 2>/dev/null \
               | awk '/dns_server/{match($4,/[^:]+$/); print substr($4,RSTART,RLENGTH)}' \
               | head -1 || true)
             if [[ -n "$_DNS_SS_PORT" ]]; then
