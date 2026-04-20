@@ -142,59 +142,91 @@ fi
 
 # ── Step 1: Discover repository endpoint ─────────────────────────────────────
 
+# Routable node IP — never loopback.
+NODE_IP=$(ip route get 8.8.8.8 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1); exit}')
+NODE_IP="${NODE_IP:-$(hostname -I | awk '{print $1}')}"
+
 REPO_ADDR="${REPO_ADDR:-}"
 
 if [[ -z "$REPO_ADDR" ]]; then
-  log_info "Discovering repository service endpoint..."
+  log_info "Discovering repository service endpoint from etcd..."
 
-  # Find a CA cert for the gateway HTTPS call.
-  # Search the real user's home first, then root, then system-wide.
-  CA_CERT=""
-  for _ca in \
-      "$REAL_HOME/.config/globular/pki/ca.crt" \
-      "$REAL_HOME/.config/globular/tls/localhost/ca.crt" \
-      "$REAL_HOME/.config/globular/tls/globular.internal/ca.crt" \
-      /root/.config/globular/pki/ca.crt \
-      /root/.config/globular/tls/localhost/ca.crt \
-      /var/lib/globular/pki/ca.crt; do
-    if [[ -f "$_ca" && -r "$_ca" ]]; then
-      CA_CERT="$_ca"
-      break
-    fi
-  done
+  STATE_DIR="${STATE_DIR:-/var/lib/globular}"
 
-  if [[ -z "$CA_CERT" ]]; then
-    log_warn "No CA cert found — cannot discover repository endpoint"
-    exit 1
-  fi
-
-  # Query gateway /config for the repository service port.
-  # Retry up to 5 times — the repository may still be registering with the gateway.
-  REPO_ADDR=""
-  for _repo_attempt in $(seq 1 5); do
-    REPO_ADDR=$(curl -sf --max-time 5 \
-        --cacert "$CA_CERT" \
-        "https://localhost:8443/config" 2>/dev/null \
-      | python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-for svc in data.get('Services', {}).values():
-    name = svc.get('Name', '')
-    if 'repository' in name.lower() and 'PackageRepository' in name:
-        addr = svc.get('Address', '')
-        host = addr.split(':')[0] if addr else '127.0.0.1'
-        port = int(svc.get('Port', 0))
-        if port:
+  # etcd service records use UUIDs as keys — scan all entries and match by Name.
+  # This is the authoritative source; never use hardcoded ports or gateway probing.
+  REPO_ADDR=$(etcdctl \
+      --endpoints="https://${NODE_IP}:2379" \
+      --cacert="${STATE_DIR}/pki/ca.crt" \
+      --cert="${STATE_DIR}/pki/issued/services/service.crt" \
+      --key="${STATE_DIR}/pki/issued/services/service.key" \
+      get /globular/services/ --prefix --print-value-only 2>/dev/null \
+    | python3 -c "
+import json, sys
+dec = json.JSONDecoder()
+buf = sys.stdin.read()
+pos = 0
+while pos < len(buf):
+    while pos < len(buf) and buf[pos] in ' \t\r\n':
+        pos += 1
+    if pos >= len(buf):
+        break
+    try:
+        d, end = dec.raw_decode(buf, pos)
+        pos = end
+        if d.get('Name') != 'repository.PackageRepository':
+            continue
+        addr = d.get('Address', '')
+        port = int(d.get('Port', 0))
+        host = addr.rsplit(':', 1)[0] if ':' in addr else addr
+        if host and port:
             print(f'{host}:{port}')
             break
+    except Exception:
+        pos += 1
 " 2>/dev/null || true)
-    [[ -n "$REPO_ADDR" ]] && break
-    log_info "Repository not yet available (attempt $_repo_attempt/5), retrying..."
-    sleep 3
-  done
+
+  # Retry up to 5 times — the repository may still be registering with etcd.
+  if [[ -z "$REPO_ADDR" ]]; then
+    for _repo_attempt in $(seq 2 5); do
+      sleep 3
+      log_info "Repository not yet in etcd (attempt $_repo_attempt/5), retrying..."
+      REPO_ADDR=$(etcdctl \
+          --endpoints="https://${NODE_IP}:2379" \
+          --cacert="${STATE_DIR}/pki/ca.crt" \
+          --cert="${STATE_DIR}/pki/issued/services/service.crt" \
+          --key="${STATE_DIR}/pki/issued/services/service.key" \
+          get /globular/services/ --prefix --print-value-only 2>/dev/null \
+        | python3 -c "
+import json, sys
+dec = json.JSONDecoder()
+buf = sys.stdin.read()
+pos = 0
+while pos < len(buf):
+    while pos < len(buf) and buf[pos] in ' \t\r\n':
+        pos += 1
+    if pos >= len(buf):
+        break
+    try:
+        d, end = dec.raw_decode(buf, pos)
+        pos = end
+        if d.get('Name') != 'repository.PackageRepository':
+            continue
+        addr = d.get('Address', '')
+        port = int(d.get('Port', 0))
+        host = addr.rsplit(':', 1)[0] if ':' in addr else addr
+        if host and port:
+            print(f'{host}:{port}')
+            break
+    except Exception:
+        pos += 1
+" 2>/dev/null || true)
+      [[ -n "$REPO_ADDR" ]] && break
+    done
+  fi
 
   if [[ -z "$REPO_ADDR" ]]; then
-    log_warn "Repository service not found via gateway /config after 5 attempts"
+    log_warn "Repository service not found in etcd after 5 attempts"
     exit 1
   fi
 fi
@@ -274,8 +306,6 @@ if [[ -z "${GLOBULAR_TOKEN:-}" ]]; then
 
   log_success "Auth token acquired"
 fi
-
-export GLOBULAR_TOKEN
 
 # ── Step 3: Publish each core package ────────────────────────────────────────
 

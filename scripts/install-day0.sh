@@ -1522,6 +1522,19 @@ if [[ -n "$INSTALLER_USER" ]] && id globular >/dev/null 2>&1; then
   fi
 fi
 
+# ── Publish bootstrap artifacts to repository (Layer 1) ──────────────────────
+# Populates the Repository catalog so the cluster can manage upgrades,
+# new-node joins, and desired-state resolution. Idempotent — skips packages
+# already present. Non-fatal: install completes even if some packages fail.
+log_step "Publishing Bootstrap Artifacts to Repository"
+if [[ -x "$SCRIPT_DIR/ensure-bootstrap-artifacts.sh" ]]; then
+  PKG_DIR="$PKG_DIR" GLOBULAR_CLI="$GLOBULAR_CLI" \
+    "$SCRIPT_DIR/ensure-bootstrap-artifacts.sh" || \
+    log_warn "Some artifacts failed to publish — run ensure-bootstrap-artifacts.sh manually"
+else
+  log_warn "ensure-bootstrap-artifacts.sh not found — skipping artifact publish"
+fi
+
 echo ""
 echo "╔════════════════════════════════════════════════════════════════╗"
 echo "║          ✓ INSTALLATION COMPLETE                               ║"
