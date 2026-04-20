@@ -146,6 +146,29 @@ fi
 NODE_IP=$(ip route get 8.8.8.8 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1); exit}')
 NODE_IP="${NODE_IP:-$(hostname -I | awk '{print $1}')}"
 
+STATE_DIR="${STATE_DIR:-/var/lib/globular}"
+
+# Locate the CA cert. This script runs as root (via sudo), so root's home
+# and /var/lib/globular/ are both accessible.
+CA_CERT=""
+DOMAIN=$(python3 -c "import json; d=json.load(open('${STATE_DIR}/config.json')); print(d.get('Domain','globular.internal'))" 2>/dev/null || echo "globular.internal")
+for _ca in \
+    /root/.config/globular/tls/${DOMAIN}/ca.crt \
+    /root/.config/globular/tls/globular.internal/ca.crt \
+    "${STATE_DIR}/pki/ca.crt" \
+    "$REAL_HOME/.config/globular/tls/${DOMAIN}/ca.crt" \
+    "$REAL_HOME/.config/globular/tls/globular.internal/ca.crt"; do
+  if [[ -f "$_ca" && -r "$_ca" ]]; then
+    CA_CERT="$_ca"
+    break
+  fi
+done
+if [[ -z "$CA_CERT" ]]; then
+  log_warn "No readable CA cert found — cannot publish artifacts (TLS required)"
+  exit 1
+fi
+log_info "Using CA cert: $CA_CERT"
+
 REPO_ADDR="${REPO_ADDR:-}"
 
 if [[ -z "$REPO_ADDR" ]]; then
@@ -257,21 +280,14 @@ if [[ -z "${GLOBULAR_TOKEN:-}" ]]; then
     chown -R "${SUDO_USER}":"${SUDO_USER}" "$CONFIG_DIR" 2>/dev/null || true
   fi
 
-  # When running as root via sudo, run the CLI login as the real user so
-  # it writes the token and reads client certs from the right home dir.
-  # Retry up to 3 times — auth service may still be starting.
+  # Run as root (EUID=0 since script is invoked via sudo bash).
+  # Root can read /var/lib/globular/pki/ and /root/.config/globular/.
   log_info "Logging in as $GLOBULAR_USER..."
-  TOKEN_FILE="${REAL_HOME}/.config/globular/token"
+  TOKEN_FILE="/root/.config/globular/token"
   for _auth_attempt in $(seq 1 3); do
-    if [[ $EUID -eq 0 && -n "${SUDO_USER:-}" ]]; then
-      LOGIN_OUT=$(sudo -u "$SUDO_USER" "$GLOBULAR_CLI" auth login \
-        --user "$GLOBULAR_USER" \
-        --password "$GLOBULAR_PASSWORD" 2>&1) || true
-    else
-      LOGIN_OUT=$("$GLOBULAR_CLI" auth login \
-        --user "$GLOBULAR_USER" \
-        --password "$GLOBULAR_PASSWORD" 2>&1) || true
-    fi
+    LOGIN_OUT=$("$GLOBULAR_CLI" --ca "$CA_CERT" auth login \
+      --user "$GLOBULAR_USER" \
+      --password "$GLOBULAR_PASSWORD" 2>&1) || true
 
     # Check for token in file.
     if [[ -f "$TOKEN_FILE" ]]; then
@@ -345,20 +361,11 @@ for pattern in "${CORE_PACKAGES[@]}"; do
   # so the JSON parser doesn't choke on progress output.
   # Run as the real user (not root) so the CLI finds client certs.
   PUBLISH_ERR_FILE="/tmp/publish-err-$$.log"
-  if [[ $EUID -eq 0 && -n "${SUDO_USER:-}" ]]; then
-    PUBLISH_JSON=$(sudo -u "$SUDO_USER" \
-      "$GLOBULAR_CLI" --timeout 60s --token "$GLOBULAR_TOKEN" pkg publish \
-        --file "$PACKAGE" \
-        --repository "$REPO_ADDR" \
-        --force \
-        --output json 2>"$PUBLISH_ERR_FILE") || true
-  else
-    PUBLISH_JSON=$("$GLOBULAR_CLI" --timeout 60s --token "$GLOBULAR_TOKEN" pkg publish \
-      --file "$PACKAGE" \
-      --repository "$REPO_ADDR" \
-      --force \
-      --output json 2>"$PUBLISH_ERR_FILE") || true
-  fi
+  PUBLISH_JSON=$("$GLOBULAR_CLI" --ca "$CA_CERT" --timeout 60s --token "$GLOBULAR_TOKEN" pkg publish \
+    --file "$PACKAGE" \
+    --repository "$REPO_ADDR" \
+    --force \
+    --output json 2>"$PUBLISH_ERR_FILE") || true
 
   # Parse the JSON result.
   STATUS=$(echo "$PUBLISH_JSON" | python3 -c "
