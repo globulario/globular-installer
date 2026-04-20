@@ -121,7 +121,8 @@ fi
 
 # Strategy 2: Authenticate via auth service (Day-0 default password: adminadmin).
 # During Day-0, Envoy is not yet running so the standard mesh routing (host:443)
-# fails. Use --auth localhost:<port> to connect directly, bypassing mesh rewriting.
+# fails. Use --auth <node-ip>:<port> to connect directly, bypassing mesh rewriting.
+# The auth service binds to the node's routable IP, not 127.0.0.1.
 if [[ -z "$SA_TOKEN" ]]; then
     SA_CRED_FILE="${STATE_DIR}/.bootstrap-sa-password"
     SA_PASS=""
@@ -130,12 +131,34 @@ if [[ -z "$SA_TOKEN" ]]; then
     fi
     SA_PASS="${SA_PASS:-adminadmin}"
 
-    # Resolve auth service port from installed systemd unit (never hardcode).
-    # || true: grep exits 1 when pattern not found; with set -euo pipefail that would abort the script.
-    _AUTH_PORT=$(grep -oP '(?<=--port[= ])\d+' /etc/systemd/system/globular-authentication.service 2>/dev/null | head -1 || true)
-    _AUTH_PORT="${_AUTH_PORT:-$(grep -oP '(?<=--port[= ])\d+' /etc/systemd/system/globular-authentication.service.d/*.conf 2>/dev/null | head -1 || true)}"
-    _AUTH_PORT="${_AUTH_PORT:-10000}"
-    _AUTH_DIRECT="localhost:${_AUTH_PORT}"
+    # Resolve the routable node IP (never loopback — auth service binds to the
+    # node's primary IP, not 127.0.0.1).
+    _NODE_IP=$(ip route get 8.8.8.8 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1); exit}')
+    _NODE_IP="${_NODE_IP:-$(hostname -I | awk '{print $1}')}"
+
+    # Resolve auth endpoint from etcd (authoritative). Fall back to ss probe.
+    # etcd is guaranteed to be running by this point in the Day-0 install.
+    _ETCD_EP="https://${_NODE_IP}:2379"
+    _CA_CERT_ETCD="${STATE_DIR}/pki/ca.crt"
+    _SVC_CERT="${STATE_DIR}/pki/issued/services/service.crt"
+    _SVC_KEY="${STATE_DIR}/pki/issued/services/service.key"
+    _AUTH_ADDR=$(etcdctl --endpoints="$_ETCD_EP" \
+        --cacert="$_CA_CERT_ETCD" --cert="$_SVC_CERT" --key="$_SVC_KEY" \
+        get /globular/services/authentication.AuthenticationService/config \
+        --print-value-only 2>/dev/null \
+      | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('Address','')+'!'+str(d.get('Port','')))" 2>/dev/null || true)
+    _AUTH_IP="${_AUTH_ADDR%%!*}"
+    _AUTH_PORT="${_AUTH_ADDR##*!}"
+    # If etcd lookup failed or returned empty, probe with ss to find what the
+    # auth process is actually listening on (avoids any hardcoded port).
+    if [[ -z "$_AUTH_IP" || -z "$_AUTH_PORT" || "$_AUTH_PORT" == "0" ]]; then
+        _AUTH_PORT=$(ss -tlnp 2>/dev/null \
+          | awk '/authentication_server/{match($4,/[^:]+$/); print substr($4,RSTART,RLENGTH)}' \
+          | head -1 || true)
+        _AUTH_IP="$_NODE_IP"
+    fi
+    [[ -n "$_AUTH_IP" && -n "$_AUTH_PORT" ]] || { echo "[bootstrap-dns] ERROR: could not resolve auth service address" >&2; exit 1; }
+    _AUTH_DIRECT="${_AUTH_IP}:${_AUTH_PORT}"
 
     echo "[bootstrap-dns] Authenticating as sa (direct: ${_AUTH_DIRECT})..."
     _auth_out=$(HOME="$CLIENT_HOME" globular --timeout 10s --insecure --auth "${_AUTH_DIRECT}" auth login --user sa --password "$SA_PASS" 2>&1 || true)
