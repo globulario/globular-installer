@@ -10,6 +10,11 @@ export GLOBULAR_SKIP_ETCD_DISCOVERY=1
 
 STATE_DIR="${STATE_DIR:-/var/lib/globular}"
 
+# Routable node IP — used throughout; never loopback.
+# Services bind to the primary routable IP, not 127.0.0.1.
+NODE_IP=$(ip route get 8.8.8.8 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1); exit}')
+NODE_IP="${NODE_IP:-$(hostname -I | awk '{print $1}')}"
+
 # Enable bootstrap mode so RBAC interceptors allow Day-0 writes.
 # The bootstrap gate has a 30-minute window and restricts to loopback.
 # Use the unix-timestamp format that the bootstrap gate reads (enabled_at_unix/expires_at_unix).
@@ -131,14 +136,9 @@ if [[ -z "$SA_TOKEN" ]]; then
     fi
     SA_PASS="${SA_PASS:-adminadmin}"
 
-    # Resolve the routable node IP (never loopback — auth service binds to the
-    # node's primary IP, not 127.0.0.1).
-    _NODE_IP=$(ip route get 8.8.8.8 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1); exit}')
-    _NODE_IP="${_NODE_IP:-$(hostname -I | awk '{print $1}')}"
-
     # Resolve auth endpoint from etcd (authoritative). Fall back to ss probe.
     # etcd is guaranteed to be running by this point in the Day-0 install.
-    _ETCD_EP="https://${_NODE_IP}:2379"
+    _ETCD_EP="https://${NODE_IP}:2379"
     _CA_CERT_ETCD="${STATE_DIR}/pki/ca.crt"
     _SVC_CERT="${STATE_DIR}/pki/issued/services/service.crt"
     _SVC_KEY="${STATE_DIR}/pki/issued/services/service.key"
@@ -155,7 +155,7 @@ if [[ -z "$SA_TOKEN" ]]; then
         _AUTH_PORT=$(ss -tlnp 2>/dev/null \
           | awk '/authentication_server/{match($4,/[^:]+$/); print substr($4,RSTART,RLENGTH)}' \
           | head -1 || true)
-        _AUTH_IP="$_NODE_IP"
+        _AUTH_IP="$NODE_IP"
     fi
     [[ -n "$_AUTH_IP" && -n "$_AUTH_PORT" ]] || { echo "[bootstrap-dns] ERROR: could not resolve auth service address" >&2; exit 1; }
     _AUTH_DIRECT="${_AUTH_IP}:${_AUTH_PORT}"
@@ -181,7 +181,7 @@ globular_dns() {
     # Do NOT use --insecure here: it strips client certificates from the TLS handshake,
     # causing RBAC to reject with "authentication required". The server cert has
     # DNS:localhost in its SANs so full mTLS to localhost:10006 works without --insecure.
-    HOME="$CLIENT_HOME" globular --dns "${DNS_GRPC_ADDR:-localhost:10006}" $token_flag "$@"
+    HOME="$CLIENT_HOME" globular --dns "${DNS_GRPC_ADDR:-${NODE_IP}:10006}" $token_flag "$@"
 }
 
 # Probe whether a candidate address actually hosts the DNS gRPC service.
@@ -238,8 +238,8 @@ for i in $(seq 1 $MAX_WAIT); do
     # The service defaults to 10006 but reallocates if there is a port conflict.
     if [[ -z "$DNS_GRPC_ADDR" ]]; then
         for _port in 10006 10007 10008 10009; do
-            if _probe_dns_grpc "localhost:$_port"; then
-                DNS_GRPC_ADDR="localhost:$_port"
+            if _probe_dns_grpc "${NODE_IP}:$_port"; then
+                DNS_GRPC_ADDR="${NODE_IP}:$_port"
                 [[ "$_port" != "10006" ]] && \
                     echo "[bootstrap-dns] Note: DNS service found on port $_port (port conflict forced reallocation from 10006)"
                 break
