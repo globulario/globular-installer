@@ -132,10 +132,16 @@ else
     WEBROOT_PATH="webroot"
 fi
 
-# Locate webroot assets directory
+# Locate webroot assets directory.
+# In the release tarball the assets live at the top-level webroot/ (next to scripts/).
+# In the source tree they live at internal/assets/webroot/.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALLER_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-ASSETS_WEBROOT="${INSTALLER_ROOT}/internal/assets/webroot"
+if [[ -d "${INSTALLER_ROOT}/webroot" ]]; then
+    ASSETS_WEBROOT="${INSTALLER_ROOT}/webroot"
+else
+    ASSETS_WEBROOT="${INSTALLER_ROOT}/internal/assets/webroot"
+fi
 
 # Upload webroot content (always upload to ensure clean state)
 echo "[ensure-minio-buckets] Uploading webroot content to: ${WEBROOT_PATH}/"

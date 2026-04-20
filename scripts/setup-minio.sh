@@ -266,17 +266,13 @@ except boto_exc.ClientError as exc:
 PY
 }
 
-if [[ -n "${CONTRACT_CA_BUNDLE}" ]] && has_boto3; then
-  echo "[setup-minio] Using boto3 path because CONTRACT_CA_BUNDLE is set."
-  provision_with_boto3
-elif [[ -n "${CONTRACT_CA_BUNDLE}" ]]; then
-  echo "ERROR: CONTRACT_CA_BUNDLE is set but boto3 is unavailable; install boto3 to honor TLS verification." >&2
-  exit 1
-elif command -v mc >/dev/null 2>&1; then
+# mc is preferred: it handles TLS natively and is always present in the release.
+# boto3 is only used when mc is absent and boto3 is available.
+if command -v mc >/dev/null 2>&1; then
   echo "[setup-minio] Using mc for provisioning."
   provision_with_mc
 elif has_boto3; then
-  echo "[setup-minio] Using boto3 fallback for provisioning."
+  echo "[setup-minio] Using boto3 for provisioning."
   provision_with_boto3
 else
   echo "ERROR: Neither 'mc' nor 'boto3' is available. Install MinIO Client (mc) or Python boto3." >&2
