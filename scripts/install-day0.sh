@@ -345,7 +345,8 @@ install_list() {
       # but install-day0.sh arrays use canonical names like <name>_0.0.1_linux_amd64.tgz.
       local prefix="${f%%_*}"
       local match
-      match=$(ls "$PKG_DIR/${prefix}_"*"_linux_amd64.tgz" 2>/dev/null | head -1)
+      # || match="" prevents set -euo pipefail from treating ls-no-match (exit 2) as fatal
+      match=$(ls "$PKG_DIR/${prefix}_"*"_linux_amd64.tgz" 2>/dev/null | head -1) || match=""
       if [[ -n "$match" ]]; then
         log_substep "Resolved $f → $(basename "$match")"
         path="$match"
