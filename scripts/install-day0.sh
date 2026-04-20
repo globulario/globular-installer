@@ -340,8 +340,19 @@ install_list() {
   for f in "${pkg_array[@]}"; do
     local path="$PKG_DIR/$f"
     if [[ ! -f "$path" ]]; then
-      log_substep "Warning: package not found, skipping: $path"
-      continue
+      # Exact name not found — try resolving by package name prefix (version-agnostic).
+      # Packages in the release tarball are named <name>_<release-version>_linux_amd64.tgz
+      # but install-day0.sh arrays use canonical names like <name>_0.0.1_linux_amd64.tgz.
+      local prefix="${f%%_*}"
+      local match
+      match=$(ls "$PKG_DIR/${prefix}_"*"_linux_amd64.tgz" 2>/dev/null | head -1)
+      if [[ -n "$match" ]]; then
+        log_substep "Resolved $f → $(basename "$match")"
+        path="$match"
+      else
+        log_substep "Warning: package not found, skipping: $path"
+        continue
+      fi
     fi
     run_install "$path"
   done
