@@ -871,6 +871,17 @@ install_list "${DATA_LAYER_PKGS[@]}"
 
 log_step "MinIO Bucket Setup"
 if [[ -x "$SCRIPT_DIR/setup-minio.sh" ]]; then
+  # Seed WEBROOT_DIR from the bundled welcome page assets if the caller
+  # hasn't provided custom content and the release tarball contains webroot/.
+  if [[ -z "${WEBROOT_DIR:-}" ]]; then
+    _BUNDLED_WEBROOT="$(dirname "$SCRIPT_DIR")/webroot"
+    if [[ -d "$_BUNDLED_WEBROOT" ]]; then
+      export WEBROOT_DIR="$_BUNDLED_WEBROOT"
+      log_substep "Using bundled welcome page assets: $_BUNDLED_WEBROOT"
+    else
+      export WEBROOT_DIR="${STATE_DIR}/webroot"
+    fi
+  fi
   "$SCRIPT_DIR/setup-minio.sh"
   log_success "MinIO buckets configured"
 else
