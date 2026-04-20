@@ -119,7 +119,9 @@ if [[ -d "${STATE_DIR}/tokens" ]]; then
     done
 fi
 
-# Strategy 2: Authenticate via auth service (Day-0 default password: adminadmin)
+# Strategy 2: Authenticate via auth service (Day-0 default password: adminadmin).
+# During Day-0, Envoy is not yet running so the standard mesh routing (host:443)
+# fails. Use --auth localhost:<port> to connect directly, bypassing mesh rewriting.
 if [[ -z "$SA_TOKEN" ]]; then
     SA_CRED_FILE="${STATE_DIR}/.bootstrap-sa-password"
     SA_PASS=""
@@ -128,8 +130,14 @@ if [[ -z "$SA_TOKEN" ]]; then
     fi
     SA_PASS="${SA_PASS:-adminadmin}"
 
-    echo "[bootstrap-dns] Authenticating as sa..."
-    _auth_out=$(HOME="$CLIENT_HOME" globular --timeout 5s --insecure auth login --user sa --password "$SA_PASS" 2>&1 || true)
+    # Resolve auth service port from installed systemd unit (never hardcode).
+    _AUTH_PORT=$(grep -oP '(?<=--port[= ])\d+' /etc/systemd/system/globular-authentication.service 2>/dev/null | head -1)
+    _AUTH_PORT="${_AUTH_PORT:-$(grep -oP '(?<=--port[= ])\d+' /etc/systemd/system/globular-authentication.service.d/*.conf 2>/dev/null | head -1 || true)}"
+    _AUTH_PORT="${_AUTH_PORT:-10000}"
+    _AUTH_DIRECT="localhost:${_AUTH_PORT}"
+
+    echo "[bootstrap-dns] Authenticating as sa (direct: ${_AUTH_DIRECT})..."
+    _auth_out=$(HOME="$CLIENT_HOME" globular --timeout 10s --insecure --auth "${_AUTH_DIRECT}" auth login --user sa --password "$SA_PASS" 2>&1 || true)
     SA_TOKEN=$(echo "$_auth_out" | grep "^Token:" | sed 's/^Token: //' || true)
     if [[ -n "$SA_TOKEN" ]]; then
         echo "[bootstrap-dns] ✓ Authenticated (token acquired)"
