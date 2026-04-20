@@ -26,7 +26,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALLER_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-PKG_DIR="${PKG_DIR:-"$INSTALLER_ROOT/internal/assets/packages"}"
+PKG_DIR="${PKG_DIR:-"$INSTALLER_ROOT/packages"}"
 
 INSTALLER_BIN="$INSTALLER_ROOT/bin/globular-installer"
 if [[ ! -x "$INSTALLER_BIN" ]]; then
@@ -49,6 +49,7 @@ DOMAIN="${GLOBULAR_DOMAIN:-globular.internal}"
 PROFILES="${GLOBULAR_PROFILES:-core,control-plane,storage}"
 MINIO_DATA_DIR="${MINIO_DATA_DIR:-/var/lib/globular/minio/data}"
 FORCE_REINSTALL="${FORCE_REINSTALL:-0}"
+CA_KEY_FILE=""           # Optional: local path to cluster CA private key (skips MinIO download)
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -59,6 +60,7 @@ while [[ $# -gt 0 ]]; do
     --domain)        DOMAIN="$2";          shift 2 ;;
     --profiles)      PROFILES="$2";        shift 2 ;;
     --minio-data-dir)MINIO_DATA_DIR="$2";  shift 2 ;;
+    --ca-key)        CA_KEY_FILE="$2";     shift 2 ;;
     --force)         FORCE_REINSTALL=1;    shift   ;;
     *) die "Unknown argument: $1" ;;
   esac
@@ -187,11 +189,11 @@ ETCDCTL_BIN="${ETCDCTL_BIN:-/usr/local/bin/etcdctl}"
 [[ -x "$MC_BIN" ]]     || die "mc not available after bootstrap install"
 [[ -x "$ETCDCTL_BIN" ]] || die "etcdctl not available after bootstrap install"
 
-# ─── Step 2: Download cluster CA from MinIO ────────────────────────────────────
+# ─── Step 2: Bootstrap cluster PKI (CA cert + key) ────────────────────────────
 # The CA was uploaded during Day-0 to globular-config/pki/ca.pem + ca.key.
-# MinIO credentials: read from /var/lib/globular/minio/credentials if present
-# (the operator may have SCP'd them), otherwise prompt.
-log_step "Download Cluster CA from MinIO"
+# If --ca-key was provided, we use that file directly (operator scp'd it).
+# Otherwise, we download both from MinIO.
+log_step "Bootstrap Cluster PKI"
 
 PKI_DIR="/var/lib/globular/pki"
 mkdir -p "$PKI_DIR"
@@ -209,7 +211,7 @@ fi
 if [[ -z "$MINIO_ACCESS" || -z "$MINIO_SECRET" ]]; then
   echo ""
   echo "  MinIO credentials are required to download the cluster CA."
-  echo "  Run on ryzen:  cat /var/lib/globular/minio/credentials"
+  echo "  Run on the controller node:  sudo cat /var/lib/globular/minio/credentials"
   echo ""
   read -r -p "  MinIO access key: " MINIO_ACCESS
   read -r -s -p "  MinIO secret key: " MINIO_SECRET
@@ -221,26 +223,49 @@ fi
 
 # Configure mc alias pointing at the controller's MinIO (using IP, not DNS — DNS isn't up yet)
 MINIO_ALIAS="cluster"
-"$MC_BIN" alias set "$MINIO_ALIAS" "https://${MINIO_ADDR}" \
-  "$MINIO_ACCESS" "$MINIO_SECRET" --insecure >/dev/null 2>&1 || \
-  die "mc alias set failed — check MinIO address and credentials"
+if ! "$MC_BIN" alias set "$MINIO_ALIAS" "https://${MINIO_ADDR}" \
+    "$MINIO_ACCESS" "$MINIO_SECRET" --insecure >/dev/null 2>&1; then
+  die "mc alias set failed — check MinIO address ($MINIO_ADDR) and credentials"
+fi
+log_substep "mc alias set for $MINIO_ADDR (user=$MINIO_ACCESS)"
 
 # Download CA certificate
 if "$MC_BIN" cp "${MINIO_ALIAS}/globular-config/pki/ca.pem" \
     "${PKI_DIR}/ca.pem" --insecure >/dev/null 2>&1; then
   cp "${PKI_DIR}/ca.pem" "${PKI_DIR}/ca.crt"
-  log_success "Cluster CA certificate downloaded"
+  log_success "Cluster CA certificate downloaded from MinIO"
 else
-  die "Failed to download CA cert from MinIO (${MINIO_ADDR}/globular-config/pki/ca.pem)"
+  die "Failed to download CA cert from MinIO (${MINIO_ADDR}/globular-config/pki/ca.pem)
+  Fix: run on the controller node (replace NODE_IP with the controller's IP):
+    AK=\$(cut -d: -f1 /var/lib/globular/minio/credentials)
+    SK=\$(cut -d: -f2- /var/lib/globular/minio/credentials)
+    mc alias set local https://NODE_IP:9000 \"\$AK\" \"\$SK\" --insecure
+    mc mb --ignore-existing local/globular-config --insecure
+    mc cp /var/lib/globular/pki/ca.pem local/globular-config/pki/ca.pem --insecure
+    mc cp /var/lib/globular/pki/ca.key local/globular-config/pki/ca.key --insecure"
 fi
 
-# Download CA private key
-if "$MC_BIN" cp "${MINIO_ALIAS}/globular-config/pki/ca.key" \
+# CA private key: prefer --ca-key argument, then download from MinIO
+if [[ -n "$CA_KEY_FILE" ]]; then
+  [[ -f "$CA_KEY_FILE" ]] || die "--ca-key file not found: $CA_KEY_FILE"
+  cp "$CA_KEY_FILE" "${PKI_DIR}/ca.key"
+  chmod 400 "${PKI_DIR}/ca.key"
+  log_success "Cluster CA private key loaded from $CA_KEY_FILE"
+elif "$MC_BIN" cp "${MINIO_ALIAS}/globular-config/pki/ca.key" \
     "${PKI_DIR}/ca.key" --insecure >/dev/null 2>&1; then
   chmod 400 "${PKI_DIR}/ca.key"
-  log_success "Cluster CA private key downloaded"
+  log_success "Cluster CA private key downloaded from MinIO"
 else
-  die "Failed to download CA key from MinIO (${MINIO_ADDR}/globular-config/pki/ca.key)"
+  die "Failed to download CA key from MinIO (${MINIO_ADDR}/globular-config/pki/ca.key)
+  Fix A — provide the CA key directly:
+    sudo ./install-day1.sh ... --ca-key /path/to/ca.key
+  Fix B — upload the CA key to MinIO first (run on the controller node):
+    NODE_IP=\$(hostname -I | awk '{print \$1}')
+    AK=\$(cut -d: -f1 /var/lib/globular/minio/credentials)
+    SK=\$(cut -d: -f2- /var/lib/globular/minio/credentials)
+    mc alias set local https://\${NODE_IP}:9000 \"\$AK\" \"\$SK\" --insecure
+    mc mb --ignore-existing local/globular-config --insecure
+    mc cp /var/lib/globular/pki/ca.key local/globular-config/pki/ca.key --insecure"
 fi
 
 # Save MinIO credentials file so services can use them later
@@ -387,7 +412,7 @@ name: ${NODE_HOSTNAME}
 data-dir: ${ETCD_DATA_DIR}
 
 listen-peer-urls: https://${NODE_IP}:2380
-listen-client-urls: https://${NODE_IP}:2379,https://127.0.0.1:2379
+listen-client-urls: https://${NODE_IP}:2379
 
 initial-advertise-peer-urls: https://${NODE_IP}:2380
 advertise-client-urls: https://${NODE_IP}:2379
@@ -444,7 +469,7 @@ log_substep "Waiting for etcd to accept local client connections..."
 ETCD_READY=0
 for i in $(seq 1 60); do
   if "$ETCDCTL_BIN" \
-      --endpoints="https://127.0.0.1:2379" \
+      --endpoints="https://${NODE_IP}:2379" \
       --cacert="$CA_CERT" --cert="$SVC_CERT" --key="$SVC_KEY" \
       endpoint health >/dev/null 2>&1; then
     ETCD_READY=1
@@ -521,7 +546,7 @@ systemctl start globular-node-agent.service || die "Failed to start node-agent"
 log_substep "Waiting for node-agent on :11000..."
 NODE_AGENT_READY=0
 for i in $(seq 1 30); do
-  if timeout 2 bash -c "echo >/dev/tcp/127.0.0.1/11000" 2>/dev/null; then
+  if timeout 2 bash -c "echo >/dev/tcp/${NODE_IP}/11000" 2>/dev/null; then
     NODE_AGENT_READY=1
     break
   fi
@@ -548,7 +573,7 @@ fi
 
 log_substep "Running: globular cluster join"
 log_substep "  Controller: $CONTROLLER_ADDR"
-log_substep "  Node-agent: 127.0.0.1:11000"
+log_substep "  Node-agent: ${NODE_IP}:11000"
 log_substep "  Profiles:   $PROFILES"
 
 # Convert comma-separated profiles to repeated --profile flags
@@ -561,7 +586,7 @@ done
 set +e
 JOIN_OUTPUT="$("$GLOBULAR_CLI" cluster join \
   --controller "$CONTROLLER_ADDR" \
-  --node "127.0.0.1:11000" \
+  --node "${NODE_IP}:11000" \
   --join-token "$JOIN_TOKEN" \
   $PROFILE_FLAGS \
   2>&1)"

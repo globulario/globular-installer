@@ -173,15 +173,7 @@ echo ""
 # Prompt for MinIO data storage location
 # MinIO stores all bucket data under this directory. Choose a path on a
 # drive with enough space for your object-store data (backups, media, etc.)
-MINIO_DATA_DIR="${MINIO_DATA_DIR:-}"
-if [[ -z "$MINIO_DATA_DIR" ]]; then
-  DEFAULT_MINIO_DATA_DIR="/var/lib/globular/minio/data"
-  echo "  MinIO stores all bucket data (backups, media, etc.) in a local directory."
-  echo "  Choose a path on a drive with enough free space."
-  echo ""
-  read -r -p "  MinIO data directory [$DEFAULT_MINIO_DATA_DIR]: " MINIO_DATA_DIR
-  MINIO_DATA_DIR="${MINIO_DATA_DIR:-$DEFAULT_MINIO_DATA_DIR}"
-fi
+MINIO_DATA_DIR="${MINIO_DATA_DIR:-/var/lib/globular/minio/data}"
 # Ensure absolute path
 if [[ "${MINIO_DATA_DIR:0:1}" != "/" ]]; then
   die "MinIO data directory must be an absolute path: $MINIO_DATA_DIR"
@@ -500,7 +492,7 @@ if systemctl list-unit-files 2>/dev/null | grep -q "^scylla-server.service"; the
   fi
   # ScyllaDB binds to the routable IP, not 127.0.0.1 — extract from scylla.yaml
   SCYLLA_CQL_HOST=$(grep "^listen_address:" /etc/scylla/scylla.yaml 2>/dev/null | awk '{print $2}' | tr -d "'\"")
-  SCYLLA_CQL_HOST="${SCYLLA_CQL_HOST:-127.0.0.1}"
+  SCYLLA_CQL_HOST="${SCYLLA_CQL_HOST:-$(hostname -I | awk '{print $1}')}"
   log_substep "Waiting for ScyllaDB CQL port (${SCYLLA_CQL_HOST}:9042)..."
   SCYLLA_READY=0
   for i in $(seq 1 90); do
@@ -568,7 +560,7 @@ else
   # (persistence, scylla-manager) fail to connect on the first install attempt.
   # ScyllaDB binds to the routable IP, not 127.0.0.1 — extract from scylla.yaml
   SCYLLA_CQL_HOST=$(grep "^listen_address:" /etc/scylla/scylla.yaml 2>/dev/null | awk '{print $2}' | tr -d "'\"")
-  SCYLLA_CQL_HOST="${SCYLLA_CQL_HOST:-127.0.0.1}"
+  SCYLLA_CQL_HOST="${SCYLLA_CQL_HOST:-$(hostname -I | awk '{print $1}')}"
   log_substep "Waiting for ScyllaDB to accept CQL connections (${SCYLLA_CQL_HOST}:9042)..."
   SCYLLA_READY=0
   for i in $(seq 1 90); do
@@ -743,11 +735,11 @@ install_list "${CMDS_PKGS[@]}"
 # These keys must be written BEFORE the cluster controller starts, which reads
 # them during initProjections and publishMinioConfigLocked.
 log_step "Seed Tier-0 etcd keys (ScyllaDB hosts + MinIO config)"
-_ETCD_ENDPOINTS="${ETCD_ENDPOINTS:-https://localhost:2379}"
+_NODE_IP_LOCAL=$(hostname -I | awk '{print $1}')
+_ETCD_ENDPOINTS="${ETCD_ENDPOINTS:-https://${_NODE_IP_LOCAL}:2379}"
 _CA_CERT="/var/lib/globular/pki/ca.crt"
 _CERT="/var/lib/globular/pki/issued/services/service.crt"
 _KEY="/var/lib/globular/pki/issued/services/service.key"
-_NODE_IP_LOCAL=$(hostname -I | awk '{print $1}')
 
 # --- ScyllaDB hosts ---
 # Detect ScyllaDB listen IP from scylla.yaml (same logic as the readiness check above).
@@ -805,11 +797,23 @@ log_step "Cluster Config (shared via MinIO)"
 MC_BIN="/usr/local/bin/mc"
 MINIO_ALIAS="local"
 if [[ -x "$MC_BIN" ]]; then
-  # Configure mc alias (uses credentials from minio.json or defaults).
-  MINIO_ENDPOINT="https://127.0.0.1:9000"
-  MINIO_ACCESS=$(cat /var/lib/globular/objectstore/minio.json 2>/dev/null | jq -r '.AccessKey // "minioadmin"')
-  MINIO_SECRET=$(cat /var/lib/globular/objectstore/minio.json 2>/dev/null | jq -r '.SecretKey // "minioadmin"')
-  "$MC_BIN" alias set "$MINIO_ALIAS" "$MINIO_ENDPOINT" "$MINIO_ACCESS" "$MINIO_SECRET" --insecure 2>/dev/null || true
+  # Read credentials from the canonical credentials file (written by setup-minio-contract.sh).
+  # minio.json stores auth.mode=file — the AccessKey/SecretKey fields are NOT directly in it.
+  # Fallback to default credentials only if the file is missing.
+  MINIO_ENDPOINT="https://$(hostname -I | awk '{print $1}'):9000"
+  _CRED_FILE="/var/lib/globular/minio/credentials"
+  if [[ -f "$_CRED_FILE" ]]; then
+    MINIO_ACCESS="$(cut -d: -f1 "$_CRED_FILE")"
+    MINIO_SECRET="$(cut -d: -f2- "$_CRED_FILE")"
+  else
+    MINIO_ACCESS="globular"
+    MINIO_SECRET="globularadmin"
+  fi
+  if "$MC_BIN" alias set "$MINIO_ALIAS" "$MINIO_ENDPOINT" "$MINIO_ACCESS" "$MINIO_SECRET" --insecure 2>/dev/null; then
+    log_substep "mc alias configured (user=$MINIO_ACCESS)"
+  else
+    log_substep "Warning: mc alias set failed — cluster config upload skipped"
+  fi
 
   # Create config bucket.
   "$MC_BIN" mb --ignore-existing "${MINIO_ALIAS}/globular-config" --insecure 2>/dev/null || true
@@ -908,11 +912,19 @@ if [[ "$USE_WORKFLOW" == "1" ]]; then
   systemctl enable globular-node-agent.service 2>/dev/null || true
   systemctl start globular-node-agent.service || die "Failed to start node-agent"
 
-  # Wait for node-agent to be ready on :11000.
-  log_substep "Waiting for node-agent to be ready..."
+  # Resolve the node-agent's actual port from the installed systemd unit.
+  # Never hardcode 11000 — the port lives in the unit file, not in this script.
+  _NA_IP=$(ip route get 8.8.8.8 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1); exit}')
+  _NA_IP="${_NA_IP:-$(hostname -I | awk '{print $1}')}"
+  _NA_PORT=$(grep -oP '(?<=--port[= ])\d+' /etc/systemd/system/globular-node-agent.service 2>/dev/null | head -1)
+  _NA_PORT="${_NA_PORT:-$(grep -oP '(?<=--port[= ])\d+' /etc/systemd/system/globular-node-agent.service.d/*.conf 2>/dev/null | head -1)}"
+  [[ -n "$_NA_PORT" ]] || die "Could not determine node-agent port from installed systemd unit"
+
+  # Wait for node-agent to be ready on its routable IP.
+  log_substep "Waiting for node-agent to be ready on ${_NA_IP}:${_NA_PORT}..."
   for i in $(seq 1 30); do
-    if timeout 2 bash -c "echo >/dev/tcp/127.0.0.1/11000" 2>/dev/null; then
-      log_success "Node-agent ready on :11000"
+    if timeout 2 bash -c "echo >/dev/tcp/${_NA_IP}/${_NA_PORT}" 2>/dev/null; then
+      log_success "Node-agent ready on ${_NA_IP}:${_NA_PORT}"
       break
     fi
     if [[ $i -eq 30 ]]; then
@@ -945,7 +957,7 @@ if [[ "$USE_WORKFLOW" == "1" ]]; then
       -cert "$SVC_CERT" -key "$SVC_KEY" \
       -d "$GRPC_REQUEST" \
       -max-time 1800 \
-      127.0.0.1:11000 node_agent.NodeAgentService/RunWorkflow 2>&1 | while IFS= read -r line; do
+      "${_NA_IP}:${_NA_PORT}" node_agent.NodeAgentService/RunWorkflow 2>&1 | while IFS= read -r line; do
         echo "  [workflow] $line"
       done
     WORKFLOW_RC=${PIPESTATUS[0]}
@@ -957,7 +969,7 @@ if [[ "$USE_WORKFLOW" == "1" ]]; then
     fi
     if [[ -n "$GLOBULAR_CLI" ]] && [[ -x "$GLOBULAR_CLI" ]]; then
       "$GLOBULAR_CLI" --insecure --timeout 1800s workflow run day0.bootstrap \
-        --node 127.0.0.1:11000 2>&1 | while IFS= read -r line; do
+        --node "${_NA_IP}:${_NA_PORT}" 2>&1 | while IFS= read -r line; do
           echo "  [workflow] $line"
         done
       WORKFLOW_RC=${PIPESTATUS[0]}
@@ -1196,7 +1208,7 @@ if [[ -z "$SCYLLA_IP" ]]; then
   SCYLLA_IP=$(ip route get 8.8.8.8 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1); exit}')
 fi
 if [[ -z "$SCYLLA_IP" ]]; then
-  SCYLLA_IP="127.0.0.1"
+  SCYLLA_IP=$(hostname -I | awk '{print $1}')
 fi
 
 # Generate auth token (idempotent)
@@ -1225,7 +1237,7 @@ s3:
   secret_access_key: ${MINIO_SK}
   provider: Minio
   region: us-east-1
-  endpoint: https://127.0.0.1:9000
+  endpoint: https://${SCYLLA_IP}:9000
 
 # Skip TLS verification for internal MinIO with self-signed certs
 rclone:
@@ -1298,7 +1310,7 @@ if [[ -f "$AGENT_TOKEN_FILE" ]] && command -v sctool &>/dev/null; then
   # Check if already registered
   if ! sctool cluster list 2>/dev/null | grep -q "$DOMAIN"; then
     REGISTER_OUT=$(sctool cluster add \
-      --host "${SCYLLA_IP:-127.0.0.1}" \
+      --host "${SCYLLA_IP}" \
       --name "${DOMAIN}" \
       --auth-token "${AGENT_TOKEN}" \
       --port 56090 2>&1) && \
@@ -1444,127 +1456,16 @@ if [[ -f "$CC_STATE" ]]; then
   fi
 fi
 
-# Reload systemd and restart both services so they pick up the token.
+# Reload systemd and restart only the controller so it picks up the join token.
+# The node-agent is enabled but NOT started here — the operator starts it explicitly.
 systemctl daemon-reload
-systemctl restart globular-cluster-controller globular-node-agent
-log_substep "Restarted controller and node-agent with shared join token"
-# Wait for services to fully start (TLS initialization, etcd connection, etc.)
-sleep 10
+systemctl restart globular-cluster-controller
+log_substep "Restarted cluster controller with shared join token"
+# Give controller time to re-initialize with the new token.
+sleep 5
 log_success "Day-0 join token provisioned"
 
-# ── Cluster Bootstrap ────────────────────────────────────────────────────────
-# Register the first node with the cluster controller so heartbeats and
-# desired-state seed can discover installed services. This must run AFTER
-# the controller and node-agent are both running.
-log_step "Cluster Bootstrap (register first node)"
-trace_step "running" "phase.bootstrap" "Cluster Bootstrap" 8
-if [[ -x "$GLOBULAR_CLI" ]]; then
-  # BootstrapFirstNode is now BLOCKING — it waits for the controller to
-  # become reachable and completes RequestJoin + ApproveJoin before
-  # returning. This can take up to ~60s, so use a long timeout (120s).
-  BOOTSTRAP_OK=0
-  BOOTSTRAP_OUTPUT=""
-  for attempt in $(seq 1 4); do
-    log_substep "  attempt $attempt: calling bootstrap..."
-    BOOTSTRAP_OUTPUT=$("$GLOBULAR_CLI" --insecure --timeout 120s cluster bootstrap \
-        --node "127.0.0.1:11000" \
-        --domain "$DOMAIN" 2>&1) && { BOOTSTRAP_OK=1; break; }
-    log_substep "  attempt $attempt failed: $BOOTSTRAP_OUTPUT"
-    sleep 10
-  done
-  if [[ $BOOTSTRAP_OK -eq 1 ]]; then
-    log_success "First node registered with cluster controller"
-    log_substep "$BOOTSTRAP_OUTPUT"
-    # Give heartbeat time to fire so seed can discover services.
-    sleep 10
-  else
-    log_substep "ERROR: cluster bootstrap failed after 6 attempts"
-    log_substep "Last output: $BOOTSTRAP_OUTPUT"
-    log_substep "Check logs:"
-    log_substep "  journalctl -u globular-cluster-controller -n 20 --no-pager"
-    log_substep "  journalctl -u globular-node-agent -n 20 --no-pager"
-    die "Cluster bootstrap failed — cannot continue without registered node"
-  fi
-else
-  die "globular CLI not found at $GLOBULAR_CLI — cannot bootstrap"
-fi
-
-# ── 4-Layer State Alignment ──────────────────────────────────────────────────
-# Layer 1 (Artifact): publish packages to the Repository catalog.
-# Layer 2 (Desired Release): import installed services into the controller's
-#          desired state so they are declaratively tracked.
-# Layers 3+4 (Installed Observed / Runtime Health): already populated by the
-#          node-agent and systemd during package installation above.
-#
-# This must run AFTER health validation (services running) and BEFORE seed
-# (so the repository is populated before desired-state references artifacts).
-log_step "Publish Bootstrap Artifacts to Repository (Layer 1: Artifact)"
-
-# Clear stale artifacts from MinIO so rebuilt packages replace old ones.
-# Without this, ensure-bootstrap-artifacts.sh sees "already present" and skips,
-# leaving old binaries in the repo that the reconciler re-deploys over fresh installs.
-if command -v mc &>/dev/null || [[ -x /usr/lib/globular/bin/mc ]]; then
-  MC_BIN="${MC_BIN:-$(command -v mc 2>/dev/null || echo /usr/lib/globular/bin/mc)}"
-  MINIO_CRED_FILE="${BOOTSTRAP_DATA_DIR:-/var/lib/globular}/minio/credentials"
-  if [[ -f "$MINIO_CRED_FILE" ]]; then
-    _ak=$(head -1 "$MINIO_CRED_FILE")
-    _sk=$(tail -1 "$MINIO_CRED_FILE")
-    _minio_host="${MINIO_ENDPOINT:-$(hostname -I | awk '{print $1}'):9000}"
-    "$MC_BIN" --insecure alias set _globular "https://${_minio_host}" "$_ak" "$_sk" &>/dev/null || true
-    "$MC_BIN" --insecure rm --recursive --force _globular/globular/globular.internal/artifacts/ &>/dev/null || true
-    "$MC_BIN" --insecure alias rm _globular &>/dev/null || true
-    log_substep "Cleared stale artifacts from MinIO"
-  fi
-fi
-
-if [[ -x "$SCRIPT_DIR/ensure-bootstrap-artifacts.sh" ]]; then
-  # Export PKG_DIR and GLOBULAR_CLI so the helper script can find packages and CLI
-  export PKG_DIR GLOBULAR_CLI
-  if "$SCRIPT_DIR/ensure-bootstrap-artifacts.sh"; then
-    log_success "Bootstrap artifacts published to Repository"
-  else
-    log_substep "Warning: some artifacts failed to publish to Repository"
-    log_substep "Run manually later: PKG_DIR=$PKG_DIR $SCRIPT_DIR/ensure-bootstrap-artifacts.sh"
-  fi
-else
-  log_substep "Warning: ensure-bootstrap-artifacts.sh not found, Repository catalog will be empty"
-  log_substep "Run manually later: $SCRIPT_DIR/ensure-bootstrap-artifacts.sh"
-fi
-
-# Import installed services into desired state (Layer 2: Desired Release).
-# Idempotent — safe to re-run; existing entries are left unchanged.
-log_step "Import Installed Services into Desired State (Layer 2)"
-if [[ -x "$GLOBULAR_CLI" ]]; then
-  log_substep "Importing installed services into controller desired state..."
-  # Node-agent self-registers during bootstrap and begins heartbeats.
-  # Services need time to start and be discovered by the heartbeat loop.
-  # With 20+ services the full discovery can take 30-60s.
-  log_substep "Waiting for node-agent to discover installed services..."
-  sleep 15
-  SEED_OK=0
-  for attempt in $(seq 1 12); do
-    SEED_OUT=$("$GLOBULAR_CLI" --insecure --timeout 60s services seed 2>&1) && {
-      SEED_OK=1
-      break
-    }
-    if [[ $attempt -le 3 ]]; then
-      log_substep "  attempt $attempt: waiting for node registration and service discovery..."
-    fi
-    sleep 10
-  done
-  if [[ $SEED_OK -eq 1 ]]; then
-    log_success "Desired state imported from installed services"
-  else
-    log_substep "Warning: failed to import desired state after 12 attempts"
-    log_substep "Last error: $SEED_OUT"
-    log_substep "Run manually later: globular services seed --insecure"
-    log_substep "Or diagnose with: globular services repair --dry-run --insecure"
-  fi
-else
-  log_substep "Warning: globular CLI not found at $GLOBULAR_CLI, skipping desired-state import"
-  log_substep "Run manually later: globular services seed --insecure"
-fi
-
+# ── Final Service Stabilization ──────────────────────────────────────────────
 # Restart the cluster controller so it picks up fresh gRPC connections to all
 # services. During install, services are started/stopped/restarted in sequence
 # which leaves the controller with stale cached connections. A final restart
@@ -1596,25 +1497,45 @@ if [[ -n "$INSTALLER_USER" ]] && id globular >/dev/null 2>&1; then
   fi
 fi
 
+echo ""
 echo "╔════════════════════════════════════════════════════════════════╗"
 echo "║          ✓ INSTALLATION COMPLETE                               ║"
 echo "╚════════════════════════════════════════════════════════════════╝"
 echo ""
-log_success "Globular Day-0 installation successful!"
+log_success "Infrastructure ready. Bootstrap mode is active — start the node agent and run bootstrap."
 trace_finish "ok" "Day-0 installation complete"
 
-if [[ $VALIDATION_PASSED -eq 1 ]]; then
-  log_success "All cluster health checks passed!"
-fi
+# Resolve the actual node IP and node-agent port from the installed systemd unit.
+# Never use localhost/127.0.0.1 — the bootstrap command must use the routable IP
+# so the controller can reach back. Never hardcode the port — read it from the unit.
+_BOOTSTRAP_IP=$(ip route get 8.8.8.8 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1); exit}')
+_BOOTSTRAP_IP="${_BOOTSTRAP_IP:-$(hostname -I | awk '{print $1}')}"
+_NA_UNIT_PORT=$(grep -oP '(?<=--port[= ])\d+' /etc/systemd/system/globular-node-agent.service 2>/dev/null | head -1)
+_NA_UNIT_PORT="${_NA_UNIT_PORT:-$(grep -oP '(?<=--port[= ])\d+' /etc/systemd/system/globular-node-agent.service.d/*.conf 2>/dev/null | head -1)}"
+_BOOTSTRAP_NODE="${_BOOTSTRAP_IP}:${_NA_UNIT_PORT}"
 
-# Phase 5: Disable bootstrap mode and clean up credentials (Day-0 complete)
-# Remove the flag file to close the bootstrap window.
-# Remove the bootstrap sa credential file (no longer needed).
-if [[ -f "$BOOTSTRAP_FLAG" ]]; then
-  log_substep "Disabling bootstrap mode..."
-  rm -f "$BOOTSTRAP_FLAG"
-  log_success "Bootstrap mode disabled (Day-0 complete)"
-fi
-rm -f /var/lib/globular/.bootstrap-sa-password 2>/dev/null || true
-
+echo ""
+echo "  Next steps:"
+echo ""
+echo "  1. Start the node agent:"
+echo "       sudo systemctl start globular-node-agent"
+echo ""
+echo "     Verify it is running:"
+echo "       sudo systemctl status globular-node-agent"
+echo ""
+echo "  2. Bootstrap this node (in another terminal):"
+echo "       globular cluster bootstrap \\"
+echo "         --node ${_BOOTSTRAP_NODE} \\"
+echo "         --domain <your-domain> \\"
+echo "         --profile core \\"
+echo "         --profile gateway"
+echo ""
+echo "     Example for a single-node cluster:"
+echo "       globular cluster bootstrap \\"
+echo "         --node ${_BOOTSTRAP_NODE} \\"
+echo "         --domain mycluster.local \\"
+echo "         --profile core --profile gateway --profile storage"
+echo ""
+echo "  After bootstrap, add more nodes with:"
+echo "       curl -sfL https://<gateway>:8443/join -k | sudo bash -s -- --token <token>"
 echo ""
