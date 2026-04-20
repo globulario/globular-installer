@@ -363,8 +363,10 @@ DATA_LAYER_PKGS=(
 
 BOOTSTRAP_REST_PKGS=(
   "xds_0.0.1_linux_amd64.tgz"
-  "envoy_1.35.3_linux_amd64.tgz"
+  # gateway must come before envoy: envoy's ExecStartPre waits for
+  # /run/globular/envoy/envoy-bootstrap.json which gateway writes on startup.
   "gateway_0.0.1_linux_amd64.tgz"
+  "envoy_1.35.3_linux_amd64.tgz"
   "node-agent_0.0.1_linux_amd64.tgz"
   "cluster-controller_0.0.1_linux_amd64.tgz"
   "cluster-doctor_0.0.1_linux_amd64.tgz"
@@ -447,9 +449,14 @@ cat > "$BOOTSTRAP_FLAG" <<EOF
 }
 EOF
 
-# Set secure permissions: 0600, root-owned
+# Set secure permissions: 0600, globular-owned so services running as globular can read it.
+# The bootstrap gate allows both root-owned and globular-owned files.
 chmod 0600 "$BOOTSTRAP_FLAG"
-chown root:root "$BOOTSTRAP_FLAG" 2>/dev/null || chown 0:0 "$BOOTSTRAP_FLAG"
+if id globular >/dev/null 2>&1; then
+  chown globular:globular "$BOOTSTRAP_FLAG" 2>/dev/null || true
+else
+  chown root:root "$BOOTSTRAP_FLAG" 2>/dev/null || chown 0:0 "$BOOTSTRAP_FLAG"
+fi
 
 log_success "Bootstrap mode enabled: $BOOTSTRAP_FLAG (expires: $(date -d @$EXPIRES_AT '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -r $EXPIRES_AT '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo 'in 30 minutes'))"
 
@@ -511,23 +518,19 @@ if systemctl list-unit-files 2>/dev/null | grep -q "^scylla-server.service"; the
 else
   log_substep "ScyllaDB not found — installing..."
 
-  # Ensure GPG keyring directory exists
-  mkdir -p /etc/apt/keyrings
-
-  # Import ScyllaDB GPG key if not present
-  if [[ ! -f /etc/apt/keyrings/scylladb.gpg ]]; then
-    log_substep "Importing ScyllaDB GPG key..."
-    curl -fsSL https://downloads.scylladb.com/deb/ubuntu/scylladb-2025.3.gpg | \
-      gpg --dearmor -o /etc/apt/keyrings/scylladb.gpg
-    log_success "ScyllaDB GPG key imported"
-  fi
-
   # Install the ScyllaDB Globular package (sets up apt repo + installs OS packages)
   if [[ -f "$PKG_DIR/$SCYLLADB_PKG" ]]; then
     run_install "$PKG_DIR/$SCYLLADB_PKG"
   else
     log_substep "Warning: $SCYLLADB_PKG not found, attempting direct apt install..."
-    # Ensure apt repo is configured
+    # Only import GPG key and configure apt repo when falling back to direct apt install
+    mkdir -p /etc/apt/keyrings
+    if [[ ! -f /etc/apt/keyrings/scylladb.gpg ]]; then
+      log_substep "Importing ScyllaDB GPG key..."
+      curl -fsSL https://downloads.scylladb.com/deb/ubuntu/scylladb-2025.3.gpg | \
+        gpg --dearmor -o /etc/apt/keyrings/scylladb.gpg
+      log_success "ScyllaDB GPG key imported"
+    fi
     if [[ ! -f /etc/apt/sources.list.d/scylla.list ]]; then
       echo "deb [arch=amd64,arm64 signed-by=/etc/apt/keyrings/scylladb.gpg] https://downloads.scylladb.com/downloads/scylla/deb/debian-ubuntu/scylladb-2025.3 stable main" \
         > /etc/apt/sources.list.d/scylla.list
@@ -735,6 +738,55 @@ fi
 
 log_step "CLI Tools (needed for bucket provisioning)"
 install_list "${CMDS_PKGS[@]}"
+
+# Seed etcd Tier-0 keys so services that cannot use DNS can find infrastructure.
+# These keys must be written BEFORE the cluster controller starts, which reads
+# them during initProjections and publishMinioConfigLocked.
+log_step "Seed Tier-0 etcd keys (ScyllaDB hosts + MinIO config)"
+_ETCD_ENDPOINTS="${ETCD_ENDPOINTS:-https://localhost:2379}"
+_CA_CERT="/var/lib/globular/pki/ca.crt"
+_CERT="/var/lib/globular/pki/issued/services/service.crt"
+_KEY="/var/lib/globular/pki/issued/services/service.key"
+_NODE_IP_LOCAL=$(hostname -I | awk '{print $1}')
+
+# --- ScyllaDB hosts ---
+# Detect ScyllaDB listen IP from scylla.yaml (same logic as the readiness check above).
+_SCYLLA_IP=$(grep "^listen_address:" /etc/scylla/scylla.yaml 2>/dev/null | awk '{print $2}' | tr -d "'\"")
+if [[ -z "$_SCYLLA_IP" ]]; then
+  _SCYLLA_IP="$_NODE_IP_LOCAL"
+fi
+if [[ -n "$_SCYLLA_IP" ]] && [[ "$_SCYLLA_IP" != "127.0.0.1" ]]; then
+  if etcdctl --endpoints="$_ETCD_ENDPOINTS" \
+      --cacert="$_CA_CERT" --cert="$_CERT" --key="$_KEY" \
+      put "/globular/cluster/scylla/hosts" "[\"$_SCYLLA_IP\"]" >/dev/null 2>&1; then
+    log_success "ScyllaDB hosts seeded in etcd: [$_SCYLLA_IP]"
+  else
+    log_substep "Warning: could not seed ScyllaDB hosts in etcd (will retry at runtime)"
+  fi
+else
+  log_substep "Warning: could not determine ScyllaDB listen IP, skipping scylla hosts seed"
+fi
+
+# --- MinIO config ---
+# Read credentials from the credentials file (written by setup-minio-contract.sh).
+# This ensures the cluster controller uses the same credentials MinIO was initialized with.
+_MINIO_CRED_FILE="/var/lib/globular/minio/credentials"
+if [[ -f "$_MINIO_CRED_FILE" ]]; then
+  _MINIO_AK=$(cut -d: -f1 "$_MINIO_CRED_FILE")
+  _MINIO_SK=$(cut -d: -f2- "$_MINIO_CRED_FILE")
+  if [[ -n "$_MINIO_AK" && -n "$_MINIO_SK" ]]; then
+    _MINIO_ETCD_VAL="{\"endpoint\":\"minio.${DOMAIN}:9000\",\"access_key\":\"$_MINIO_AK\",\"secret_key\":\"$_MINIO_SK\",\"secure\":true,\"bucket\":\"globular\",\"prefix\":\"${DOMAIN}\"}"
+    if etcdctl --endpoints="$_ETCD_ENDPOINTS" \
+        --cacert="$_CA_CERT" --cert="$_CERT" --key="$_KEY" \
+        put "/globular/cluster/minio/config" "$_MINIO_ETCD_VAL" >/dev/null 2>&1; then
+      log_success "MinIO config seeded in etcd (access_key=$_MINIO_AK endpoint=minio.${DOMAIN}:9000)"
+    else
+      log_substep "Warning: could not seed MinIO config in etcd (will be written by cluster controller)"
+    fi
+  fi
+else
+  log_substep "Warning: MinIO credentials file not found — MinIO config not seeded"
+fi
 
 log_step "MinIO Bucket Provisioning"
 # On new packages, the post-install.sh script already created buckets during
@@ -1008,6 +1060,19 @@ fi
 
 log_step "Control Plane Services"
 trace_step "running" "phase.control-plane" "Control Plane Services" 5
+
+# Add /etc/hosts entry for <hostname>.globular.internal so the DNS service can
+# resolve the etcd endpoint (globule-ryzen.globular.internal:2379) before the
+# cluster DNS resolver is running. This is a Day-0 bootstrap necessity only —
+# once DNS is bootstrapped the system resolver handles this.
+_NODE_IP=$(hostname -I | awk '{print $1}')
+_NODE_SHORT=$(hostname -s)
+_NODE_FQDN="${_NODE_SHORT}.${DOMAIN}"
+if [[ -n "$_NODE_IP" ]] && ! grep -qF "$_NODE_FQDN" /etc/hosts 2>/dev/null; then
+  echo "$_NODE_IP  $_NODE_FQDN  $_NODE_SHORT" >> /etc/hosts
+  log_substep "Added /etc/hosts: $_NODE_IP → $_NODE_FQDN (bootstrap DNS resolution)"
+fi
+
 install_list "${CONTROL_PLANE_PKGS[@]}"
 
 # Set cluster_domain in cluster controller config so the admin UI and DNS

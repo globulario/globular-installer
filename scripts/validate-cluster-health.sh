@@ -227,7 +227,7 @@ echo "Waiting for services to stabilize..."
 sleep 5
 
 check "ScyllaDB connection test" \
-    "host=\$(awk -F': *' '/^(rpc_address|listen_address)/ {print \$2}' /etc/scylla/scylla.yaml 2>/dev/null | head -n1 | tr -d \"'\"); host=\${host:-127.0.0.1}; cqlsh \"\$host\" -e 'DESCRIBE KEYSPACES;' 2>/dev/null | grep -q 'local_resource' && echo \"ok (\$host)\"" \
+    "host=\$(awk -F': *' '/^(rpc_address|listen_address)/ {print \$2}' /etc/scylla/scylla.yaml 2>/dev/null | head -n1 | tr -d \"'\"); host=\${host:-\$(hostname -I | awk '{print \$1}')}; cqlsh \"\$host\" -e 'SELECT now() FROM system.local;' 2>/dev/null | grep -q 'now()' && echo \"ok (\$host)\"" \
     "ok"
 
 # DNS check with retry (in case service just started)

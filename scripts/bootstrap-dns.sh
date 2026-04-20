@@ -12,18 +12,38 @@ STATE_DIR="${STATE_DIR:-/var/lib/globular}"
 
 # Enable bootstrap mode so RBAC interceptors allow Day-0 writes.
 # The bootstrap gate has a 30-minute window and restricts to loopback.
-# Always recreate — a stale file from a previous attempt would be expired.
+# Use the unix-timestamp format that the bootstrap gate reads (enabled_at_unix/expires_at_unix).
+# If install-day0.sh already created a valid (non-expired) flag, reuse it.
+# Otherwise recreate it (standalone invocation).
 BOOTSTRAP_FILE="${STATE_DIR}/bootstrap.enabled"
-NOW_UTC=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-EXPIRES_UTC=$(date -u -d "+30 minutes" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v+30M +%Y-%m-%dT%H:%M:%SZ)
-cat > "$BOOTSTRAP_FILE" <<BSEOF
+_now=$(date +%s)
+_existing_expires=0
+if [[ -f "$BOOTSTRAP_FILE" ]]; then
+    _existing_expires=$(python3 -c "import json,sys; d=json.load(open('$BOOTSTRAP_FILE')); print(d.get('expires_at_unix',0))" 2>/dev/null || echo 0)
+fi
+if [[ "$_existing_expires" -gt "$_now" ]]; then
+    echo "[bootstrap-dns] Reusing existing bootstrap flag (expires in $(( _existing_expires - _now ))s)"
+else
+    ENABLED_AT=$(date +%s)
+    EXPIRES_AT=$((ENABLED_AT + 1800))
+    NONCE=$(openssl rand -hex 16 2>/dev/null || echo "bs-dns-$$")
+    mkdir -p "$(dirname "$BOOTSTRAP_FILE")"
+    cat > "$BOOTSTRAP_FILE" <<BSEOF
 {
-  "enabled_at": "$NOW_UTC",
-  "expires_at": "$EXPIRES_UTC",
-  "created_by": "bootstrap-dns.sh"
+  "enabled_at_unix": $ENABLED_AT,
+  "expires_at_unix": $EXPIRES_AT,
+  "nonce": "$NONCE",
+  "created_by": "bootstrap-dns.sh",
+  "version": "1.0"
 }
 BSEOF
-echo "[bootstrap-dns] Enabled bootstrap mode (30-minute window)"
+    chmod 0600 "$BOOTSTRAP_FILE"
+    # chown to globular so services running as globular can read it (0600 root-owned = unreadable by globular)
+    if id globular >/dev/null 2>&1; then
+        chown globular:globular "$BOOTSTRAP_FILE" 2>/dev/null || true
+    fi
+    echo "[bootstrap-dns] Enabled bootstrap mode (30-minute window)"
+fi
 DOMAIN="${DOMAIN:-globular.internal}"
 
 # Determine user for client certificates (handle sudo context)
@@ -109,11 +129,13 @@ if [[ -z "$SA_TOKEN" ]]; then
     SA_PASS="${SA_PASS:-adminadmin}"
 
     echo "[bootstrap-dns] Authenticating as sa..."
-    SA_TOKEN=$(HOME="$CLIENT_HOME" globular --timeout 5s auth login --user sa --password "$SA_PASS" 2>/dev/null | grep "^Token:" | sed 's/^Token: //' || true)
+    _auth_out=$(HOME="$CLIENT_HOME" globular --timeout 5s --insecure auth login --user sa --password "$SA_PASS" 2>&1 || true)
+    SA_TOKEN=$(echo "$_auth_out" | grep "^Token:" | sed 's/^Token: //' || true)
     if [[ -n "$SA_TOKEN" ]]; then
         echo "[bootstrap-dns] ✓ Authenticated (token acquired)"
     else
         echo "[bootstrap-dns] ⚠ Authentication failed — will try client certs only"
+        echo "[bootstrap-dns]   auth login output: $_auth_out" >&2
     fi
 fi
 
@@ -124,6 +146,9 @@ globular_dns() {
     if [[ -n "$SA_TOKEN" ]]; then
         token_flag="--token $SA_TOKEN"
     fi
+    # Do NOT use --insecure here: it strips client certificates from the TLS handshake,
+    # causing RBAC to reject with "authentication required". The server cert has
+    # DNS:localhost in its SANs so full mTLS to localhost:10006 works without --insecure.
     HOME="$CLIENT_HOME" globular --dns "${DNS_GRPC_ADDR:-localhost:10006}" $token_flag "$@"
 }
 
@@ -133,7 +158,7 @@ globular_dns() {
 _probe_dns_grpc() {
     local addr="$1"
     local out
-    out=$(HOME="$CLIENT_HOME" globular --dns "$addr" --timeout 3s dns domains get 2>&1)
+    out=$(HOME="$CLIENT_HOME" globular --dns "$addr" --insecure --timeout 3s dns domains get 2>&1)
     echo "$out" | grep -qE "unknown service dns\.DnsService|connect: connection refused|no route to host" && return 1
     return 0
 }
@@ -224,12 +249,29 @@ fi
 
 echo "[bootstrap-dns] Using globular CLI: $(command -v globular)"
 
+# Determine node IP (prefer non-loopback) — needed for test record and DNS A records
+NODE_IP=$(hostname -I | awk '{print $1}')
+if [[ -z "$NODE_IP" || "$NODE_IP" == "127.0.0.1" ]]; then
+    echo "[bootstrap-dns] ERROR: Could not determine node IP" >&2
+    exit 1
+fi
+
+# Get actual hostname (short name, not FQDN)
+NODE_HOSTNAME=$(hostname -s)
+if [[ -z "$NODE_HOSTNAME" ]]; then
+    echo "[bootstrap-dns] ERROR: Could not determine hostname" >&2
+    exit 1
+fi
+
+echo "[bootstrap-dns] Hostname: $NODE_HOSTNAME"
+echo "[bootstrap-dns] Node IP: $NODE_IP"
+
 # Wait for DNS service to be ready for write operations
 echo "[bootstrap-dns] Waiting for DNS database to accept writes..."
-MAX_WAIT=30
+MAX_WAIT=120
 DNS_WRITABLE=0
 TEST_RECORD="bootstrap-test.${DOMAIN}."
-TEST_IP="127.0.0.1"
+TEST_IP="$NODE_IP"
 
 for i in $(seq 1 $MAX_WAIT); do
     echo "[bootstrap-dns] Attempt $i/$MAX_WAIT: Testing DNS write..." >&2
@@ -272,23 +314,6 @@ if [[ $DNS_WRITABLE -eq 0 ]]; then
     echo "[bootstrap-dns] Check: journalctl -u globular-dns.service -n 50" >&2
     exit 1
 fi
-
-# Determine node IP (prefer non-loopback)
-NODE_IP=$(hostname -I | awk '{print $1}')
-if [[ -z "$NODE_IP" || "$NODE_IP" == "127.0.0.1" ]]; then
-    echo "[bootstrap-dns] ERROR: Could not determine node IP" >&2
-    exit 1
-fi
-
-# Get actual hostname (short name, not FQDN)
-NODE_HOSTNAME=$(hostname -s)
-if [[ -z "$NODE_HOSTNAME" ]]; then
-    echo "[bootstrap-dns] ERROR: Could not determine hostname" >&2
-    exit 1
-fi
-
-echo "[bootstrap-dns] Hostname: $NODE_HOSTNAME"
-echo "[bootstrap-dns] Node IP: $NODE_IP"
 
 # Ensure domain/zone is registered before adding records.
 # The DNS service requires a domain in its managed list before SetA works.
