@@ -136,29 +136,40 @@ if [[ -z "$SA_TOKEN" ]]; then
     fi
     SA_PASS="${SA_PASS:-adminadmin}"
 
-    # Resolve auth endpoint from etcd (authoritative). Fall back to ss probe.
-    # etcd is guaranteed to be running by this point in the Day-0 install.
+    # Resolve auth endpoint from etcd (authoritative source of truth).
+    # etcd service records use UUIDs as keys; search all /config entries by Name field.
+    # Fall back to ss probe if etcd doesn't have the record yet.
     _ETCD_EP="https://${NODE_IP}:2379"
-    _CA_CERT_ETCD="${STATE_DIR}/pki/ca.crt"
-    _SVC_CERT="${STATE_DIR}/pki/issued/services/service.crt"
-    _SVC_KEY="${STATE_DIR}/pki/issued/services/service.key"
-    _AUTH_ADDR=$(etcdctl --endpoints="$_ETCD_EP" \
-        --cacert="$_CA_CERT_ETCD" --cert="$_SVC_CERT" --key="$_SVC_KEY" \
-        get /globular/services/authentication.AuthenticationService/config \
-        --print-value-only 2>/dev/null \
-      | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('Address','')+'!'+str(d.get('Port','')))" 2>/dev/null || true)
-    _AUTH_IP="${_AUTH_ADDR%%!*}"
-    _AUTH_PORT="${_AUTH_ADDR##*!}"
-    # If etcd lookup failed or returned empty, probe with ss to find what the
-    # auth process is actually listening on (avoids any hardcoded port).
-    if [[ -z "$_AUTH_IP" || -z "$_AUTH_PORT" || "$_AUTH_PORT" == "0" ]]; then
+    _ETCD_CA="${STATE_DIR}/pki/ca.crt"
+    _ETCD_CERT="${STATE_DIR}/pki/issued/services/service.crt"
+    _ETCD_KEY="${STATE_DIR}/pki/issued/services/service.key"
+    _AUTH_DIRECT=$(etcdctl --endpoints="$_ETCD_EP" \
+        --cacert="$_ETCD_CA" --cert="$_ETCD_CERT" --key="$_ETCD_KEY" \
+        get /globular/services/ --prefix --print-value-only 2>/dev/null \
+      | python3 -c "
+import json, sys
+for line in sys.stdin:
+    line = line.strip()
+    if not line: continue
+    try:
+        d = json.loads(line)
+        if d.get('Name') != 'authentication.AuthenticationService': continue
+        addr = d.get('Address', '')
+        port = int(d.get('Port', 0))
+        host = addr.rsplit(':', 1)[0] if ':' in addr else addr
+        if host and port:
+            print(f'{host}:{port}')
+            break
+    except: pass
+" 2>/dev/null || true)
+    # If etcd has no record yet, find what port authentication_server is actually on.
+    if [[ -z "$_AUTH_DIRECT" ]]; then
         _AUTH_PORT=$(ss -tlnp 2>/dev/null \
           | awk '/authentication_server/{match($4,/[^:]+$/); print substr($4,RSTART,RLENGTH)}' \
           | head -1 || true)
-        _AUTH_IP="$NODE_IP"
+        [[ -n "$_AUTH_PORT" ]] && _AUTH_DIRECT="${NODE_IP}:${_AUTH_PORT}"
     fi
-    [[ -n "$_AUTH_IP" && -n "$_AUTH_PORT" ]] || { echo "[bootstrap-dns] ERROR: could not resolve auth service address" >&2; exit 1; }
-    _AUTH_DIRECT="${_AUTH_IP}:${_AUTH_PORT}"
+    [[ -n "$_AUTH_DIRECT" ]] || { echo "[bootstrap-dns] ERROR: could not resolve auth service address from etcd or ss" >&2; exit 1; }
 
     echo "[bootstrap-dns] Authenticating as sa (direct: ${_AUTH_DIRECT})..."
     _auth_out=$(HOME="$CLIENT_HOME" globular --timeout 10s --insecure --auth "${_AUTH_DIRECT}" auth login --user sa --password "$SA_PASS" 2>&1 || true)
@@ -236,19 +247,33 @@ for i in $(seq 1 $MAX_WAIT); do
     # Discover the DNS gRPC endpoint: etcd is authoritative.
     # If etcd doesn't have it yet, ask ss what port the dns_server process is on.
     if [[ -z "$DNS_GRPC_ADDR" ]]; then
-        _ETCD_EP_DNS="https://${NODE_IP}:2379"
-        _DNS_ETCD=$(etcdctl --endpoints="$_ETCD_EP_DNS" \
+        # etcd service records use UUIDs as keys; scan all /globular/services/ entries
+        # and match by Name field — never use a hardcoded key path.
+        _DNS_CANDIDATE=$(etcdctl \
+            --endpoints="https://${NODE_IP}:2379" \
             --cacert="${STATE_DIR}/pki/ca.crt" \
             --cert="${STATE_DIR}/pki/issued/services/service.crt" \
             --key="${STATE_DIR}/pki/issued/services/service.key" \
-            get /globular/services/dns.DnsService/config --print-value-only 2>/dev/null \
-          | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('Address','')+'!'+str(d.get('Port','')))" 2>/dev/null || true)
-        _DNS_ETCD_IP="${_DNS_ETCD%%!*}"
-        _DNS_ETCD_PORT="${_DNS_ETCD##*!}"
-        if [[ -n "$_DNS_ETCD_IP" && -n "$_DNS_ETCD_PORT" && "$_DNS_ETCD_PORT" != "0" ]]; then
-            _candidate="${_DNS_ETCD_IP}:${_DNS_ETCD_PORT}"
-            if _probe_dns_grpc "$_candidate"; then
-                DNS_GRPC_ADDR="$_candidate"
+            get /globular/services/ --prefix --print-value-only 2>/dev/null \
+          | python3 -c "
+import json, sys
+for line in sys.stdin:
+    line = line.strip()
+    if not line: continue
+    try:
+        d = json.loads(line)
+        if d.get('Name') != 'dns.DnsService': continue
+        addr = d.get('Address', '')
+        port = int(d.get('Port', 0))
+        host = addr.rsplit(':', 1)[0] if ':' in addr else addr
+        if host and port:
+            print(f'{host}:{port}')
+            break
+    except: pass
+" 2>/dev/null || true)
+        if [[ -n "$_DNS_CANDIDATE" ]]; then
+            if _probe_dns_grpc "$_DNS_CANDIDATE"; then
+                DNS_GRPC_ADDR="$_DNS_CANDIDATE"
             fi
         fi
         # Fallback: probe what the dns_server process is actually listening on.
@@ -299,10 +324,9 @@ fi
 
 echo "[bootstrap-dns] Using globular CLI: $(command -v globular)"
 
-# Determine node IP (prefer non-loopback) — needed for test record and DNS A records
-NODE_IP=$(hostname -I | awk '{print $1}')
+# Verify NODE_IP is still valid (set at top of script via ip route get)
 if [[ -z "$NODE_IP" || "$NODE_IP" == "127.0.0.1" ]]; then
-    echo "[bootstrap-dns] ERROR: Could not determine node IP" >&2
+    echo "[bootstrap-dns] ERROR: Could not determine routable node IP" >&2
     exit 1
 fi
 
