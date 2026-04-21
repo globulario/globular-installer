@@ -449,16 +449,33 @@ done
 
 # ── Step 4: Register default upstream source ─────────────────────────────────
 #
-# Writes the default globulario GitHub Releases upstream into etcd so the
+# Registers the canonical globulario GitHub Releases upstream source so the
 # cluster can sync future releases via `repository.sync.upstream` workflows.
-# This is idempotent: re-running overwrites with the same value.
 #
-# The etcd key is /globular/repository/upstreams/globulario-github.
-# The value is protojson-serialized UpstreamSource (camelCase fields).
+# Primary path: globular repo register-upstream (RegisterUpstream RPC).
+#   Uses the same code path and schema as Day-1 operators. The repository
+#   service is confirmed reachable (REPO_ADDR was resolved above), the
+#   auth token is valid, and the CLI can discover the service via etcd.
+#   RegisterUpstream is an upsert — idempotent by design.
+#
+# Fallback path: direct etcd write.
+#   Used only when the CLI fails (e.g. transient repository unavailability).
+#   Writes protojson-compatible JSON to the same key read by RegisterUpstream.
+#
+# Conflict detection: if an existing record has a different indexUrl, a
+#   warning is emitted before overwriting with canonical bootstrap values.
+#   Day-0 bootstrap values are authoritative.
+#
+# This step is non-fatal: Day-0 service start does not depend on upstream
+# registration. The upstream is metadata for Day-1+ sync operations.
 
-UPSTREAM_KEY="/globular/repository/upstreams/globulario-github"
+UPSTREAM_NAME="globulario-github"
+UPSTREAM_URL="https://github.com/globulario/services/releases/download/{tag}/release-index.json"
+UPSTREAM_CHANNEL="stable"
+UPSTREAM_PLATFORM="linux_amd64"
+UPSTREAM_KEY="/globular/repository/upstreams/${UPSTREAM_NAME}"
 
-# Check if already registered.
+# Read existing record to detect config conflicts before overwriting.
 EXISTING_UPSTREAM=$(etcdctl \
     --endpoints="https://${NODE_IP}:2379" \
     --cacert="${STATE_DIR}/pki/ca.crt" \
@@ -466,19 +483,56 @@ EXISTING_UPSTREAM=$(etcdctl \
     --key="${STATE_DIR}/pki/issued/services/service.key" \
     get "$UPSTREAM_KEY" --print-value-only 2>/dev/null || true)
 
-if [[ -z "$EXISTING_UPSTREAM" ]]; then
-  UPSTREAM_JSON='{"name":"globulario-github","type":"GITHUB_RELEASE","indexUrl":"https://github.com/globulario/services/releases/download/{tag}/release-index.json","channel":"stable","platform":"linux_amd64","enabled":true}'
+if [[ -n "$EXISTING_UPSTREAM" ]]; then
+  EXISTING_URL=$(echo "$EXISTING_UPSTREAM" | python3 -c "
+import json, sys
+try:
+    d = json.loads(sys.stdin.read())
+    print(d.get('indexUrl', ''))
+except Exception:
+    print('')
+" 2>/dev/null || true)
 
-  etcdctl \
+  if [[ -n "$EXISTING_URL" && "$EXISTING_URL" != "$UPSTREAM_URL" ]]; then
+    log_warn "Upstream '${UPSTREAM_NAME}' exists with different indexUrl:"
+    log_warn "  stored:   ${EXISTING_URL}"
+    log_warn "  expected: ${UPSTREAM_URL}"
+    log_warn "  Overwriting with canonical bootstrap values."
+  fi
+fi
+
+# Primary path: RegisterUpstream RPC via CLI.
+# The repository is already confirmed reachable (REPO_ADDR was resolved above),
+# and the CLI resolves it again via etcd — consistent with Day-1 operator flow.
+UPSTREAM_CLI_OUT=$("$GLOBULAR_CLI" \
+    --ca "$CA_CERT" \
+    --timeout 30s \
+    --token "$GLOBULAR_TOKEN" \
+    repo register-upstream \
+    --name "$UPSTREAM_NAME" \
+    --url "$UPSTREAM_URL" \
+    --channel "$UPSTREAM_CHANNEL" \
+    --platform "$UPSTREAM_PLATFORM" 2>&1) && _upstream_ok=true || _upstream_ok=false
+
+if $_upstream_ok; then
+  log_success "Upstream source '${UPSTREAM_NAME}' registered via RegisterUpstream RPC"
+else
+  # Fallback: direct etcd write using protojson-compatible schema.
+  # This path is used only when the CLI cannot reach the repository service.
+  log_warn "CLI registration failed (${UPSTREAM_CLI_OUT}); falling back to direct etcd write"
+
+  UPSTREAM_JSON="{\"name\":\"${UPSTREAM_NAME}\",\"type\":\"GITHUB_RELEASE\",\"indexUrl\":\"${UPSTREAM_URL}\",\"channel\":\"${UPSTREAM_CHANNEL}\",\"platform\":\"${UPSTREAM_PLATFORM}\",\"enabled\":true}"
+
+  if etcdctl \
       --endpoints="https://${NODE_IP}:2379" \
       --cacert="${STATE_DIR}/pki/ca.crt" \
       --cert="${STATE_DIR}/pki/issued/services/service.crt" \
       --key="${STATE_DIR}/pki/issued/services/service.key" \
-      put "$UPSTREAM_KEY" "$UPSTREAM_JSON" > /dev/null 2>&1 && \
-    log_success "Upstream source 'globulario-github' registered" || \
-    log_warn "Failed to register upstream source in etcd (non-fatal)"
-else
-  log_success "Upstream source 'globulario-github' already registered"
+      put "$UPSTREAM_KEY" "$UPSTREAM_JSON" > /dev/null 2>&1; then
+    log_success "Upstream source '${UPSTREAM_NAME}' registered (etcd fallback)"
+  else
+    log_warn "Failed to register upstream source '${UPSTREAM_NAME}' (non-fatal — Day-0 continues)"
+  fi
 fi
 
 # ── Summary ──────────────────────────────────────────────────────────────────
