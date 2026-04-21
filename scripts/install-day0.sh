@@ -885,11 +885,32 @@ else
   log_substep "setup-minio.sh not found — bucket setup handled by package post-install"
 fi
 
+# ── Workflow definitions (always required) ────────────────────────────────
+# Copy workflow YAML files to /var/lib/globular/workflows/ unconditionally.
+# The cluster controller reads these at startup to seed etcd. Without them
+# the cluster cannot reconcile or deploy packages.
+log_step "Workflow Definitions"
+
+WORKFLOW_DEFS_SRC="${SCRIPT_DIR}/../workflows"
+if [[ ! -d "$WORKFLOW_DEFS_SRC" ]]; then
+  WORKFLOW_DEFS_SRC="${SCRIPT_DIR}/../../services/golang/workflow/definitions"
+fi
+if [[ ! -d "$WORKFLOW_DEFS_SRC" ]]; then
+  WORKFLOW_DEFS_SRC="/home/dave/Documents/github.com/globulario/services/golang/workflow/definitions"
+fi
+if [[ -d "$WORKFLOW_DEFS_SRC" ]]; then
+  mkdir -p /var/lib/globular/workflows
+  cp "$WORKFLOW_DEFS_SRC"/*.yaml /var/lib/globular/workflows/
+  chown -R globular:globular /var/lib/globular/workflows 2>/dev/null || true
+  log_success "Workflow definitions deployed to /var/lib/globular/workflows/ ($(ls "$WORKFLOW_DEFS_SRC"/*.yaml | wc -l) files)"
+else
+  log_warn "Workflow definitions not found — controller cannot seed etcd on startup"
+  log_warn "Manually copy *.yaml files to /var/lib/globular/workflows/ before starting"
+fi
+
 # ── Workflow-driven installation ─────────────────────────────────────────
-# If USE_WORKFLOW=1 (default), install the node-agent, copy workflow
-# definitions, start the node-agent, and delegate all remaining package
-# installation to the day0.bootstrap workflow. This replaces the manual
-# install_list calls below with a single declarative workflow run.
+# If USE_WORKFLOW=1, install the node-agent and delegate all remaining
+# package installation to the day0.bootstrap workflow.
 USE_WORKFLOW="${USE_WORKFLOW:-0}"
 if [[ "$USE_WORKFLOW" == "1" ]]; then
   log_step "Workflow-Driven Bootstrap"
@@ -911,25 +932,6 @@ if [[ "$USE_WORKFLOW" == "1" ]]; then
   chown -R globular:globular /var/lib/globular/packages 2>/dev/null || true
   PKG_COUNT=$(ls /var/lib/globular/packages/*.tgz 2>/dev/null | wc -l)
   log_success "$PKG_COUNT packages staged in /var/lib/globular/packages/"
-
-  # Copy workflow definitions to disk so the controller can seed etcd at startup.
-  # Primary: release tarball layout — workflows/ is a sibling of scripts/.
-  # Fallback: dev environment source tree.
-  WORKFLOW_DEFS_SRC="${SCRIPT_DIR}/../workflows"
-  if [[ ! -d "$WORKFLOW_DEFS_SRC" ]]; then
-    WORKFLOW_DEFS_SRC="${SCRIPT_DIR}/../../services/golang/workflow/definitions"
-  fi
-  if [[ ! -d "$WORKFLOW_DEFS_SRC" ]]; then
-    WORKFLOW_DEFS_SRC="/home/dave/Documents/github.com/globulario/services/golang/workflow/definitions"
-  fi
-  if [[ -d "$WORKFLOW_DEFS_SRC" ]]; then
-    mkdir -p /var/lib/globular/workflows
-    cp "$WORKFLOW_DEFS_SRC"/*.yaml /var/lib/globular/workflows/
-    chown -R globular:globular /var/lib/globular/workflows 2>/dev/null || true
-    log_success "Workflow definitions deployed to /var/lib/globular/workflows/"
-  else
-    log_substep "Warning: workflow definitions source not found — controller cannot self-heal etcd"
-  fi
 
   # Globular configuration (Protocol=https) — needed before node-agent starts.
   if [[ -x "$SCRIPT_DIR/setup-config.sh" ]]; then
