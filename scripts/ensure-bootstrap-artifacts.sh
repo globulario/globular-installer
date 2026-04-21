@@ -535,6 +535,63 @@ else
   fi
 fi
 
+# ── Step 5: Sync packages from GitHub Releases (source of truth) ─────────────
+#
+# After registering the upstream, perform an immediate sync so the local
+# repository catalog reflects the versions published on GitHub Releases —
+# making GitHub the authoritative version source.
+#
+# The release tag is derived from the service package filenames already
+# present in PKG_DIR (e.g. cluster_controller_1.0.27_linux_amd64.tgz → v1.0.27).
+# Using the local packages as the version source avoids external API calls and
+# ensures the tag corresponds exactly to the installer bundle.
+#
+# This step is non-fatal: if sync fails (e.g. no network, GitHub unreachable),
+# Day-0 completes and the operator can run `globular pkg sync-upstream` later.
+
+SYNC_TAG=""
+
+# Detect tag from service package filenames: name_VERSION_linux_amd64.tgz
+# The glob matches packages like cluster_controller_1.0.27_linux_amd64.tgz.
+for _pkg_file in "$PKG_DIR"/cluster_controller_*_linux_amd64.tgz \
+                  "$PKG_DIR"/repository_*_linux_amd64.tgz \
+                  "$PKG_DIR"/node_agent_*_linux_amd64.tgz; do
+  [[ -f "$_pkg_file" ]] || continue
+  _base=$(basename "$_pkg_file")
+  # Extract version field: name_VERSION_linux_amd64.tgz
+  # Greedy match up to the last _MAJOR.MINOR.PATCH_ before _linux_amd64.tgz.
+  _ver=$(echo "$_base" | sed -E 's/^.+_([0-9]+\.[0-9]+\.[0-9]+)_linux_amd64\.tgz$/\1/')
+  if [[ "$_ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    SYNC_TAG="v${_ver}"
+    break
+  fi
+done
+
+if [[ -z "$SYNC_TAG" ]]; then
+  log_warn "Could not detect release tag from PKG_DIR filenames — skipping GitHub sync"
+  log_warn "Run 'globular pkg sync-upstream --source globulario-github --tag <tag>' manually"
+else
+  log_info "Syncing packages from GitHub Releases @ ${SYNC_TAG}..."
+  SYNC_OUT=$("$GLOBULAR_CLI" \
+      --ca "$CA_CERT" \
+      --timeout 300s \
+      --token "$GLOBULAR_TOKEN" \
+      pkg sync-upstream \
+      --source "$UPSTREAM_NAME" \
+      --tag "$SYNC_TAG" 2>&1) && _sync_ok=true || _sync_ok=false
+
+  if $_sync_ok; then
+    log_success "GitHub sync completed: ${SYNC_TAG}"
+    # Print the imported/skipped summary if present.
+    echo "$SYNC_OUT" | grep -E "^(Imported|Would import|Run ID)" | while IFS= read -r line; do
+      log_info "  $line"
+    done
+  else
+    log_warn "GitHub sync failed (non-fatal): ${SYNC_OUT}"
+    log_warn "Run 'globular pkg sync-upstream --source ${UPSTREAM_NAME} --tag ${SYNC_TAG}' to retry"
+  fi
+fi
+
 # ── Summary ──────────────────────────────────────────────────────────────────
 
 echo ""
