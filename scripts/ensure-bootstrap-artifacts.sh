@@ -541,13 +541,19 @@ fi
 # repository catalog reflects the versions published on GitHub Releases —
 # making GitHub the authoritative version source.
 #
+# Uses `globular repo sync` (direct repository RPC) rather than
+# `globular pkg sync-upstream` (workflow). At Day-0, the WorkflowService
+# and ClusterController may not yet be registered in etcd — the direct
+# path only requires the repository service, which is already confirmed
+# reachable by Step 1.
+#
 # The release tag is derived from the service package filenames already
 # present in PKG_DIR (e.g. cluster_controller_1.0.27_linux_amd64.tgz → v1.0.27).
 # Using the local packages as the version source avoids external API calls and
 # ensures the tag corresponds exactly to the installer bundle.
 #
 # This step is non-fatal: if sync fails (e.g. no network, GitHub unreachable),
-# Day-0 completes and the operator can run `globular pkg sync-upstream` later.
+# Day-0 completes and the operator can run `globular repo sync` later.
 
 SYNC_TAG=""
 
@@ -571,24 +577,25 @@ if [[ -z "$SYNC_TAG" ]]; then
   log_warn "Could not detect release tag from PKG_DIR filenames — skipping GitHub sync"
   log_warn "Run 'globular pkg sync-upstream --source globulario-github --tag <tag>' manually"
 else
-  log_info "Syncing packages from GitHub Releases @ ${SYNC_TAG}..."
+  log_info "Syncing packages from GitHub Releases @ ${SYNC_TAG} (direct)..."
+  # `repo sync` calls SyncFromUpstream directly on the repository service —
+  # no WorkflowService or ClusterController required.
   SYNC_OUT=$("$GLOBULAR_CLI" \
       --ca "$CA_CERT" \
       --timeout 300s \
       --token "$GLOBULAR_TOKEN" \
-      pkg sync-upstream \
+      repo sync \
       --source "$UPSTREAM_NAME" \
       --tag "$SYNC_TAG" 2>&1) && _sync_ok=true || _sync_ok=false
 
   if $_sync_ok; then
     log_success "GitHub sync completed: ${SYNC_TAG}"
-    # Print the imported/skipped summary if present.
-    echo "$SYNC_OUT" | grep -E "^(Imported|Would import|Run ID)" | while IFS= read -r line; do
+    echo "$SYNC_OUT" | grep -E "^(Imported|Skipped)" | while IFS= read -r line; do
       log_info "  $line"
     done
   else
     log_warn "GitHub sync failed (non-fatal): ${SYNC_OUT}"
-    log_warn "Run 'globular pkg sync-upstream --source ${UPSTREAM_NAME} --tag ${SYNC_TAG}' to retry"
+    log_warn "Run 'globular repo sync --source ${UPSTREAM_NAME} --tag ${SYNC_TAG}' to retry"
   fi
 fi
 
