@@ -38,6 +38,7 @@ fi
 die() { echo "  ✗ ERROR: $*" >&2; trace_step "fatal" "die" "$*" 3; exit 1; }
 log_info() { echo "  → $*"; }
 log_success() { echo "  ✓ $*"; }
+log_warn() { echo "  ⚠ $*"; }
 log_step() { echo ""; echo "━━━ $* ━━━"; }
 log_substep() { echo "  • $*"; }
 
