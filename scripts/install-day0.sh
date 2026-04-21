@@ -912,8 +912,13 @@ if [[ "$USE_WORKFLOW" == "1" ]]; then
   PKG_COUNT=$(ls /var/lib/globular/packages/*.tgz 2>/dev/null | wc -l)
   log_success "$PKG_COUNT packages staged in /var/lib/globular/packages/"
 
-  # Copy workflow definitions to disk so the node-agent can find them.
-  WORKFLOW_DEFS_SRC="${SCRIPT_DIR}/../../services/golang/workflow/definitions"
+  # Copy workflow definitions to disk so the controller can seed etcd at startup.
+  # Primary: release tarball layout — workflows/ is a sibling of scripts/.
+  # Fallback: dev environment source tree.
+  WORKFLOW_DEFS_SRC="${SCRIPT_DIR}/../workflows"
+  if [[ ! -d "$WORKFLOW_DEFS_SRC" ]]; then
+    WORKFLOW_DEFS_SRC="${SCRIPT_DIR}/../../services/golang/workflow/definitions"
+  fi
   if [[ ! -d "$WORKFLOW_DEFS_SRC" ]]; then
     WORKFLOW_DEFS_SRC="/home/dave/Documents/github.com/globulario/services/golang/workflow/definitions"
   fi
@@ -923,7 +928,7 @@ if [[ "$USE_WORKFLOW" == "1" ]]; then
     chown -R globular:globular /var/lib/globular/workflows 2>/dev/null || true
     log_success "Workflow definitions deployed to /var/lib/globular/workflows/"
   else
-    log_substep "Warning: workflow definitions source not found at $WORKFLOW_DEFS_SRC"
+    log_substep "Warning: workflow definitions source not found — controller cannot self-heal etcd"
   fi
 
   # Globular configuration (Protocol=https) — needed before node-agent starts.
