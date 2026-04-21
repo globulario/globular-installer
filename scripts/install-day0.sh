@@ -1543,6 +1543,25 @@ else
   log_warn "ensure-bootstrap-artifacts.sh not found — skipping artifact publish"
 fi
 
+# ── Seed desired state from installed packages (Layer 2) ─────────────────────
+# The controller now knows what is installed (Layer 3) and what is in the
+# repository (Layer 1). Seed Layer 2 (DesiredService) so reconcileNodes can
+# materialize infra desired state and the cluster becomes self-managing.
+# This call is idempotent — safe to re-run if the install is re-executed.
+log_step "Seeding Desired State from Installed Packages"
+if [[ -x "$GLOBULAR_CLI" ]]; then
+  log_substep "Running 'globular services seed' to populate desired state..."
+  if "$GLOBULAR_CLI" services seed 2>&1 | while IFS= read -r line; do echo "  [seed] $line"; done; then
+    log_success "Desired state seeded from installed packages"
+  else
+    log_warn "services seed returned non-zero — desired state may be incomplete"
+    log_warn "Re-run manually after bootstrap: globular services seed"
+  fi
+else
+  log_warn "globular CLI not found at $GLOBULAR_CLI — skipping desired state seed"
+  log_warn "Run manually after bootstrap: globular services seed"
+fi
+
 echo ""
 echo "╔════════════════════════════════════════════════════════════════╗"
 echo "║          ✓ INSTALLATION COMPLETE                               ║"
