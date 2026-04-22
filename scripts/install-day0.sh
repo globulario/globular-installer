@@ -205,6 +205,20 @@ else
   die "setup-tls.sh not found or not executable"
 fi
 
+# Register the Globular CA in the system trust store so that tools using
+# the OS certificate bundle (curl, MCP server, Go http.DefaultTransport, etc.)
+# trust Globular's TLS certificates without needing --insecure flags.
+CA_SRC="${STATE_DIR}/pki/ca.crt"
+CA_DST="/usr/local/share/ca-certificates/globular-ca.crt"
+if [[ -f "$CA_SRC" ]]; then
+  cp "$CA_SRC" "$CA_DST"
+  chmod 644 "$CA_DST"
+  update-ca-certificates --fresh >/dev/null 2>&1 || update-ca-certificates >/dev/null 2>&1 || true
+  log_success "Globular CA registered in system trust store (${CA_DST})"
+else
+  log_warn "CA not found at ${CA_SRC} — skipping system trust store registration"
+fi
+
 # Generate root/admin client certificates for CLI and service-to-service communication
 log_step "Client Certificate Generation"
 if [[ -x "$SCRIPT_DIR/generate-user-client-cert.sh" ]]; then

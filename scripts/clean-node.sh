@@ -139,6 +139,13 @@ if [[ -d /var/lib/etcd ]]; then
 fi
 
 
+# Remove Globular CA from system trust store
+if [[ -f /usr/local/share/ca-certificates/globular-ca.crt ]]; then
+  rm -f /usr/local/share/ca-certificates/globular-ca.crt
+  update-ca-certificates --fresh >/dev/null 2>&1 || update-ca-certificates >/dev/null 2>&1 || true
+  log_success "Removed globular CA from system trust store"
+fi
+
 # User client certificates
 for user_home in /home/*; do
   if [[ -d "$user_home/.config/globular" ]]; then
