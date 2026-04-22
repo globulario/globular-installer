@@ -215,6 +215,20 @@ if [[ -f "$CA_SRC" ]]; then
   chmod 644 "$CA_DST"
   update-ca-certificates --fresh >/dev/null 2>&1 || update-ca-certificates >/dev/null 2>&1 || true
   log_success "Globular CA registered in system trust store (${CA_DST})"
+
+  # Also copy to each user's ~/.config/globular/ca.crt so tools that use
+  # NODE_EXTRA_CA_CERTS (e.g. Claude Code MCP) can always read it without
+  # needing group membership or directory traversal into /var/lib/globular/pki/.
+  for _uh in /root /home/*; do
+    [[ -d "$_uh" ]] || continue
+    _ca_user_dir="$_uh/.config/globular"
+    mkdir -p "$_ca_user_dir"
+    cp "$CA_SRC" "$_ca_user_dir/ca.crt"
+    chmod 644 "$_ca_user_dir/ca.crt"
+    _owner=$(stat -c '%U' "$_uh")
+    chown "$_owner:$_owner" "$_ca_user_dir/ca.crt" 2>/dev/null || true
+  done
+  log_success "Globular CA copied to user .config/globular/ directories"
 else
   log_warn "CA not found at ${CA_SRC} — skipping system trust store registration"
 fi
