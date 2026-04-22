@@ -958,6 +958,16 @@ if [[ "$USE_WORKFLOW" == "1" ]]; then
   _NA_PORT="${_NA_PORT:-$(grep -oP '(?<=--port[= ])\d+' /etc/systemd/system/globular-node-agent.service.d/*.conf 2>/dev/null | head -1 || true)}"
   [[ -n "$_NA_PORT" ]] || die "Could not determine node-agent port from installed systemd unit"
 
+  # Resolve the cluster controller port from the staged package (controller not yet installed).
+  # The package contains the systemd unit with the --port argument — use that, not a constant.
+  _CC_PORT=""
+  _CC_PKG=$(ls "$PKG_DIR"/cluster-controller_*.tgz 2>/dev/null | head -1 || ls /var/lib/globular/packages/cluster-controller_*.tgz 2>/dev/null | head -1 || true)
+  if [[ -n "$_CC_PKG" ]]; then
+    _CC_PORT=$(tar xOf "$_CC_PKG" --wildcards '*.service' 2>/dev/null | \
+      grep -oP '(?<=--port[= ])\d+' | head -1 || true)
+  fi
+  [[ -n "$_CC_PORT" ]] || die "Could not determine cluster controller port from staged package $_CC_PKG"
+
   # Wait for node-agent to be ready on its routable IP.
   log_substep "Waiting for node-agent to be ready on ${_NA_IP}:${_NA_PORT}..."
   for i in $(seq 1 30); do
@@ -1007,7 +1017,8 @@ if [[ "$USE_WORKFLOW" == "1" ]]; then
     fi
     if [[ -n "$GLOBULAR_CLI" ]] && [[ -x "$GLOBULAR_CLI" ]]; then
       "$GLOBULAR_CLI" --insecure --timeout 1800s workflow run day0.bootstrap \
-        --node "${_NA_IP}:${_NA_PORT}" 2>&1 | while IFS= read -r line; do
+        --node "${_NA_IP}:${_NA_PORT}" \
+        --controller "${_NA_IP}:${_CC_PORT}" 2>&1 | while IFS= read -r line; do
           echo "  [workflow] $line"
         done
       WORKFLOW_RC=${PIPESTATUS[0]}
@@ -1135,9 +1146,13 @@ if [[ -f "${CC_CONFIG_FILE}" ]]; then
   jq --arg d "$DOMAIN" '.cluster_domain = $d' "${CC_CONFIG_FILE}" > "${CC_CONFIG_FILE}.tmp"
   mv "${CC_CONFIG_FILE}.tmp" "${CC_CONFIG_FILE}"
 else
+  # Read controller port from the installed systemd unit — not a hardcoded constant.
+  _CC_PORT_SEED=$(grep -oP '(?<=--port[= ])\d+' /etc/systemd/system/globular-cluster-controller.service 2>/dev/null | head -1 || true)
+  _CC_PORT_SEED="${_CC_PORT_SEED:-$(grep -oP '(?<=--port[= ])\d+' /etc/systemd/system/globular-cluster-controller.service.d/*.conf 2>/dev/null | head -1 || true)}"
+  [[ -n "$_CC_PORT_SEED" ]] || die "Could not determine cluster controller port from installed unit (needed for config.json)"
   cat > "${CC_CONFIG_FILE}" <<CCEOF
 {
-  "port": 12000,
+  "port": ${_CC_PORT_SEED},
   "cluster_domain": "${DOMAIN}",
   "default_profiles": ["core"]
 }
@@ -1566,12 +1581,25 @@ if [[ -x "$GLOBULAR_CLI" ]]; then
   systemctl restart globular-node-agent 2>/dev/null || true
   sleep 8  # allow the agent to rescan and push updated inventory to controller
 
-  # Resolve controller address: local routable IP on port 12000 (controller native port).
-  # Port 12000 is the cluster controller's registered gRPC port — not a config value.
+  # Resolve controller address from etcd — the controller is running by this point and has
+  # registered its address and port. Never use a hardcoded port.
   _SEED_IP="$(ip route get 8.8.8.8 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1); exit}')"
   _SEED_IP="${_SEED_IP:-$(hostname -I 2>/dev/null | awk '{print $1}')}"
   _SEED_CA="/var/lib/globular/pki/ca.crt"
-  _SEED_CTRL="${_SEED_IP}:12000"
+  _SEED_CERT="/var/lib/globular/pki/issued/services/service.crt"
+  _SEED_KEY="/var/lib/globular/pki/issued/services/service.key"
+  _SEED_ETCD="${ETCD_ENDPOINTS:-https://${_SEED_IP}:2379}"
+  _CTRL_PORT_ETCD=$(etcdctl --endpoints="$_SEED_ETCD" \
+    --cacert="$_SEED_CA" --cert="$_SEED_CERT" --key="$_SEED_KEY" \
+    get "/globular/services/cluster_controller.ClusterControllerService/config" \
+    --print-value-only 2>/dev/null | \
+    grep -oP '"Port"\s*:\s*\K[0-9]+' | head -1 || true)
+  if [[ -z "$_CTRL_PORT_ETCD" ]]; then
+    # etcd lookup failed (controller not yet registered) — fall back to unit file
+    _CTRL_PORT_ETCD=$(grep -oP '(?<=--port[= ])\d+' /etc/systemd/system/globular-cluster-controller.service 2>/dev/null | head -1 || true)
+  fi
+  [[ -n "$_CTRL_PORT_ETCD" ]] || die "Could not determine cluster controller port from etcd or unit file"
+  _SEED_CTRL="${_SEED_IP}:${_CTRL_PORT_ETCD}"
 
   log_substep "Running 'globular services seed' (controller=${_SEED_CTRL})..."
   if "$GLOBULAR_CLI" services seed \
