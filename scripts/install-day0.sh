@@ -1544,18 +1544,38 @@ else
 fi
 
 # ── Seed desired state from installed packages (Layer 2) ─────────────────────
-# The controller now knows what is installed (Layer 3) and what is in the
-# repository (Layer 1). Seed Layer 2 (DesiredService) so reconcileNodes can
-# materialize infra desired state and the cluster becomes self-managing.
-# This call is idempotent — safe to re-run if the install is re-executed.
+# The controller knows what is in the repository (Layer 1). We seed Layer 2
+# (DesiredService) from the full installed inventory (Layer 3) so reconcileNodes
+# can materialize infra desired state and the cluster becomes self-managing.
+#
+# The node agent may have started before all packages were deployed and only
+# scanned a partial inventory. Restart it now to force a complete rescan before
+# seeding so all 38+ packages are reported.
+#
+# DNS is not yet set up at this stage, so we connect directly to the controller
+# using the local IP and CA certificate — no mesh routing needed here.
 log_step "Seeding Desired State from Installed Packages"
 if [[ -x "$GLOBULAR_CLI" ]]; then
-  log_substep "Running 'globular services seed' to populate desired state..."
-  if "$GLOBULAR_CLI" services seed 2>&1 | while IFS= read -r line; do echo "  [seed] $line"; done; then
+  # Restart node agent to ensure full inventory is reported.
+  log_substep "Restarting node agent to force full inventory scan..."
+  systemctl restart globular-node-agent 2>/dev/null || true
+  sleep 8  # allow the agent to rescan and push updated inventory to controller
+
+  # Resolve controller address: local routable IP on port 12000 (controller native port).
+  # Port 12000 is the cluster controller's registered gRPC port — not a config value.
+  _SEED_IP="$(ip route get 8.8.8.8 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1); exit}')"
+  _SEED_IP="${_SEED_IP:-$(hostname -I 2>/dev/null | awk '{print $1}')}"
+  _SEED_CA="/var/lib/globular/pki/ca.crt"
+  _SEED_CTRL="${_SEED_IP}:12000"
+
+  log_substep "Running 'globular services seed' (controller=${_SEED_CTRL})..."
+  if "$GLOBULAR_CLI" services seed \
+      --controller "${_SEED_CTRL}" \
+      --ca "${_SEED_CA}" 2>&1 | while IFS= read -r line; do echo "  [seed] $line"; done; then
     log_success "Desired state seeded from installed packages"
   else
     log_warn "services seed returned non-zero — desired state may be incomplete"
-    log_warn "Re-run manually after bootstrap: globular services seed"
+    log_warn "Re-run manually after bootstrap: globular services seed --controller ${_SEED_CTRL} --ca ${_SEED_CA}"
   fi
 else
   log_warn "globular CLI not found at $GLOBULAR_CLI — skipping desired state seed"
