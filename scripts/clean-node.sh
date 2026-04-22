@@ -109,8 +109,15 @@ systemctl daemon-reload 2>/dev/null || true
 
 log_step "Wiping State"
 
-# Globular state
+# Globular state — unconditional rm -rf (safe on missing dirs, avoids
+# permission-race with the globular user that was just removed)
 for dir in /var/lib/globular /etc/globular /usr/lib/globular; do
+  rm -rf "$dir" && log_success "Removed $dir" || log_warn "Could not fully remove $dir (retrying with -f)"
+  rm -rf "$dir" 2>/dev/null || true
+done
+
+# MinIO object data (mounted volume — not under /var/lib/globular)
+for dir in /mnt/data/minio /var/lib/minio; do
   if [[ -d "$dir" ]]; then
     rm -rf "$dir"
     log_success "Removed $dir"
@@ -130,6 +137,7 @@ if [[ -d /var/lib/etcd ]]; then
   rm -rf /var/lib/etcd
   log_success "Removed /var/lib/etcd"
 fi
+
 
 # User client certificates
 for user_home in /home/*; do

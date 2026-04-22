@@ -363,6 +363,11 @@ install_list() {
 SCYLLADB_PKG="scylladb_2025.3.8_linux_amd64.tgz"
 
 BOOTSTRAP_MINIO_PKGS=(
+  # sha256sum is installed first so the /usr/local/bin/sha256sum wrapper is
+  # valid for the rest of the installation (and for any subsequent upgrade
+  # verification). Without this, a post-wipe reinstall hits a stale wrapper
+  # pointing at the wiped /usr/lib/globular/bin/sha256sum and breaks.
+  "sha256sum_9.4.0_linux_amd64.tgz"
   "etcd_3.5.14_linux_amd64.tgz"
   "minio_0.0.1_linux_amd64.tgz"
 )
