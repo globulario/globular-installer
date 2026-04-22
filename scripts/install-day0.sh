@@ -958,16 +958,6 @@ if [[ "$USE_WORKFLOW" == "1" ]]; then
   _NA_PORT="${_NA_PORT:-$(grep -oP '(?<=--port[= ])\d+' /etc/systemd/system/globular-node-agent.service.d/*.conf 2>/dev/null | head -1 || true)}"
   [[ -n "$_NA_PORT" ]] || die "Could not determine node-agent port from installed systemd unit"
 
-  # Resolve the cluster controller port from the staged package (controller not yet installed).
-  # The package contains the systemd unit with the --port argument — use that, not a constant.
-  _CC_PORT=""
-  _CC_PKG=$(ls "$PKG_DIR"/cluster-controller_*.tgz 2>/dev/null | head -1 || ls /var/lib/globular/packages/cluster-controller_*.tgz 2>/dev/null | head -1 || true)
-  if [[ -n "$_CC_PKG" ]]; then
-    _CC_PORT=$(tar xOf "$_CC_PKG" --wildcards '*.service' 2>/dev/null | \
-      grep -oP '(?<=--port[= ])\d+' | head -1 || true)
-  fi
-  [[ -n "$_CC_PORT" ]] || die "Could not determine cluster controller port from staged package $_CC_PKG"
-
   # Wait for node-agent to be ready on its routable IP.
   log_substep "Waiting for node-agent to be ready on ${_NA_IP}:${_NA_PORT}..."
   for i in $(seq 1 30); do
@@ -1017,8 +1007,7 @@ if [[ "$USE_WORKFLOW" == "1" ]]; then
     fi
     if [[ -n "$GLOBULAR_CLI" ]] && [[ -x "$GLOBULAR_CLI" ]]; then
       "$GLOBULAR_CLI" --insecure --timeout 1800s workflow run day0.bootstrap \
-        --node "${_NA_IP}:${_NA_PORT}" \
-        --controller "${_NA_IP}:${_CC_PORT}" 2>&1 | while IFS= read -r line; do
+        --node "${_NA_IP}:${_NA_PORT}" 2>&1 | while IFS= read -r line; do
           echo "  [workflow] $line"
         done
       WORKFLOW_RC=${PIPESTATUS[0]}
@@ -1146,13 +1135,10 @@ if [[ -f "${CC_CONFIG_FILE}" ]]; then
   jq --arg d "$DOMAIN" '.cluster_domain = $d' "${CC_CONFIG_FILE}" > "${CC_CONFIG_FILE}.tmp"
   mv "${CC_CONFIG_FILE}.tmp" "${CC_CONFIG_FILE}"
 else
-  # Read controller port from the installed systemd unit — not a hardcoded constant.
-  _CC_PORT_SEED=$(grep -oP '(?<=--port[= ])\d+' /etc/systemd/system/globular-cluster-controller.service 2>/dev/null | head -1 || true)
-  _CC_PORT_SEED="${_CC_PORT_SEED:-$(grep -oP '(?<=--port[= ])\d+' /etc/systemd/system/globular-cluster-controller.service.d/*.conf 2>/dev/null | head -1 || true)}"
-  [[ -n "$_CC_PORT_SEED" ]] || die "Could not determine cluster controller port from installed unit (needed for config.json)"
+  # Seed only cluster_domain and default_profiles — omit port so the controller
+  # uses its own built-in default. The port is read from etcd after first start.
   cat > "${CC_CONFIG_FILE}" <<CCEOF
 {
-  "port": ${_CC_PORT_SEED},
   "cluster_domain": "${DOMAIN}",
   "default_profiles": ["core"]
 }
