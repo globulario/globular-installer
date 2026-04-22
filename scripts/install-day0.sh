@@ -1544,14 +1544,17 @@ sleep 3
 log_success "Controller and gateway restarted with fresh connections"
 
 echo ""
-# ── AI credential access ─────────────────────────────────────────────────────
-# Allow the globular service user to read Claude Code credentials from the
-# installer user's home directory. The ai_executor auto-discovers credentials
-# from /home/* and seeds them to etcd for cluster-wide sharing.
+# ── AI credential access + MCP auto-configuration ────────────────────────────
+# 1. Allow the globular service user to read Claude Code credentials.
+# 2. Configure Claude Code's NODE_EXTRA_CA_CERTS and MCP server so that the
+#    MCP HTTP connection to globular-mcp works out of the box after install —
+#    no manual steps required.
 # Must run AFTER package installation (which creates the globular user).
 INSTALLER_USER="${SUDO_USER:-}"
 if [[ -n "$INSTALLER_USER" ]] && id globular >/dev/null 2>&1; then
   INSTALLER_HOME=$(eval echo "~$INSTALLER_USER")
+
+  # ── AI credentials ──────────────────────────────────────────────────────
   CLAUDE_CREDS="$INSTALLER_HOME/.claude/.credentials.json"
   if [[ -f "$CLAUDE_CREDS" ]]; then
     log_substep "Enabling AI credential access for globular user..."
@@ -1561,6 +1564,56 @@ if [[ -n "$INSTALLER_USER" ]] && id globular >/dev/null 2>&1; then
     # Restart ai_executor so it picks up the new group membership.
     systemctl restart globular-ai-executor.service 2>/dev/null || true
     log_success "AI credentials accessible (ai_executor will auto-seed to etcd)"
+  fi
+
+  # ── Claude Code MCP auto-configuration ─────────────────────────────────
+  # Ensure NODE_EXTRA_CA_CERTS in ~/.claude/settings.json points to the
+  # per-user CA copy so Claude Code trusts Globular TLS from first launch.
+  _CLAUDE_SETTINGS="$INSTALLER_HOME/.claude/settings.json"
+  _USER_CA="$INSTALLER_HOME/.config/globular/ca.crt"
+  if [[ -f "$_USER_CA" ]] && command -v python3 >/dev/null 2>&1; then
+    mkdir -p "$INSTALLER_HOME/.claude"
+    python3 - "$_CLAUDE_SETTINGS" "$_USER_CA" <<'PYEOF'
+import json, sys, os
+path, ca = sys.argv[1], sys.argv[2]
+cfg = {}
+if os.path.exists(path):
+    try:
+        cfg = json.load(open(path))
+    except Exception:
+        cfg = {}
+cfg.setdefault("env", {})["NODE_EXTRA_CA_CERTS"] = ca
+with open(path, "w") as f:
+    json.dump(cfg, f, indent=2)
+PYEOF
+    chown "$INSTALLER_USER:$INSTALLER_USER" "$_CLAUDE_SETTINGS" 2>/dev/null || true
+    log_success "Claude Code NODE_EXTRA_CA_CERTS set to ${_USER_CA}"
+  fi
+
+  # ── MCP server endpoint ─────────────────────────────────────────────────
+  # Write ~/.claude/.mcp.json if not already pointing at this node's MCP.
+  _MCP_JSON="$INSTALLER_HOME/.claude/.mcp.json"
+  _NODE_IP=$(ip route get 8.8.8.8 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1); exit}')
+  _NODE_IP="${_NODE_IP:-$(hostname -I | awk '{print $1}')}"
+  # Read MCP port from the installed systemd unit — never hardcode it.
+  _MCP_PORT=$(grep -oP '(?<=--port[= ])\d+' /etc/systemd/system/globular-mcp.service 2>/dev/null | head -1 || true)
+  if [[ -n "$_MCP_PORT" ]] && [[ -n "$_NODE_IP" ]] && command -v python3 >/dev/null 2>&1; then
+    _MCP_URL="https://${_NODE_IP}:${_MCP_PORT}/mcp"
+    python3 - "$_MCP_JSON" "$_MCP_URL" <<'PYEOF'
+import json, sys, os
+path, url = sys.argv[1], sys.argv[2]
+cfg = {}
+if os.path.exists(path):
+    try:
+        cfg = json.load(open(path))
+    except Exception:
+        cfg = {}
+cfg.setdefault("mcpServers", {})["globular"] = {"type": "http", "url": url}
+with open(path, "w") as f:
+    json.dump(cfg, f, indent=2)
+PYEOF
+    chown "$INSTALLER_USER:$INSTALLER_USER" "$_MCP_JSON" 2>/dev/null || true
+    log_success "Claude Code MCP endpoint set to ${_MCP_URL}"
   fi
 fi
 
@@ -1627,6 +1680,16 @@ if [[ -x "$GLOBULAR_CLI" ]]; then
 else
   log_warn "globular CLI not found at $GLOBULAR_CLI — skipping desired state seed"
   log_warn "Run manually after bootstrap: globular services seed"
+fi
+
+# ── Final permission hardening ───────────────────────────────────────────────
+# Package installation can chown/chmod state dirs. Re-enforce the permissions
+# that matter for non-root tooling (Claude Code MCP, CLI as regular user):
+#   - /var/lib/globular and pki/ must be world-traversable (o+x) so that
+#     world-readable files inside (ca.crt, ca.pem) are actually reachable.
+#   - Private keys stay 400 (owner-read only).
+if [[ -d "${STATE_DIR}/pki" ]]; then
+  chmod o+x "${STATE_DIR}" "${STATE_DIR}/pki" 2>/dev/null || true
 fi
 
 echo ""

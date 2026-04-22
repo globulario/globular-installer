@@ -146,6 +146,29 @@ if [[ -f /usr/local/share/ca-certificates/globular-ca.crt ]]; then
   log_success "Removed globular CA from system trust store"
 fi
 
+# Remove per-user Globular CA copies and MCP endpoint config so a fresh
+# install can regenerate them with the correct new CA and node IP.
+for user_home in /root /home/*; do
+  [[ -d "$user_home" ]] || continue
+  [[ -f "$user_home/.config/globular/ca.crt" ]] && \
+    rm -f "$user_home/.config/globular/ca.crt" && \
+    log_success "Removed $user_home/.config/globular/ca.crt"
+  # Reset MCP endpoint in .mcp.json (remove globular entry, keep others)
+  _mcp="$user_home/.claude/.mcp.json"
+  if [[ -f "$_mcp" ]] && command -v python3 >/dev/null 2>&1; then
+    python3 -c "
+import json, sys
+try:
+    d = json.load(open('$_mcp'))
+    d.get('mcpServers', {}).pop('globular', None)
+    json.dump(d, open('$_mcp','w'), indent=2)
+except Exception:
+    pass
+"
+    log_success "Removed globular MCP entry from $user_home/.claude/.mcp.json"
+  fi
+done
+
 # User client certificates
 for user_home in /home/*; do
   if [[ -d "$user_home/.config/globular" ]]; then
