@@ -363,6 +363,28 @@ fi
 echo "[bootstrap-dns] Hostname: $NODE_HOSTNAME"
 echo "[bootstrap-dns] Node IP: $NODE_IP"
 
+# Wait for ScyllaDB to be ready for writes before probing DNS.
+# The DNS service binds its gRPC port and port 53 quickly, but its ScyllaDB
+# schema init runs in the background. Without this gate, the first 8-10 write
+# probes always fail with exit code 1, producing misleading noise in the log.
+echo "[bootstrap-dns] Waiting for ScyllaDB to accept writes..."
+_SCYLLA_READY=0
+for _si in $(seq 1 60); do
+    if cqlsh "${NODE_IP}" 9042 --ssl \
+        --ssl-ca-certs "${STATE_DIR}/pki/ca.crt" \
+        --ssl-certfile "${STATE_DIR}/pki/issued/services/service.crt" \
+        --ssl-keyfile  "${STATE_DIR}/pki/issued/services/service.key" \
+        -e "SELECT now() FROM system.local;" >/dev/null 2>&1; then
+        _SCYLLA_READY=1
+        echo "[bootstrap-dns] ✓ ScyllaDB ready (after ${_si}s)"
+        break
+    fi
+    sleep 1
+done
+if [[ $_SCYLLA_READY -eq 0 ]]; then
+    echo "[bootstrap-dns] ⚠ ScyllaDB not confirmed ready after 60s — proceeding anyway" >&2
+fi
+
 # Wait for DNS service to be ready for write operations
 echo "[bootstrap-dns] Waiting for DNS database to accept writes..."
 MAX_WAIT=120
@@ -371,23 +393,23 @@ TEST_RECORD="bootstrap-test.${DOMAIN}."
 TEST_IP="$NODE_IP"
 
 for i in $(seq 1 $MAX_WAIT); do
-    echo "[bootstrap-dns] Attempt $i/$MAX_WAIT: Testing DNS write..." >&2
-
-    # Try to create a test record (capture output, don't fail on error)
+    # Try to create a test record
     set +e
     SET_OUTPUT=$(globular_dns --timeout 5s dns a set "$TEST_RECORD" "$TEST_IP" --ttl 60 2>&1)
     SET_EXIT=$?
     set -e
 
-    echo "[bootstrap-dns]   Set exit code: $SET_EXIT" >&2
+    if [[ $SET_EXIT -ne 0 ]]; then
+        echo "[bootstrap-dns] Attempt $i/$MAX_WAIT: write not ready yet (${SET_OUTPUT})" >&2
+        sleep 1
+        continue
+    fi
 
-    # Verify it actually exists (don't trust exit code due to CLI bug)
+    # Verify the record is readable
     set +e
     GET_OUTPUT=$(globular_dns --timeout 5s dns a get "$TEST_RECORD" 2>&1)
     GET_EXIT=$?
     set -e
-
-    echo "[bootstrap-dns]   Get exit code: $GET_EXIT" >&2
 
     if echo "$GET_OUTPUT" | grep -q "$TEST_IP"; then
         # Cleanup test record
