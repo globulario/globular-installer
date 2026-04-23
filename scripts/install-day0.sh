@@ -1646,7 +1646,7 @@ if [[ -x "$GLOBULAR_CLI" ]]; then
   # Restart node agent to ensure full inventory is reported.
   log_substep "Restarting node agent to force full inventory scan..."
   systemctl restart globular-node-agent 2>/dev/null || true
-  sleep 8  # allow the agent to rescan and push updated inventory to controller
+  sleep 12  # allow the agent to rescan and push updated inventory to controller
 
   # Resolve controller address from etcd — the controller is running by this point and has
   # registered its address and port. Never use a hardcoded port.
@@ -1677,6 +1677,15 @@ if [[ -x "$GLOBULAR_CLI" ]]; then
     log_warn "services seed returned non-zero — desired state may be incomplete"
     log_warn "Re-run manually after bootstrap: globular services seed --controller ${_SEED_CTRL} --ca ${_SEED_CA}"
   fi
+
+  # Second pass: some packages (e.g. scylla-manager) may have needed extra time
+  # to start and be recorded before the first seed ran. A second pass is a no-op
+  # for everything already seeded and picks up any stragglers.
+  sleep 5
+  log_substep "Second seed pass (picking up any late-starting packages)..."
+  "$GLOBULAR_CLI" services seed \
+      --controller "${_SEED_CTRL}" \
+      --ca "${_SEED_CA}" 2>&1 | while IFS= read -r line; do echo "  [seed2] $line"; done || true
 else
   log_warn "globular CLI not found at $GLOBULAR_CLI — skipping desired state seed"
   log_warn "Run manually after bootstrap: globular services seed"

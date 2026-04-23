@@ -454,6 +454,15 @@ else
     exit 1
 fi
 
+# <domain> apex → node IP (required for CLI default --controller globular.internal)
+# Wildcards do not cover the zone apex so this must be explicit.
+if globular_dns --timeout 10s dns a set "${DOMAIN}." "$NODE_IP" --ttl 300 2>&1; then
+    echo "  ✓ ${DOMAIN}. → $NODE_IP (apex)"
+else
+    echo "[bootstrap-dns] ERROR: Failed to create ${DOMAIN} apex record" >&2
+    exit 1
+fi
+
 # api.<domain> → node IP (API endpoint)
 if globular_dns --timeout 10s dns a set "api.${DOMAIN}." "$NODE_IP" --ttl 300 2>&1; then
     echo "  ✓ api.${DOMAIN}. → $NODE_IP"
@@ -480,6 +489,12 @@ if dig @127.0.0.1 +short "${NODE_HOSTNAME}.${DOMAIN}" 2>/dev/null | grep -q "$NO
     echo "  ✓ ${NODE_HOSTNAME}.${DOMAIN} resolves correctly"
 else
     echo "  ⚠ Warning: ${NODE_HOSTNAME}.${DOMAIN} resolution test failed"
+fi
+
+if dig @127.0.0.1 +short "${DOMAIN}" 2>/dev/null | grep -q "$NODE_IP"; then
+    echo "  ✓ ${DOMAIN} resolves correctly"
+else
+    echo "  ⚠ Warning: ${DOMAIN} apex resolution test failed"
 fi
 
 if dig @127.0.0.1 +short "api.${DOMAIN}" 2>/dev/null | grep -q "$NODE_IP"; then
