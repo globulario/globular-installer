@@ -150,11 +150,43 @@ if [[ -d /var/lib/etcd ]]; then
 fi
 
 
-# Remove Globular CA from system trust store
+# ── PKI / Trust store cleanup ─────────────────────────────────────────────────
+# Remove all traces of the Globular CA from the system trust store so a
+# joining node does not inherit a stale CA. Without this, old CA certs in
+# /etc/ssl/certs/ will cause spurious TLS validation failures after CA rotation.
+
+TRUST_CHANGED=0
+
+# /usr/local/share/ca-certificates/ — canonical Debian/Ubuntu location
 if [[ -f /usr/local/share/ca-certificates/globular-ca.crt ]]; then
   rm -f /usr/local/share/ca-certificates/globular-ca.crt
+  TRUST_CHANGED=1
+  log_success "Removed /usr/local/share/ca-certificates/globular-ca.crt"
+fi
+
+# /etc/ssl/certs/ — symlinks created by update-ca-certificates; also catch any
+# manually placed copies.
+for cert in /etc/ssl/certs/*globular* /etc/ssl/certs/*Globular*; do
+  [[ -e "$cert" ]] || continue
+  rm -f "$cert"
+  TRUST_CHANGED=1
+  log_success "Removed $cert"
+done
+
+# MinIO TLS artifacts stored outside /var/lib/globular (legacy install paths).
+for path in /var/lib/globular/.minio/certs/public.crt \
+            /var/lib/globular/.minio/certs/private.key \
+            /var/lib/globular/config/tls \
+            /var/lib/globular/domains; do
+  if [[ -e "$path" ]]; then
+    rm -rf "$path"
+    log_success "Removed $path"
+  fi
+done
+
+if [[ $TRUST_CHANGED -eq 1 ]]; then
   update-ca-certificates --fresh >/dev/null 2>&1 || update-ca-certificates >/dev/null 2>&1 || true
-  log_success "Removed globular CA from system trust store"
+  log_success "Rebuilt system CA trust store"
 fi
 
 # Remove per-user Globular CA copies and MCP endpoint config so a fresh
