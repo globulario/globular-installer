@@ -124,8 +124,19 @@ for dir in /mnt/data/minio /var/lib/minio; do
   fi
 done
 
-# ScyllaDB data (but NOT the scylla package itself)
-for dir in /var/lib/scylla/data /var/lib/scylla/commitlog /var/lib/scylla/hints /var/lib/scylla/view_hints; do
+# Remove ScyllaDB package entirely so the node-agent owns the install from
+# scratch on rejoin. Keeping the binary causes a race: systemd auto-starts
+# scylla-server before the node-agent can take control, and Scylla hangs on
+# SIGTERM while loading system tables requiring a manual SIGKILL.
+if dpkg -l 'scylla*' 2>/dev/null | grep -q '^ii'; then
+  log_info "Removing ScyllaDB packages (node-agent will reinstall on rejoin)"
+  DEBIAN_FRONTEND=noninteractive apt-get remove -y --purge 'scylla*' 2>/dev/null || \
+    log_warn "apt remove scylla failed — continuing"
+  log_success "ScyllaDB packages removed"
+fi
+
+# Wipe all ScyllaDB state and data
+for dir in /var/lib/scylla /etc/scylla /etc/scylla.d; do
   if [[ -d "$dir" ]]; then
     rm -rf "$dir"
     log_success "Removed $dir"
