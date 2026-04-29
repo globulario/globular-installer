@@ -330,7 +330,7 @@ FAILED_LIST=""
 # This is the idempotency key — the repository assigns its own version counter (0.0.x)
 # and has no dedup by content. Without this, every run creates a new version entry.
 PUBLISHED_CHECKSUMS_FILE="${STATE_DIR}/.bootstrap-artifacts-checksums"
-declare -A PUBLISHED_CHECKSUMS
+declare -A PUBLISHED_CHECKSUMS=()
 if [[ -f "$PUBLISHED_CHECKSUMS_FILE" ]]; then
   while IFS= read -r _cs; do
     [[ -n "$_cs" ]] && PUBLISHED_CHECKSUMS["$_cs"]=1
@@ -360,10 +360,13 @@ for pattern in "${CORE_PACKAGES[@]}"; do
 
   # Idempotency: extract the entrypoint_checksum from the package and skip
   # if we've already successfully published this exact binary.
+  # Key on (name, checksum) not just checksum — packages like scylladb and
+  # keepalived share the same noop binary and would falsely dedup otherwise.
   PKG_CHECKSUM=$(tar xOf "$PACKAGE" ./package.json 2>/dev/null \
     | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('entrypoint_checksum',''))" 2>/dev/null || true)
+  PKG_DEDUP_KEY="${SVC_NAME}:${PKG_CHECKSUM}"
 
-  if [[ -n "$PKG_CHECKSUM" && -n "${PUBLISHED_CHECKSUMS[$PKG_CHECKSUM]+x}" ]]; then
+  if [[ -n "$PKG_CHECKSUM" && -n "${PUBLISHED_CHECKSUMS[$PKG_DEDUP_KEY]+x}" ]]; then
     log_success "$(printf '%-28s %s (already present)' "$SVC_NAME" "$SVC_VER")"
     SKIPPED=$((SKIPPED + 1))
     continue
@@ -397,8 +400,8 @@ except:
     fi
     # Record checksum so re-runs skip this binary.
     if [[ -n "$PKG_CHECKSUM" ]]; then
-      PUBLISHED_CHECKSUMS["$PKG_CHECKSUM"]=1
-      echo "$PKG_CHECKSUM" >> "$PUBLISHED_CHECKSUMS_FILE"
+      PUBLISHED_CHECKSUMS["$PKG_DEDUP_KEY"]=1
+      echo "$PKG_DEDUP_KEY" >> "$PUBLISHED_CHECKSUMS_FILE"
     fi
   else
     # Check for "already exists" style errors in the raw output
