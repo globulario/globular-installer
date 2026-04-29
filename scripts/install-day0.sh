@@ -624,6 +624,10 @@ fi
 # Fix ownership NOW, before any globular-user service tries to read them.
 if id globular >/dev/null 2>&1 && [[ -d /var/lib/globular/pki ]]; then
   chown -R globular:globular /var/lib/globular/pki
+  # Restore world-traversable on state root and PKI dir so non-root CLI
+  # (and ensure-bootstrap-artifacts.sh) can read the CA cert.
+  # chown -R resets directory modes via the globular user's umask (0027).
+  chmod o+rx /var/lib/globular /var/lib/globular/pki 2>/dev/null || true
   log_substep "TLS files ownership set to globular:globular (pre-infra)"
 fi
 
@@ -673,6 +677,7 @@ if id globular >/dev/null 2>&1; then
 
   # INV-PKI-1: Use canonical PKI paths only
   chown -R globular:globular /var/lib/globular/pki /var/lib/globular/.minio 2>/dev/null || true
+  chmod o+rx /var/lib/globular /var/lib/globular/pki 2>/dev/null || true
   log_success "TLS files ownership set to globular:globular"
 
   # Allow the gateway to read systemd journal (needed for journal.ReadUnit API)
