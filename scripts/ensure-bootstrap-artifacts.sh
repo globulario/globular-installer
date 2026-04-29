@@ -134,6 +134,9 @@ CORE_PACKAGES=(
   "sha256sum_*_linux_amd64.tgz"
   "restic_*_linux_amd64.tgz"
   "rclone_*_linux_amd64.tgz"
+  "claude_*_linux_amd64.tgz"
+  # ── Alerting ───────────────────────────────────────────────────────
+  "alertmanager_*_linux_amd64.tgz"
 )
 
 # ── Step 1: Discover repository endpoint ─────────────────────────────────────
