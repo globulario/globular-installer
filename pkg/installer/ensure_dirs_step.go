@@ -76,7 +76,7 @@ func (s *EnsureDirsStep) dirSpecs(ctx *Context) []platform.DirSpec {
 	return []platform.DirSpec{
 		{Path: prefix, Owner: systemUser, Group: systemGroup, Mode: fs.FileMode(0o755)},
 		{Path: filepath.Join(prefix, "bin"), Owner: systemUser, Group: systemGroup, Mode: fs.FileMode(0o755)},
-		{Path: stateDir, Owner: appUser, Group: appGroup, Mode: fs.FileMode(0o750)},
+		{Path: stateDir, Owner: appUser, Group: appGroup, Mode: fs.FileMode(0o755)},
 		{Path: filepath.Join(stateDir, "data"), Owner: appUser, Group: appGroup, Mode: fs.FileMode(0o750)},
 		{Path: configDir, Owner: systemUser, Group: systemGroup, Mode: fs.FileMode(0o755)},
 		{Path: filepath.Join(configDir, "config"), Owner: systemUser, Group: appGroup, Mode: fs.FileMode(0o750)},
