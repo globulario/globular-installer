@@ -475,6 +475,7 @@ CLI_FLAGS=(
   --type "$UPSTREAM_TYPE"
   --channel "$UPSTREAM_CHANNEL"
   --platform "$UPSTREAM_PLATFORM"
+  --trust-policy publish
 )
 
 case "$UPSTREAM_TYPE" in
