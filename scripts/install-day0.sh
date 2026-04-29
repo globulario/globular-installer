@@ -1204,6 +1204,10 @@ if ! systemctl is-active --quiet globular-etcd.service 2>/dev/null; then
   log_substep "etcd not running — resetting and restarting..."
   systemctl reset-failed globular-etcd.service 2>/dev/null || true
   chown -R globular:globular /var/lib/globular/pki 2>/dev/null || true
+  # Restore world-readable on state root and PKI dir so non-root CLI
+  # can read the CA cert for TLS connections (setup-tls.sh sets 755,
+  # but chown -R can reset directory modes via umask).
+  chmod o+rx /var/lib/globular /var/lib/globular/pki 2>/dev/null || true
   systemctl start globular-etcd.service 2>/dev/null || true
   sleep 3
   if systemctl is-active --quiet globular-etcd.service 2>/dev/null; then
@@ -1534,6 +1538,20 @@ log_success "Day-0 join token provisioned"
 # which leaves the controller with stale cached connections. A final restart
 # ensures clean connectivity now that everything is stable.
 log_step "Final Service Stabilization"
+
+# Ensure webroot exists for the gateway welcome page.
+if [[ -d "${SCRIPT_DIR}/../webroot" ]]; then
+  mkdir -p /var/lib/globular/webroot
+  cp -r "${SCRIPT_DIR}/../webroot/"* /var/lib/globular/webroot/ 2>/dev/null || true
+  chown -R globular:globular /var/lib/globular/webroot 2>/dev/null || true
+  log_success "Gateway webroot installed"
+fi
+
+# Ensure non-root users can access the CA cert for CLI operations.
+# setup-tls.sh sets 755 on these dirs, but chown -R calls during
+# package installation can reset permissions via the globular user's umask.
+chmod o+rx /var/lib/globular /var/lib/globular/pki 2>/dev/null || true
+
 systemctl restart globular-cluster-controller.service 2>/dev/null || true
 systemctl restart globular-gateway.service 2>/dev/null || true
 sleep 3

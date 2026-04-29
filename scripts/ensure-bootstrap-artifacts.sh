@@ -533,7 +533,7 @@ else
 import json, os
 d = {
     'name': '${UPSTREAM_NAME}',
-    'type': '${UPSTREAM_TYPE}'.upper().replace('-','_').replace('GITHUB','GITHUB_RELEASE').replace('HTTP','HTTP_INDEX').replace('LOCAL_DIR','LOCAL_DIR').replace('GIT','GIT_INDEX'),
+    'type': {'github':'GITHUB_RELEASE','http':'HTTP_INDEX','local-dir':'LOCAL_DIR','local_dir':'LOCAL_DIR','git':'GIT_INDEX'}.get('${UPSTREAM_TYPE}'.lower(), '${UPSTREAM_TYPE}'.upper()),
     'indexUrl': '${UPSTREAM_URL}',
     'channel': '${UPSTREAM_CHANNEL}',
     'platform': '${UPSTREAM_PLATFORM}',
