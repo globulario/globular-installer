@@ -1600,12 +1600,18 @@ for _ri in \
     "$PKG_DIR/../release-index.json"; do
   if [[ -f "$_ri" ]]; then
     cp "$_ri" "${STATE_DIR}/release-index.json"
-    log_success "Installed release-index.json to ${STATE_DIR}/"
+    chmod 0644 "${STATE_DIR}/release-index.json"
+    # Log the platform release identity.
+    _bom_tag=$(python3 -c "import json; d=json.load(open('${STATE_DIR}/release-index.json')); print(d.get('release_tag',''))" 2>/dev/null || true)
+    _bom_plat=$(python3 -c "import json; d=json.load(open('${STATE_DIR}/release-index.json')); print(d.get('platform_release',''))" 2>/dev/null || true)
+    log_success "Installed release-index.json to ${STATE_DIR}/ (tag=${_bom_tag:-unknown} platform_release=${_bom_plat:-unknown})"
     break
   fi
 done
 if [[ ! -f "${STATE_DIR}/release-index.json" ]]; then
-  log_warn "release-index.json not found in installer bundle — legacy mode (join binaries will use latest published)"
+  log_warn "release-index.json not found in installer bundle"
+  log_warn "Day-1 join binaries will resolve to latest published (non-deterministic)."
+  log_warn "Include release-index.json in the installer bundle for deterministic installs."
 fi
 
 # already present. Non-fatal: install completes even if some packages fail.

@@ -427,24 +427,17 @@ except:
   rm -f "$PUBLISH_ERR_FILE" 2>/dev/null || true
 done
 
-# ── Step 4: Register default upstream source ─────────────────────────────────
+# ── Step 4: Register upstream source (provider-neutral) ──────────────────────
 #
-# Registers the canonical globulario GitHub Releases upstream source so the
-# cluster can sync future releases via `repository.sync.upstream` workflows.
+# Registers the configured upstream source for Day-1+ sync operations.
+# Default: globulario GitHub Releases. Override via GLOBULAR_UPSTREAM_* env vars.
 #
 # Primary path: globular repo register-upstream (RegisterUpstream RPC).
-#   Uses the same code path and schema as Day-1 operators. The repository
-#   service is confirmed reachable (REPO_ADDR was resolved above), the
-#   auth token is valid, and the CLI can discover the service via etcd.
-#   RegisterUpstream is an upsert — idempotent by design.
+#   Uses the same code path as Day-1 operators. Supports all provider types:
+#   github, http, local-dir, git. RegisterUpstream is an upsert — idempotent.
 #
-# Fallback path: direct etcd write.
+# Fallback path: direct etcd write with provider-neutral JSON.
 #   Used only when the CLI fails (e.g. transient repository unavailability).
-#   Writes protojson-compatible JSON to the same key read by RegisterUpstream.
-#
-# Conflict detection: if an existing record has a different indexUrl, a
-#   warning is emitted before overwriting with canonical bootstrap values.
-#   Day-0 bootstrap values are authoritative.
 #
 # This step is non-fatal: Day-0 service start does not depend on upstream
 # registration. The upstream is metadata for Day-1+ sync operations.
@@ -561,25 +554,23 @@ print(json.dumps(d))
   fi
 fi
 
-# ── Step 5: Sync packages from GitHub Releases (source of truth) ─────────────
+# ── Step 5: Sync packages from configured upstream using active release BOM ───
 #
 # After registering the upstream, perform an immediate sync so the local
-# repository catalog reflects the versions published on GitHub Releases —
-# making GitHub the authoritative version source.
+# repository catalog reflects the versions from the active platform release.
+#
+# The release tag is read from release-index.json (the BOM included in the
+# installer bundle). This is the authoritative source — NOT package filenames
+# (which have mixed versions in the BOM model) and NOT GitHub (which is just
+# one possible provider).
 #
 # Uses `globular repo sync` (direct repository RPC) rather than
 # `globular pkg sync-upstream` (workflow). At Day-0, the WorkflowService
-# and ClusterController may not yet be registered in etcd — the direct
-# path only requires the repository service, which is already confirmed
-# reachable by Step 1.
+# and ClusterController may not yet be registered in etcd.
 #
-# The release tag is derived from the service package filenames already
-# present in PKG_DIR (e.g. cluster_controller_1.0.27_linux_amd64.tgz → v1.0.27).
-# Using the local packages as the version source avoids external API calls and
-# ensures the tag corresponds exactly to the installer bundle.
-#
-# This step is non-fatal: if sync fails (e.g. no network, GitHub unreachable),
-# Day-0 completes and the operator can run `globular repo sync` later.
+# This step is non-fatal: if sync fails (e.g. no network, upstream unreachable),
+# Day-0 completes with locally published artifacts. The operator can retry:
+#   globular repo sync --source <name> --tag <tag>
 
 SYNC_TAG=""
 
