@@ -28,12 +28,9 @@
 #
 # Idempotent: skips packages that are already published.
 #
-# Environment variables:
-#   PKG_DIR            - Directory containing .tgz packages (required)
-#   GLOBULAR_CLI       - Path to globularcli binary (default: /usr/lib/globular/bin/globularcli)
-#   REPO_ADDR          - Repository gRPC endpoint override (default: auto-discover via gateway)
-#   GLOBULAR_TOKEN     - Auth token override (default: login as sa)
-#   GLOBULAR_PASSWORD  - sa password (default: read from bootstrap credential file or prompt)
+# Arguments:
+#   $1 - Directory containing .tgz packages (required)
+#   $2 - Path to globularcli binary (optional, default: /usr/lib/globular/bin/globularcli)
 #
 # Exit codes:
 #   0 - All core packages published (or already present)
@@ -53,17 +50,24 @@ log_fail()    { echo "  ✗ $*" >&2; }
 
 # ── Configuration ────────────────────────────────────────────────────────────
 
-PKG_DIR="${PKG_DIR:-}"
+PKG_DIR="${1:-}"
 if [[ -z "$PKG_DIR" || ! -d "$PKG_DIR" ]]; then
   log_fail "PKG_DIR is not set or does not exist: ${PKG_DIR:-<unset>}"
   exit 1
 fi
 
-GLOBULAR_CLI="${GLOBULAR_CLI:-/usr/lib/globular/bin/globularcli}"
+GLOBULAR_CLI="${2:-/usr/lib/globular/bin/globularcli}"
 if [[ ! -x "$GLOBULAR_CLI" ]]; then
   log_warn "globularcli not found at $GLOBULAR_CLI — cannot publish artifacts"
   exit 1
 fi
+
+STATE_DIR="/var/lib/globular"
+REAL_HOME="/root"
+REPO_ADDR=""
+GLOBULAR_TOKEN=""
+GLOBULAR_USER="sa"
+GLOBULAR_PASSWORD=""
 
 # All packages that MUST be in the repository after Day-0.
 # This includes every service, infrastructure component, and CLI tool
@@ -132,21 +136,11 @@ CORE_PACKAGES=(
   "rclone_*_linux_amd64.tgz"
 )
 
-# ── Resolve real user home (handles sudo) ────────────────────────────────────
-# When running as root via sudo, $HOME is /root but certs live under the
-# invoking user's home (e.g. /home/dave/.config/globular/).
-REAL_HOME="$HOME"
-if [[ $EUID -eq 0 && -n "${SUDO_USER:-}" ]]; then
-  REAL_HOME=$(eval echo "~${SUDO_USER}")
-fi
-
 # ── Step 1: Discover repository endpoint ─────────────────────────────────────
 
 # Routable node IP — never loopback.
 NODE_IP=$(ip route get 8.8.8.8 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1); exit}')
 NODE_IP="${NODE_IP:-$(hostname -I | awk '{print $1}')}"
-
-STATE_DIR="${STATE_DIR:-/var/lib/globular}"
 
 # Locate the CA cert. This script runs as root (via sudo), so root's home
 # and /var/lib/globular/ are both accessible.
@@ -169,12 +163,8 @@ if [[ -z "$CA_CERT" ]]; then
 fi
 log_info "Using CA cert: $CA_CERT"
 
-REPO_ADDR="${REPO_ADDR:-}"
-
 if [[ -z "$REPO_ADDR" ]]; then
   log_info "Discovering repository service endpoint from etcd..."
-
-  STATE_DIR="${STATE_DIR:-/var/lib/globular}"
 
   # etcd service records use UUIDs as keys — scan all entries and match by Name.
   # This is the authoritative source; never use hardcoded ports or gateway probing.
@@ -258,25 +248,15 @@ log_success "Repository endpoint: $REPO_ADDR"
 
 # ── Step 2: Acquire auth token ───────────────────────────────────────────────
 
-# Always resolve user/password so the mid-run token refresh can use them.
-GLOBULAR_USER="${GLOBULAR_USER:-sa}"
 BOOTSTRAP_CRED_GLOBAL="/var/lib/globular/.bootstrap-sa-password"
-if [[ -z "${GLOBULAR_PASSWORD:-}" && -f "$BOOTSTRAP_CRED_GLOBAL" && -r "$BOOTSTRAP_CRED_GLOBAL" ]]; then
+if [[ -z "${GLOBULAR_PASSWORD}" && -f "$BOOTSTRAP_CRED_GLOBAL" && -r "$BOOTSTRAP_CRED_GLOBAL" ]]; then
   GLOBULAR_PASSWORD=$(cat "$BOOTSTRAP_CRED_GLOBAL")
 fi
 
-if [[ -z "${GLOBULAR_TOKEN:-}" ]]; then
-  # Resolve password: env var (already done above) → interactive prompt.
-  if [[ -z "${GLOBULAR_PASSWORD:-}" ]]; then
-    read -rsp "Password for $GLOBULAR_USER: " GLOBULAR_PASSWORD
-    echo
-  fi
-
-  # Fix ownership of the config dir so the CLI can write the token file.
-  # Previous sudo runs may have created it as root-owned.
-  CONFIG_DIR="${REAL_HOME}/.config/globular"
-  if [[ $EUID -eq 0 && -n "${SUDO_USER:-}" && -d "$CONFIG_DIR" ]]; then
-    chown -R "${SUDO_USER}":"${SUDO_USER}" "$CONFIG_DIR" 2>/dev/null || true
+if [[ -z "${GLOBULAR_TOKEN}" ]]; then
+  if [[ -z "${GLOBULAR_PASSWORD}" ]]; then
+    log_fail "bootstrap password file missing: $BOOTSTRAP_CRED_GLOBAL"
+    exit 1
   fi
 
   # Run as root (EUID=0 since script is invoked via sudo bash).
@@ -295,13 +275,13 @@ if [[ -z "${GLOBULAR_TOKEN:-}" ]]; then
     fi
 
     # Fallback: also check /root in case CLI wrote it there.
-    if [[ -z "${GLOBULAR_TOKEN:-}" && -f "/root/.config/globular/token" ]]; then
+    if [[ -z "${GLOBULAR_TOKEN}" && -f "/root/.config/globular/token" ]]; then
       GLOBULAR_TOKEN=$(cat "/root/.config/globular/token")
       [[ -n "$GLOBULAR_TOKEN" ]] && break
     fi
 
     # Fallback: parse the token directly from CLI output.
-    if [[ -z "${GLOBULAR_TOKEN:-}" ]]; then
+    if [[ -z "${GLOBULAR_TOKEN}" ]]; then
       PARSED_TOKEN=$(echo "$LOGIN_OUT" | grep -oP '^Token: \K\S+' || true)
       if [[ -n "$PARSED_TOKEN" ]]; then
         GLOBULAR_TOKEN="$PARSED_TOKEN"
@@ -313,7 +293,7 @@ if [[ -z "${GLOBULAR_TOKEN:-}" ]]; then
     sleep 3
   done
 
-  if [[ -z "${GLOBULAR_TOKEN:-}" ]]; then
+  if [[ -z "${GLOBULAR_TOKEN}" ]]; then
     log_warn "Failed to acquire auth token after 3 attempts: $LOGIN_OUT"
     log_warn "Publish requires authentication — skipping artifact publish"
     exit 1
@@ -469,59 +449,105 @@ done
 # This step is non-fatal: Day-0 service start does not depend on upstream
 # registration. The upstream is metadata for Day-1+ sync operations.
 
-UPSTREAM_NAME="globulario-github"
-UPSTREAM_URL="https://github.com/globulario/services/releases/download/{tag}/release-index.json"
-UPSTREAM_CHANNEL="stable"
-UPSTREAM_PLATFORM="linux_amd64"
+# ── Provider-neutral upstream configuration ──────────────────────────────────
+# Supports: github (default), http, local-dir, git via environment variables.
+# Environment:
+#   GLOBULAR_UPSTREAM_TYPE       — github|http|local-dir|git (default: github)
+#   GLOBULAR_UPSTREAM_NAME       — source name (default: globulario-github)
+#   GLOBULAR_UPSTREAM_URL        — index URL with {tag} template
+#   GLOBULAR_UPSTREAM_REPO_URL   — Git repo URL or GitHub owner/repo
+#   GLOBULAR_UPSTREAM_BRANCH     — Git branch (GIT_INDEX)
+#   GLOBULAR_UPSTREAM_INDEX_PATH — index path template (GIT_INDEX, LOCAL_DIR)
+#   GLOBULAR_UPSTREAM_ARTIFACT_BASE_URL — artifact download base URL
+#   GLOBULAR_UPSTREAM_LOCAL_ROOT — local root (LOCAL_DIR)
+#   GLOBULAR_UPSTREAM_CHANNEL    — release channel (default: stable)
+#   GLOBULAR_UPSTREAM_PLATFORM   — platform (default: linux_amd64)
+
+UPSTREAM_TYPE="${GLOBULAR_UPSTREAM_TYPE:-github}"
+UPSTREAM_NAME="${GLOBULAR_UPSTREAM_NAME:-globulario-github}"
+UPSTREAM_URL="${GLOBULAR_UPSTREAM_URL:-https://github.com/globulario/services/releases/download/{tag}/release-index.json}"
+UPSTREAM_CHANNEL="${GLOBULAR_UPSTREAM_CHANNEL:-stable}"
+UPSTREAM_PLATFORM="${GLOBULAR_UPSTREAM_PLATFORM:-linux_amd64}"
 UPSTREAM_KEY="/globular/repository/upstreams/${UPSTREAM_NAME}"
 
-# Read existing record to detect config conflicts before overwriting.
-EXISTING_UPSTREAM=$(etcdctl \
-    --endpoints="https://${NODE_IP}:2379" \
-    --cacert="${STATE_DIR}/pki/ca.crt" \
-    --cert="${STATE_DIR}/pki/issued/services/service.crt" \
-    --key="${STATE_DIR}/pki/issued/services/service.key" \
-    get "$UPSTREAM_KEY" --print-value-only 2>/dev/null || true)
+# Build CLI flags based on provider type.
+CLI_FLAGS=(
+  --name "$UPSTREAM_NAME"
+  --type "$UPSTREAM_TYPE"
+  --channel "$UPSTREAM_CHANNEL"
+  --platform "$UPSTREAM_PLATFORM"
+)
 
-if [[ -n "$EXISTING_UPSTREAM" ]]; then
-  EXISTING_URL=$(echo "$EXISTING_UPSTREAM" | python3 -c "
-import json, sys
-try:
-    d = json.loads(sys.stdin.read())
-    print(d.get('indexUrl', ''))
-except Exception:
-    print('')
-" 2>/dev/null || true)
-
-  if [[ -n "$EXISTING_URL" && "$EXISTING_URL" != "$UPSTREAM_URL" ]]; then
-    log_warn "Upstream '${UPSTREAM_NAME}' exists with different indexUrl:"
-    log_warn "  stored:   ${EXISTING_URL}"
-    log_warn "  expected: ${UPSTREAM_URL}"
-    log_warn "  Overwriting with canonical bootstrap values."
-  fi
-fi
+case "$UPSTREAM_TYPE" in
+  github)
+    CLI_FLAGS+=(--url "$UPSTREAM_URL")
+    if [[ -n "${GLOBULAR_UPSTREAM_REPO_URL:-}" ]]; then
+      CLI_FLAGS+=(--repo-url "$GLOBULAR_UPSTREAM_REPO_URL")
+    fi
+    ;;
+  http)
+    CLI_FLAGS+=(--url "$UPSTREAM_URL")
+    if [[ -n "${GLOBULAR_UPSTREAM_ARTIFACT_BASE_URL:-}" ]]; then
+      CLI_FLAGS+=(--artifact-base-url "$GLOBULAR_UPSTREAM_ARTIFACT_BASE_URL")
+    fi
+    ;;
+  local-dir)
+    if [[ -n "${GLOBULAR_UPSTREAM_LOCAL_ROOT:-}" ]]; then
+      CLI_FLAGS+=(--local-root "$GLOBULAR_UPSTREAM_LOCAL_ROOT")
+    fi
+    if [[ -n "${GLOBULAR_UPSTREAM_INDEX_PATH:-}" ]]; then
+      CLI_FLAGS+=(--index-path "$GLOBULAR_UPSTREAM_INDEX_PATH")
+    fi
+    ;;
+  git)
+    if [[ -n "${GLOBULAR_UPSTREAM_REPO_URL:-}" ]]; then
+      CLI_FLAGS+=(--repo-url "$GLOBULAR_UPSTREAM_REPO_URL")
+    fi
+    if [[ -n "${GLOBULAR_UPSTREAM_BRANCH:-}" ]]; then
+      CLI_FLAGS+=(--branch "$GLOBULAR_UPSTREAM_BRANCH")
+    fi
+    if [[ -n "${GLOBULAR_UPSTREAM_INDEX_PATH:-}" ]]; then
+      CLI_FLAGS+=(--index-path "$GLOBULAR_UPSTREAM_INDEX_PATH")
+    fi
+    if [[ -n "${GLOBULAR_UPSTREAM_ARTIFACT_BASE_URL:-}" ]]; then
+      CLI_FLAGS+=(--artifact-base-url "$GLOBULAR_UPSTREAM_ARTIFACT_BASE_URL")
+    fi
+    ;;
+esac
 
 # Primary path: RegisterUpstream RPC via CLI.
-# The repository is already confirmed reachable (REPO_ADDR was resolved above),
-# and the CLI resolves it again via etcd — consistent with Day-1 operator flow.
 UPSTREAM_CLI_OUT=$("$GLOBULAR_CLI" \
     --ca "$CA_CERT" \
     --timeout 30s \
     --token "$GLOBULAR_TOKEN" \
-    repo register-upstream \
-    --name "$UPSTREAM_NAME" \
-    --url "$UPSTREAM_URL" \
-    --channel "$UPSTREAM_CHANNEL" \
-    --platform "$UPSTREAM_PLATFORM" 2>&1) && _upstream_ok=true || _upstream_ok=false
+    repo register-upstream "${CLI_FLAGS[@]}" 2>&1) && _upstream_ok=true || _upstream_ok=false
 
 if $_upstream_ok; then
-  log_success "Upstream source '${UPSTREAM_NAME}' registered via RegisterUpstream RPC"
+  log_success "Upstream source '${UPSTREAM_NAME}' registered (type: ${UPSTREAM_TYPE})"
 else
   # Fallback: direct etcd write using protojson-compatible schema.
-  # This path is used only when the CLI cannot reach the repository service.
   log_warn "CLI registration failed (${UPSTREAM_CLI_OUT}); falling back to direct etcd write"
 
-  UPSTREAM_JSON="{\"name\":\"${UPSTREAM_NAME}\",\"type\":\"GITHUB_RELEASE\",\"indexUrl\":\"${UPSTREAM_URL}\",\"channel\":\"${UPSTREAM_CHANNEL}\",\"platform\":\"${UPSTREAM_PLATFORM}\",\"enabled\":true}"
+  # Build provider-neutral JSON.
+  UPSTREAM_JSON=$(python3 -c "
+import json, os
+d = {
+    'name': '${UPSTREAM_NAME}',
+    'type': '${UPSTREAM_TYPE}'.upper().replace('-','_').replace('GITHUB','GITHUB_RELEASE').replace('HTTP','HTTP_INDEX').replace('LOCAL_DIR','LOCAL_DIR').replace('GIT','GIT_INDEX'),
+    'indexUrl': '${UPSTREAM_URL}',
+    'channel': '${UPSTREAM_CHANNEL}',
+    'platform': '${UPSTREAM_PLATFORM}',
+    'enabled': True,
+}
+for k, ek in [('repoUrl','GLOBULAR_UPSTREAM_REPO_URL'),('branch','GLOBULAR_UPSTREAM_BRANCH'),
+              ('indexPathTemplate','GLOBULAR_UPSTREAM_INDEX_PATH'),
+              ('artifactBaseUrl','GLOBULAR_UPSTREAM_ARTIFACT_BASE_URL'),
+              ('localRoot','GLOBULAR_UPSTREAM_LOCAL_ROOT')]:
+    v = os.environ.get(ek, '')
+    if v:
+        d[k] = v
+print(json.dumps(d))
+" 2>/dev/null)
 
   if etcdctl \
       --endpoints="https://${NODE_IP}:2379" \
@@ -529,9 +555,9 @@ else
       --cert="${STATE_DIR}/pki/issued/services/service.crt" \
       --key="${STATE_DIR}/pki/issued/services/service.key" \
       put "$UPSTREAM_KEY" "$UPSTREAM_JSON" > /dev/null 2>&1; then
-    log_success "Upstream source '${UPSTREAM_NAME}' registered (etcd fallback)"
+    log_success "Upstream source '${UPSTREAM_NAME}' registered (etcd fallback, type: ${UPSTREAM_TYPE})"
   else
-    log_warn "Failed to register upstream source '${UPSTREAM_NAME}' (non-fatal — Day-0 continues)"
+    log_warn "Failed to register upstream source '${UPSTREAM_NAME}' (non-fatal)"
   fi
 fi
 
@@ -557,27 +583,66 @@ fi
 
 SYNC_TAG=""
 
-# Detect tag from service package filenames: name_VERSION_linux_amd64.tgz
-# The glob matches packages like cluster_controller_1.0.27_linux_amd64.tgz.
-for _pkg_file in "$PKG_DIR"/cluster_controller_*_linux_amd64.tgz \
-                  "$PKG_DIR"/repository_*_linux_amd64.tgz \
-                  "$PKG_DIR"/node_agent_*_linux_amd64.tgz; do
-  [[ -f "$_pkg_file" ]] || continue
-  _base=$(basename "$_pkg_file")
-  # Extract version field: name_VERSION_linux_amd64.tgz
-  # Greedy match up to the last _MAJOR.MINOR.PATCH_ before _linux_amd64.tgz.
-  _ver=$(echo "$_base" | sed -E 's/^.+_([0-9]+\.[0-9]+\.[0-9]+)_linux_amd64\.tgz$/\1/')
-  if [[ "$_ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    SYNC_TAG="v${_ver}"
+# ── Detect release tag from release-index.json (BOM model) ─────────────────
+# The release-index.json included in the installer bundle is the authoritative
+# source for the platform release tag. Do NOT infer from package filenames —
+# with the BOM model, packages have mixed versions that do not match the
+# platform release.
+
+RELEASE_INDEX=""
+for _ri in \
+    "$PKG_DIR/../release-index.json" \
+    "$PKG_DIR/../../release-index.json" \
+    "${SCRIPT_DIR}/../release-index.json" \
+    "${SCRIPT_DIR}/../../release-index.json"; do
+  if [[ -f "$_ri" ]]; then
+    RELEASE_INDEX="$(cd "$(dirname "$_ri")" && pwd)/$(basename "$_ri")"
     break
   fi
 done
 
+if [[ -n "$RELEASE_INDEX" ]]; then
+  SYNC_TAG=$(python3 -c "
+import json, sys
+try:
+    idx = json.load(open('${RELEASE_INDEX}'))
+    print(idx.get('release_tag', ''))
+except Exception:
+    print('')
+" 2>/dev/null || true)
+  if [[ -n "$SYNC_TAG" ]]; then
+    log_success "Release tag from release-index.json: $SYNC_TAG"
+  fi
+fi
+
+# Fallback: explicit env var.
+if [[ -z "$SYNC_TAG" && -n "${GLOBULAR_RELEASE_TAG:-}" ]]; then
+  SYNC_TAG="$GLOBULAR_RELEASE_TAG"
+  log_info "Release tag from GLOBULAR_RELEASE_TAG: $SYNC_TAG"
+fi
+
+# Legacy fallback: infer from package filenames (deprecated — BOM model makes this unreliable).
 if [[ -z "$SYNC_TAG" ]]; then
-  log_warn "Could not detect release tag from PKG_DIR filenames — skipping GitHub sync"
-  log_warn "Run 'globular pkg sync-upstream --source globulario-github --tag <tag>' manually"
+  for _pkg_file in "$PKG_DIR"/cluster-controller_*_linux_amd64.tgz \
+                    "$PKG_DIR"/repository_*_linux_amd64.tgz \
+                    "$PKG_DIR"/node-agent_*_linux_amd64.tgz; do
+    [[ -f "$_pkg_file" ]] || continue
+    _base=$(basename "$_pkg_file")
+    _ver=$(echo "$_base" | sed -E 's/^.+_([0-9]+\.[0-9]+\.[0-9]+)_linux_amd64\.tgz$/\1/')
+    if [[ "$_ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      SYNC_TAG="v${_ver}"
+      log_warn "Release tag inferred from filename (legacy): $SYNC_TAG"
+      log_warn "Include release-index.json in the installer bundle to avoid this."
+      break
+    fi
+  done
+fi
+
+if [[ -z "$SYNC_TAG" ]]; then
+  log_warn "Could not detect release tag — skipping upstream sync"
+  log_warn "Run 'globular repo sync --source <name> --tag <tag>' manually"
 else
-  log_info "Syncing packages from GitHub Releases @ ${SYNC_TAG} (direct)..."
+  log_info "Syncing packages from upstream '${UPSTREAM_NAME}' @ ${SYNC_TAG} (direct)..."
   # `repo sync` calls SyncFromUpstream directly on the repository service —
   # no WorkflowService or ClusterController required.
   SYNC_OUT=$("$GLOBULAR_CLI" \
@@ -589,13 +654,14 @@ else
       --tag "$SYNC_TAG" 2>&1) && _sync_ok=true || _sync_ok=false
 
   if $_sync_ok; then
-    log_success "GitHub sync completed: ${SYNC_TAG}"
+    log_success "Upstream sync completed: ${SYNC_TAG}"
     echo "$SYNC_OUT" | grep -E "^(Imported|Skipped)" | while IFS= read -r line; do
       log_info "  $line"
     done
   else
-    log_warn "GitHub sync failed (non-fatal): ${SYNC_OUT}"
-    log_warn "Run 'globular repo sync --source ${UPSTREAM_NAME} --tag ${SYNC_TAG}' to retry"
+    log_warn "Upstream sync failed (non-fatal): ${SYNC_OUT}"
+    log_warn "Retry: globular repo sync --source ${UPSTREAM_NAME} --tag ${SYNC_TAG}"
+    log_warn "Day-0 continues with locally published artifacts."
   fi
 fi
 

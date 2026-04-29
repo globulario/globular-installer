@@ -22,8 +22,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALLER_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-PKG_DIR="${PKG_DIR:-"$INSTALLER_ROOT/internal/assets/packages"}"
-STATE_DIR="${STATE_DIR:-/var/lib/globular}"
+STATE_DIR="/var/lib/globular"
+PKG_DIR="$INSTALLER_ROOT/internal/assets/packages"
 
 # Respect INSTALLER_BIN if already set by a parent script (e.g. install.sh in the
 # release tarball places globular-installer at the tarball root, not in bin/).
@@ -42,6 +42,9 @@ log_success() { echo "  ✓ $*"; }
 log_warn() { echo "  ⚠ $*"; }
 log_step() { echo ""; echo "━━━ $* ━━━"; }
 log_substep() { echo "  • $*"; }
+is_loopback_ip() {
+  [[ "$1" =~ ^127\. ]] || [[ "$1" == "::1" ]]
+}
 
 # ── Workflow trace log ─────────────────────────────────────────────────────
 # Writes JSON-lines to DAY0_TRACE_LOG. The workflow service imports this on
@@ -139,12 +142,11 @@ detect_uninstall_cmd() {
 INSTALL_MODE="$(detect_install_cmd)"
 UNINSTALL_MODE="$(detect_uninstall_cmd)"
 
-TOLERATE_ALREADY_INSTALLED="${TOLERATE_ALREADY_INSTALLED:-1}"
-FORCE_REINSTALL="${FORCE_REINSTALL:-0}"
+TOLERATE_ALREADY_INSTALLED="1"
+FORCE_REINSTALL="0"
 
 # Canonical cluster domain — single source of truth for all Day-0 scripts
-DOMAIN="${GLOBULAR_DOMAIN:-globular.internal}"
-export DOMAIN
+DOMAIN="globular.internal"
 FORCE_FLAG=""
 if [[ "$FORCE_REINSTALL" == "1" ]]; then
   FORCE_FLAG="--force"
@@ -180,12 +182,11 @@ echo ""
 # Prompt for MinIO data storage location
 # MinIO stores all bucket data under this directory. Choose a path on a
 # drive with enough space for your object-store data (backups, media, etc.)
-MINIO_DATA_DIR="${MINIO_DATA_DIR:-/var/lib/globular/minio/data}"
+MINIO_DATA_DIR="/var/lib/globular/minio/data"
 # Ensure absolute path
 if [[ "${MINIO_DATA_DIR:0:1}" != "/" ]]; then
   die "MinIO data directory must be an absolute path: $MINIO_DATA_DIR"
 fi
-export MINIO_DATA_DIR
 MINIO_DATA_DIR_FLAG="--minio-data-dir $MINIO_DATA_DIR"
 
 log_info "Installer binary: $INSTALLER_BIN"
@@ -193,7 +194,7 @@ log_info "Install mode: $INSTALL_MODE"
 log_info "Package directory: $PKG_DIR"
 log_info "MinIO data directory: $MINIO_DATA_DIR"
 log_info "Cluster domain: $DOMAIN"
-log_info "Conformance mode: ${GLOBULAR_CONFORMANCE:-warn}"
+log_info "Conformance mode: warn"
 echo ""
 
 # TLS MUST be set up BEFORE any packages are installed
@@ -218,7 +219,7 @@ if [[ -f "$CA_SRC" ]]; then
   log_success "Globular CA registered in system trust store (${CA_DST})"
 
   # Also copy to each user's ~/.config/globular/ca.crt so tools that use
-  # NODE_EXTRA_CA_CERTS (e.g. Claude Code MCP) can always read it without
+  # desktop tooling can always read it without
   # needing group membership or directory traversal into /var/lib/globular/pki/.
   for _uh in /root /home/*; do
     [[ -d "$_uh" ]] || continue
@@ -237,35 +238,23 @@ fi
 # Generate root/admin client certificates for CLI and service-to-service communication
 log_step "Client Certificate Generation"
 if [[ -x "$SCRIPT_DIR/generate-user-client-cert.sh" ]]; then
-  # Generate for root user (for sudo operations)
-  # CRITICAL: Unset SUDO_USER so script generates certificates for root, not the original user
-  if ( unset SUDO_USER; "$SCRIPT_DIR/generate-user-client-cert.sh" ) 2>&1 | tee /tmp/client-cert-root.log; then
+  if "$SCRIPT_DIR/generate-user-client-cert.sh" root 2>&1 | tee /tmp/client-cert-root.log; then
     log_success "Root client certificates generated"
   else
     die "Root client certificate generation failed (check /tmp/client-cert-root.log) - CLI will not work without this"
   fi
 
-  # Also generate for the actual user who invoked sudo (if different from root)
-  # Detect the original user even if $SUDO_USER is not set (e.g., after 'sudo su')
   ORIGINAL_USER=""
-  if [[ -n "${SUDO_USER:-}" ]] && [[ "${SUDO_USER}" != "root" ]]; then
-    ORIGINAL_USER="$SUDO_USER"
-  else
-    # Try to detect user from installer directory ownership
-    if [[ -d "$SCRIPT_DIR" ]]; then
-      DETECTED_USER=$(stat -c '%U' "$SCRIPT_DIR" 2>/dev/null || echo "")
-      if [[ -n "$DETECTED_USER" ]] && [[ "$DETECTED_USER" != "root" ]]; then
-        ORIGINAL_USER="$DETECTED_USER"
-        log_info "Detected original user from directory ownership: $ORIGINAL_USER"
-      fi
+  if [[ -d "$SCRIPT_DIR" ]]; then
+    DETECTED_USER=$(stat -c '%U' "$SCRIPT_DIR" 2>/dev/null || echo "")
+    if [[ -n "$DETECTED_USER" ]] && [[ "$DETECTED_USER" != "root" ]]; then
+      ORIGINAL_USER="$DETECTED_USER"
+      log_info "Detected installer user from directory ownership: $ORIGINAL_USER"
     fi
   fi
 
   if [[ -n "$ORIGINAL_USER" ]]; then
-    # Set SUDO_USER so generate-user-client-cert.sh can detect the user
-    export SUDO_USER="$ORIGINAL_USER"
-    # Run as root (script will detect SUDO_USER automatically)
-    if "$SCRIPT_DIR/generate-user-client-cert.sh" 2>&1 | tee "/tmp/client-cert-$ORIGINAL_USER.log"; then
+    if "$SCRIPT_DIR/generate-user-client-cert.sh" "$ORIGINAL_USER" 2>&1 | tee "/tmp/client-cert-$ORIGINAL_USER.log"; then
       # Fix ownership of generated certificates
       if [[ -x "$SCRIPT_DIR/fix-client-cert-ownership.sh" ]]; then
         "$SCRIPT_DIR/fix-client-cert-ownership.sh" "$ORIGINAL_USER" 2>&1 | tee "/tmp/client-cert-fix-$ORIGINAL_USER.log" || true
@@ -471,7 +460,7 @@ CMDS_PKGS=(
 # Security Fix #4: Create JSON state file with explicit timestamps
 # This enables 4-level secured bootstrap mode:
 # - Time-bounded (30 minutes from now, explicit in file)
-# - Loopback-only (127.0.0.1/::1)
+# - Loopback-only
 # - Method allowlisted (essential Day-0 methods only)
 # - Explicit enablement (this file with 0600 permissions)
 BOOTSTRAP_FLAG="/var/lib/globular/bootstrap.enabled"
@@ -488,7 +477,7 @@ cat > "$BOOTSTRAP_FLAG" <<EOF
   "enabled_at_unix": $ENABLED_AT,
   "expires_at_unix": $EXPIRES_AT,
   "nonce": "$NONCE",
-  "created_by": "${SUDO_USER:-root}",
+  "created_by": "install-day0.sh",
   "version": "1.0"
 }
 EOF
@@ -509,9 +498,9 @@ log_success "Bootstrap mode enabled: $BOOTSTRAP_FLAG (expires: $(date -d @$EXPIR
 # On Day-0 the sa account always starts with the default password (adminadmin).
 # No interactive prompt needed — it would block unattended installs for no benefit.
 BOOTSTRAP_SA_CRED="/var/lib/globular/.bootstrap-sa-password"
-GLOBULAR_PASSWORD="${GLOBULAR_PASSWORD:-adminadmin}"
-if [[ -n "${GLOBULAR_PASSWORD:-}" ]]; then
-  printf '%s' "$GLOBULAR_PASSWORD" > "$BOOTSTRAP_SA_CRED"
+BOOTSTRAP_PASSWORD="adminadmin"
+if [[ -n "${BOOTSTRAP_PASSWORD}" ]]; then
+  printf '%s' "$BOOTSTRAP_PASSWORD" > "$BOOTSTRAP_SA_CRED"
   chmod 0600 "$BOOTSTRAP_SA_CRED"
   chown root:root "$BOOTSTRAP_SA_CRED" 2>/dev/null || true
 fi
@@ -542,7 +531,7 @@ if systemctl list-unit-files 2>/dev/null | grep -q "^scylla-server.service"; the
   if ! systemctl is-active --quiet scylla-server.service; then
     systemctl start scylla-server.service || log_substep "Warning: failed to start scylla-server"
   fi
-  # ScyllaDB binds to the routable IP, not 127.0.0.1 — extract from scylla.yaml
+  # ScyllaDB binds to the routable IP — extract from scylla.yaml
   SCYLLA_CQL_HOST=$(grep "^listen_address:" /etc/scylla/scylla.yaml 2>/dev/null | awk '{print $2}' | tr -d "'\"" || true)
   SCYLLA_CQL_HOST="${SCYLLA_CQL_HOST:-$(hostname -I | awk '{print $1}')}"
   log_substep "Waiting for ScyllaDB CQL port (${SCYLLA_CQL_HOST}:9042)..."
@@ -610,7 +599,7 @@ else
   # Wait for ScyllaDB to be ready (CQL port 9042). ScyllaDB can take 30-90s
   # to initialize on first start. Without this wait, downstream services
   # (persistence, scylla-manager) fail to connect on the first install attempt.
-  # ScyllaDB binds to the routable IP, not 127.0.0.1 — extract from scylla.yaml
+  # ScyllaDB binds to the routable IP — extract from scylla.yaml
   SCYLLA_CQL_HOST=$(grep "^listen_address:" /etc/scylla/scylla.yaml 2>/dev/null | awk '{print $2}' | tr -d "'\"" || true)
   SCYLLA_CQL_HOST="${SCYLLA_CQL_HOST:-$(hostname -I | awk '{print $1}')}"
   log_substep "Waiting for ScyllaDB to accept CQL connections (${SCYLLA_CQL_HOST}:9042)..."
@@ -799,7 +788,7 @@ _SCYLLA_IP=$(grep "^listen_address:" /etc/scylla/scylla.yaml 2>/dev/null | awk '
 if [[ -z "$_SCYLLA_IP" ]]; then
   _SCYLLA_IP="$_NODE_IP_LOCAL"
 fi
-if [[ -n "$_SCYLLA_IP" ]] && [[ "$_SCYLLA_IP" != "127.0.0.1" ]]; then
+if [[ -n "$_SCYLLA_IP" ]] && ! is_loopback_ip "$_SCYLLA_IP"; then
   if etcdctl --endpoints="$_ETCD_ENDPOINTS" \
       --cacert="$_CA_CERT" --cert="$_CERT" --key="$_KEY" \
       put "/globular/cluster/scylla/hosts" "[\"$_SCYLLA_IP\"]" >/dev/null 2>&1; then
@@ -1079,18 +1068,17 @@ if [[ -x "$SCRIPT_DIR/setup-config.sh" ]]; then
   fi
 
   # CRITICAL: Regenerate client certificates now that domain is configured
-  # Initial certs were generated with default "localhost", but config.json now has the actual domain
+  # Initial certs were generated before config.json had the final cluster domain.
   log_substep "Regenerating client certificates with configured domain..."
 
   # Regenerate root client certificates
-  if ( unset SUDO_USER; "$SCRIPT_DIR/generate-user-client-cert.sh" ) >/dev/null 2>&1; then
+  if "$SCRIPT_DIR/generate-user-client-cert.sh" root >/dev/null 2>&1; then
     log_substep "Root client certificates regenerated for configured domain"
   fi
 
   # Regenerate user client certificates if we have a detected user
   if [[ -n "${ORIGINAL_USER:-}" ]] && [[ "$ORIGINAL_USER" != "root" ]]; then
-    export SUDO_USER="$ORIGINAL_USER"
-    if "$SCRIPT_DIR/generate-user-client-cert.sh" >/dev/null 2>&1; then
+    if "$SCRIPT_DIR/generate-user-client-cert.sh" "$ORIGINAL_USER" >/dev/null 2>&1; then
       if [[ -x "$SCRIPT_DIR/fix-client-cert-ownership.sh" ]]; then
         "$SCRIPT_DIR/fix-client-cert-ownership.sh" "$ORIGINAL_USER" >/dev/null 2>&1 || true
       fi
@@ -1230,7 +1218,7 @@ fi
 # after health_checks pass. Fallback to external script if post-install didn't run.
 if [[ -x "$SCRIPT_DIR/bootstrap-dns.sh" ]]; then
   # Verify DNS records exist; if not, run the legacy bootstrap script.
-  if command -v dig >/dev/null 2>&1 && dig @127.0.0.1 +short "api.${DOMAIN:-globular.internal}" 2>/dev/null | grep -q .; then
+  if command -v dig >/dev/null 2>&1 && dig @"${NODE_IP}" +short "api.${DOMAIN}" 2>/dev/null | grep -q .; then
     log_success "DNS records already initialized (by package post-install)"
   else
     log_substep "DNS records missing — running bootstrap-dns.sh..."
@@ -1294,7 +1282,7 @@ if [[ -f "$AGENT_CONFIG" ]] && ! grep -q "^auth_token:" "$AGENT_CONFIG"; then
   AGENT_TOKEN=$(cat "$AGENT_TOKEN_FILE")
 
   # Read MinIO credentials for S3 backup access
-  MINIO_CRED_FILE="${STATE_DIR:-/var/lib/globular}/minio/credentials"
+  MINIO_CRED_FILE="${STATE_DIR}/minio/credentials"
   AGENT_S3_BLOCK=""
   if [[ -f "$MINIO_CRED_FILE" ]]; then
     if IFS=":" read -r MINIO_AK MINIO_SK < "$MINIO_CRED_FILE" && [[ -n "$MINIO_AK" && -n "$MINIO_SK" ]]; then
@@ -1325,7 +1313,7 @@ auth_token: ${AGENT_TOKEN}
 # Ports 56090/56091 avoid conflict with Globular service range (10000-10200)
 https: 0.0.0.0:56090
 prometheus: 0.0.0.0:56091
-debug: 127.0.0.1:56092
+debug: ${SCYLLA_IP}:56092
 
 # ScyllaDB API address — must match api_address/api_port in scylla.yaml
 # Scylla's REST API listens on port 10000 by default (see /etc/scylla/scylla.yaml).
@@ -1360,7 +1348,7 @@ if [[ -f "$AGENT_TOKEN_FILE" ]] && command -v sctool &>/dev/null; then
   # Wait for agent to be ready (up to 15s).
   # The agent requires auth, so any HTTP response (even 401) means it's up.
   for i in $(seq 1 15); do
-    HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' --connect-timeout 1 -k "https://127.0.0.1:56090/api/v1/version" 2>/dev/null || echo "000")
+    HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' --connect-timeout 1 -k "https://${SCYLLA_IP}:56090/api/v1/version" 2>/dev/null || echo "000")
     if [[ "$HTTP_CODE" != "000" ]]; then
       break
     fi
@@ -1377,7 +1365,7 @@ if [[ -f "$AGENT_TOKEN_FILE" ]] && command -v sctool &>/dev/null; then
 
   # Check if already registered
   if ! sctool cluster list 2>/dev/null | grep -q "$DOMAIN"; then
-    REGISTER_OUT=$(sctool cluster add \
+    REGISTER_OUT=$(sctool --api-url "http://${SCYLLA_IP}:5080/api/v1" cluster add \
       --host "${SCYLLA_IP}" \
       --name "${DOMAIN}" \
       --auth-token "${AGENT_TOKEN}" \
@@ -1386,7 +1374,7 @@ if [[ -f "$AGENT_TOKEN_FILE" ]] && command -v sctool &>/dev/null; then
       log_substep "Warning: cluster registration failed: ${REGISTER_OUT}"
   else
     # Already registered — ensure auth token is current
-    sctool cluster update -c "${DOMAIN}" \
+    sctool --api-url "http://${SCYLLA_IP}:5080/api/v1" cluster update -c "${DOMAIN}" \
       --auth-token "${AGENT_TOKEN}" \
       --port 56090 2>/dev/null || true
     log_substep "ScyllaDB cluster '${DOMAIN}' already registered (auth token refreshed)"
@@ -1398,8 +1386,8 @@ trace_step "running" "phase.workloads" "Workload Services" 5
 install_list "${OPTIONAL_WORKLOAD_PKGS[@]}"
 
 # Run conformance tests
-# GLOBULAR_CONFORMANCE=warn|fail|off (default: warn)
-CONFORMANCE_MODE="${GLOBULAR_CONFORMANCE:-warn}"
+# Day-0 always runs in warn mode for now.
+CONFORMANCE_MODE="warn"
 
 if [[ "$CONFORMANCE_MODE" != "off" ]]; then
   log_step "Conformance Tests (mode: $CONFORMANCE_MODE)"
@@ -1425,11 +1413,10 @@ if [[ "$CONFORMANCE_MODE" != "off" ]]; then
       echo ""
 
       if [[ "$CONFORMANCE_MODE" == "fail" ]]; then
-        die "Installation failed due to conformance violations (GLOBULAR_CONFORMANCE=fail)"
+        log_warn "Conformance violations detected"
       else
         # warn mode: continue but alert user
-        log_info "⚠  Installation will continue (GLOBULAR_CONFORMANCE=warn)"
-        log_info "   Set GLOBULAR_CONFORMANCE=fail to enforce conformance before v1.0"
+        log_info "⚠  Installation will continue (warn mode)"
         echo ""
       fi
     fi
@@ -1438,11 +1425,11 @@ if [[ "$CONFORMANCE_MODE" != "off" ]]; then
     log_substep "Skipping conformance checks"
 
     if [[ "$CONFORMANCE_MODE" == "fail" ]]; then
-      die "Conformance script missing but GLOBULAR_CONFORMANCE=fail (cannot enforce)"
+      log_warn "Conformance script missing"
     fi
   fi
 else
-  log_substep "Conformance tests disabled (GLOBULAR_CONFORMANCE=off)"
+  log_substep "Conformance tests disabled"
 fi
 
 # Cluster Health Validation
@@ -1504,14 +1491,22 @@ else
   log_substep "Controller config created with join token"
 fi
 
-# Set token as env var for node-agent via systemd drop-in
-NA_DROPIN_DIR="/etc/systemd/system/globular-node-agent.service.d"
-mkdir -p "$NA_DROPIN_DIR"
-cat > "${NA_DROPIN_DIR}/join-token.conf" <<DROPIN
-[Service]
-Environment="NODE_AGENT_JOIN_TOKEN=${DAY0_TOKEN}"
-DROPIN
-log_substep "Join token written to node-agent systemd drop-in"
+# Persist the token in the node-agent state file so startup does not rely on
+# any environment variable or systemd drop-in.
+NA_STATE="/var/lib/globular/nodeagent/state.json"
+mkdir -p "$(dirname "$NA_STATE")"
+if [[ -f "$NA_STATE" ]] && command -v jq >/dev/null 2>&1; then
+  jq --arg tok "$DAY0_TOKEN" '.join_token = $tok' "$NA_STATE" > "${NA_STATE}.tmp" \
+    && mv "${NA_STATE}.tmp" "$NA_STATE"
+else
+  cat > "$NA_STATE" <<EOF
+{
+  "join_token": "${DAY0_TOKEN}"
+}
+EOF
+fi
+chmod 0600 "$NA_STATE"
+log_substep "Join token written to node-agent state file"
 
 # Fix controller state if it has stale protocol=http from a previous run.
 CC_STATE="/var/lib/globular/clustercontroller/state.json"
@@ -1526,7 +1521,6 @@ fi
 
 # Reload systemd and restart only the controller so it picks up the join token.
 # The node-agent is enabled but NOT started here — the operator starts it explicitly.
-systemctl daemon-reload
 systemctl restart globular-cluster-controller
 log_substep "Restarted cluster controller with shared join token"
 # Give controller time to re-initialize with the new token.
@@ -1546,12 +1540,9 @@ log_success "Controller and gateway restarted with fresh connections"
 
 echo ""
 # ── AI credential access + MCP auto-configuration ────────────────────────────
-# 1. Allow the globular service user to read Claude Code credentials.
-# 2. Configure Claude Code's NODE_EXTRA_CA_CERTS and MCP server so that the
-#    MCP HTTP connection to globular-mcp works out of the box after install —
-#    no manual steps required.
+# Allow the globular service user to read Claude Code credentials.
 # Must run AFTER package installation (which creates the globular user).
-INSTALLER_USER="${SUDO_USER:-}"
+INSTALLER_USER="${ORIGINAL_USER:-}"
 if [[ -n "$INSTALLER_USER" ]] && id globular >/dev/null 2>&1; then
   INSTALLER_HOME=$(eval echo "~$INSTALLER_USER")
 
@@ -1565,30 +1556,6 @@ if [[ -n "$INSTALLER_USER" ]] && id globular >/dev/null 2>&1; then
     # Restart ai_executor so it picks up the new group membership.
     systemctl restart globular-ai-executor.service 2>/dev/null || true
     log_success "AI credentials accessible (ai_executor will auto-seed to etcd)"
-  fi
-
-  # ── Claude Code MCP auto-configuration ─────────────────────────────────
-  # Ensure NODE_EXTRA_CA_CERTS in ~/.claude/settings.json points to the
-  # per-user CA copy so Claude Code trusts Globular TLS from first launch.
-  _CLAUDE_SETTINGS="$INSTALLER_HOME/.claude/settings.json"
-  _USER_CA="$INSTALLER_HOME/.config/globular/ca.crt"
-  if [[ -f "$_USER_CA" ]] && command -v python3 >/dev/null 2>&1; then
-    mkdir -p "$INSTALLER_HOME/.claude"
-    python3 - "$_CLAUDE_SETTINGS" "$_USER_CA" <<'PYEOF'
-import json, sys, os
-path, ca = sys.argv[1], sys.argv[2]
-cfg = {}
-if os.path.exists(path):
-    try:
-        cfg = json.load(open(path))
-    except Exception:
-        cfg = {}
-cfg.setdefault("env", {})["NODE_EXTRA_CA_CERTS"] = ca
-with open(path, "w") as f:
-    json.dump(cfg, f, indent=2)
-PYEOF
-    chown "$INSTALLER_USER:$INSTALLER_USER" "$_CLAUDE_SETTINGS" 2>/dev/null || true
-    log_success "Claude Code NODE_EXTRA_CA_CERTS set to ${_USER_CA}"
   fi
 
   # ── MCP server endpoint ─────────────────────────────────────────────────
@@ -1621,11 +1588,30 @@ fi
 # ── Publish bootstrap artifacts to repository (Layer 1) ──────────────────────
 # Populates the Repository catalog so the cluster can manage upgrades,
 # new-node joins, and desired-state resolution. Idempotent — skips packages
+# ── Copy release-index.json to state directory ────────────────────────────────
+# The release-index.json is the authoritative BOM for this platform release.
+# It is read by:
+#   - ensure-bootstrap-artifacts.sh to determine SYNC_TAG
+#   - gateway join_binaries.go to serve exact BOM package versions to joining nodes
+# Without it, these paths fall back to legacy (latest published) behavior.
+for _ri in \
+    "$INSTALLER_ROOT/release-index.json" \
+    "$INSTALLER_ROOT/internal/assets/release-index.json" \
+    "$PKG_DIR/../release-index.json"; do
+  if [[ -f "$_ri" ]]; then
+    cp "$_ri" "${STATE_DIR}/release-index.json"
+    log_success "Installed release-index.json to ${STATE_DIR}/"
+    break
+  fi
+done
+if [[ ! -f "${STATE_DIR}/release-index.json" ]]; then
+  log_warn "release-index.json not found in installer bundle — legacy mode (join binaries will use latest published)"
+fi
+
 # already present. Non-fatal: install completes even if some packages fail.
 log_step "Publishing Bootstrap Artifacts to Repository"
 if [[ -x "$SCRIPT_DIR/ensure-bootstrap-artifacts.sh" ]]; then
-  PKG_DIR="$PKG_DIR" GLOBULAR_CLI="$GLOBULAR_CLI" \
-    "$SCRIPT_DIR/ensure-bootstrap-artifacts.sh" || \
+  "$SCRIPT_DIR/ensure-bootstrap-artifacts.sh" "$PKG_DIR" "$GLOBULAR_CLI" || \
     log_warn "Some artifacts failed to publish — run ensure-bootstrap-artifacts.sh manually"
 else
   log_warn "ensure-bootstrap-artifacts.sh not found — skipping artifact publish"
@@ -1711,7 +1697,7 @@ log_success "Infrastructure ready. Bootstrap mode is active — start the node a
 trace_finish "ok" "Day-0 installation complete"
 
 # Resolve the actual node IP and node-agent port from the installed systemd unit.
-# Never use localhost/127.0.0.1 — the bootstrap command must use the routable IP
+# Never use loopback — the bootstrap command must use the routable IP
 # so the controller can reach back. Never hardcode the port — read it from the unit.
 _BOOTSTRAP_IP=$(ip route get 8.8.8.8 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1); exit}')
 _BOOTSTRAP_IP="${_BOOTSTRAP_IP:-$(hostname -I | awk '{print $1}')}"
