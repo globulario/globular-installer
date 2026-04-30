@@ -33,7 +33,7 @@ steps:
       - path: "{{.StateDir}}"
         owner: globular
         group: globular
-        mode: 0750
+        mode: 0755
       - path: "{{.StateDir}}/mcp"
         owner: globular
         group: globular

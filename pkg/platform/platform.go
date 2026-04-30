@@ -33,12 +33,17 @@ type DirSpec struct {
 }
 
 type FileSpec struct {
-	Path   string
-	Data   []byte
-	Owner  string
-	Group  string
-	Mode   fs.FileMode
-	Atomic bool
+	Path         string
+	Data         []byte
+	Owner        string
+	Group        string
+	Mode         fs.FileMode
+	Atomic       bool
+	// SkipIfExists instructs the installer to leave the file untouched when it
+	// already exists on disk.  Use this for seed-only configs (e.g. etcd.yaml)
+	// whose authoritative content is written by the controller or join scripts
+	// and must survive package reinstalls.
+	SkipIfExists bool
 }
 
 type InstallFilesResult struct {

@@ -33,7 +33,7 @@ steps:
       - path: "{{.StateDir}}"
         owner: globular
         group: globular
-        mode: 0750
+        mode: 0755
       - path: "{{.StateDir}}/services"
         owner: globular
         group: globular
@@ -82,18 +82,15 @@ steps:
           Type=simple
           User=globular
           Group=globular
-          # WorkingDirectory intentionally set to the existing parent state dir,
-          # NOT to {{.StateDir}}/ai_executor. systemd chdir()'s to WorkingDirectory
-          # BEFORE ExecStartPre runs — if we pointed at the service's own subdir
-          # here, a missing dir would cause a 200/CHDIR crash-loop before mkdir
-          # could ever fire. The service reads state paths from environment vars.
-          WorkingDirectory={{.StateDir}}
+          WorkingDirectory=-{{.StateDir}}/ai_executor
           Environment=GLOBULAR_SERVICES_DIR={{.StateDir}}/services
 
           ExecStartPre=+/bin/sh -c 'mkdir -p {{.StateDir}}/ai_executor && chown globular:globular {{.StateDir}}/ai_executor'
-          ExecStartPre=/bin/sh -c 'for i in $(seq 1 60); do [ -f /var/lib/globular/pki/issued/services/service.crt ] && exit 0; sleep 1; done; echo "TLS cert not ready"; exit 1'
+          ExecStartPre=/bin/sh -c 'for i in $(seq 1 60); do [ -f /var/lib/globular/pki/issued/services/service.crt ] && exit 0; sleep 1; done; echo "TLS cert not ready after 60s"; ls -la /var/lib/globular/pki/issued/services/ 2>&1 || echo "cert dir missing"; exit 1'
           ExecStart={{.Prefix}}/bin/ai_executor_server
-          Restart=on-failure
+          Type=notify
+          WatchdogSec=60
+          Restart=always
           RestartSec=2
           LimitNOFILE=524288
 

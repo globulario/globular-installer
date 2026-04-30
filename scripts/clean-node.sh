@@ -28,7 +28,7 @@ log_step() { echo ""; echo "━━━ $* ━━━"; echo ""; }
 
 echo ""
 echo "╔════════════════════════════════════════════════════════════════╗"
-echo "║          GLOBULAR NODE CLEANUP                                ║"
+echo "║          GLOBULAR NODE CLEANUP                                 ║"
 echo "╚════════════════════════════════════════════════════════════════╝"
 echo ""
 echo "  Host: $(hostname)"
@@ -239,7 +239,7 @@ fi
 
 echo ""
 echo "╔════════════════════════════════════════════════════════════════╗"
-echo "║     ✓ NODE CLEANUP COMPLETE                                   ║"
+echo "║     ✓ NODE CLEANUP COMPLETE                                    ║"
 echo "╚════════════════════════════════════════════════════════════════╝"
 echo ""
 echo "  Node $(hostname) is ready for Day-1 join."

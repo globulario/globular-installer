@@ -341,12 +341,13 @@ func parseFileSpecs(val any) ([]platform.FileSpec, error) {
 		}
 		content := getStringParam(m, "content", "")
 		dir := platform.FileSpec{
-			Path:   path,
-			Data:   []byte(content),
-			Owner:  getStringParam(m, "owner", "root"),
-			Group:  getStringParam(m, "group", "root"),
-			Mode:   getModeParam(m, "mode", 0o644),
-			Atomic: getBoolParam(m, "atomic", true),
+			Path:         path,
+			Data:         []byte(content),
+			Owner:        getStringParam(m, "owner", "root"),
+			Group:        getStringParam(m, "group", "root"),
+			Mode:         getModeParam(m, "mode", 0o644),
+			Atomic:       getBoolParam(m, "atomic", true),
+			SkipIfExists: getBoolParam(m, "skip_if_exists", false),
 		}
 		out = append(out, dir)
 	}

@@ -41,6 +41,11 @@ func (s *InstallFilesStep) Check(ctx *Context) (StepStatus, error) {
 			}
 			return StatusUnknown, fmt.Errorf("read %s: %w", spec.Path, err)
 		}
+		// seed-only file: once it exists the package install step is satisfied
+		// regardless of content — the authoritative writer owns it from here on.
+		if spec.SkipIfExists {
+			continue
+		}
 		if !bytes.Equal(data, spec.Data) {
 			return StatusNeedsApply, nil
 		}

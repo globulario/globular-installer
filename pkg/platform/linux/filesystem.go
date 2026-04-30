@@ -16,6 +16,14 @@ import (
 	"github.com/globulario/globular-installer/pkg/platform"
 )
 
+// sharedRoots are directories that must remain world-traversable (0755)
+// regardless of what individual service specs declare. A service spec
+// must not restrict the shared state root — only private subdirectories
+// should be 0750/0700.
+var sharedRoots = map[string]bool{
+	"/var/lib/globular": true,
+}
+
 func EnsureDirs(ctx context.Context, dirs []platform.DirSpec) error {
 	for _, dir := range dirs {
 		if err := validateAbsPath(dir.Path); err != nil {
@@ -34,8 +42,14 @@ func EnsureDirs(ctx context.Context, dirs []platform.DirSpec) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if dir.Mode != 0 {
-			if err := applyMode(dir.Path, dir.Mode); err != nil {
+		mode := dir.Mode
+		if mode != 0 {
+			// Guard: shared roots must stay world-traversable. If a spec
+			// declares 0750 on /var/lib/globular, force it to 0755.
+			if sharedRoots[filepath.Clean(dir.Path)] && mode&0o005 == 0 {
+				mode = mode | 0o005 // add world r+x
+			}
+			if err := applyMode(dir.Path, mode); err != nil {
 				return err
 			}
 		}
@@ -91,6 +105,16 @@ func installOneFile(ctx context.Context, file platform.FileSpec) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
+	// seed-only guard: if the file already exists and the caller asked us not
+	// to overwrite it, leave it untouched.  This protects cluster-identity
+	// configs (etcd.yaml, scylla.yaml, …) from being reset to single-node
+	// defaults on every package reinstall.
+	if file.SkipIfExists {
+		if _, err := os.Stat(file.Path); err == nil {
+			return false, nil // file exists — preserve it
+		}
+	}
+
 	equal, err := fileContentEquals(file.Path, file.Data)
 	if err != nil {
 		return false, err
