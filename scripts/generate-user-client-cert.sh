@@ -8,10 +8,17 @@ echo ""
 STATE_DIR="${STATE_DIR:-/var/lib/globular}"
 PKI_DIR="${STATE_DIR}/pki"
 
-# Detect actual user (not root when using sudo)
-ACTUAL_USER="${USER:-$(whoami)}"
-if [[ "${ACTUAL_USER}" == "root" ]] && [[ -n "${SUDO_USER:-}" ]]; then
-  ACTUAL_USER="${SUDO_USER}"
+# Use explicit argument if provided, otherwise detect actual user.
+# When called as "generate-user-client-cert.sh root", generate for root
+# even under sudo. Without this, ensure-bootstrap-artifacts.sh can't
+# publish packages because root has no mTLS client certs.
+if [[ -n "${1:-}" ]]; then
+  ACTUAL_USER="$1"
+else
+  ACTUAL_USER="${USER:-$(whoami)}"
+  if [[ "${ACTUAL_USER}" == "root" ]] && [[ -n "${SUDO_USER:-}" ]]; then
+    ACTUAL_USER="${SUDO_USER}"
+  fi
 fi
 
 # Get actual user's home directory
