@@ -47,7 +47,7 @@ steps:
       - path: "{{.StateDir}}/pki"
         owner: globular
         group: globular
-        mode: 0750
+        mode: 0755
       # INV-PKI-1: Removed obsolete config/tls directory - all certs under pki/
 
   - id: install-ai_watcher-payload

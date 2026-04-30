@@ -21,7 +21,8 @@ import (
 // must not restrict the shared state root — only private subdirectories
 // should be 0750/0700.
 var sharedRoots = map[string]bool{
-	"/var/lib/globular": true,
+	"/var/lib/globular":     true,
+	"/var/lib/globular/pki": true, // CA cert (0644) must be readable by non-root CLI
 }
 
 func EnsureDirs(ctx context.Context, dirs []platform.DirSpec) error {

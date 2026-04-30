@@ -30,7 +30,8 @@ for step in doc.get('steps', []):
         path = d.get('path', '')
         mode = d.get('mode', 0)
         # Check if this is the shared state root (not a subdir)
-        if path in ('{{.StateDir}}', '/var/lib/globular') and '/' not in path.replace('{{.StateDir}}', '').strip('/'):
+        shared_roots = ('{{.StateDir}}', '/var/lib/globular', '{{.StateDir}}/pki', '/var/lib/globular/pki')
+        if path in shared_roots:
             if isinstance(mode, int) and mode > 0:
                 # mode is octal in YAML (parsed as int)
                 if mode & 0o005 == 0:  # no world r+x

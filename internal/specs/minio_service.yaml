@@ -63,7 +63,7 @@ steps:
       - path: "{{.StateDir}}/pki"
         owner: globular
         group: globular
-        mode: 0750
+        mode: 0755
       - path: "{{.StateDir}}/.minio/certs"
         owner: globular
         group: globular

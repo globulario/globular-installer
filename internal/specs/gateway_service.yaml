@@ -47,7 +47,7 @@ steps:
       - path: "{{.StateDir}}/pki"
         owner: globular
         group: globular
-        mode: 0750
+        mode: 0755
 
   - id: install-gateway-bin
     type: install_binaries
