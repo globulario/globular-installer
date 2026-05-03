@@ -14,14 +14,17 @@ import (
 	"strings"
 )
 
-// StagePackageStep extracts a service package into a staging directory and validates its manifest.
+// StagePackageStep extracts a package into a staging directory and validates its manifest.
 type StagePackageStep struct {
 	Path                 string
 	VerifySHA256         string
 	CacheDir             string
 	StagingRoot          string
 	RequirePlatformMatch bool
-	RequireTypeService   bool
+	// RequireTypeService rejects packages whose package.json "type" is not "service".
+	// Set to false for infrastructure packages (type="infrastructure") and command
+	// packages (type="command"). Defaults to true for backwards compatibility.
+	RequireTypeService bool
 }
 
 func (s *StagePackageStep) Name() string { return "stage-package" }
