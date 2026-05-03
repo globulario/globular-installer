@@ -3,6 +3,8 @@ package linux
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -137,6 +139,11 @@ func installOneFile(ctx context.Context, file platform.FileSpec) (bool, error) {
 		if err := maybeApplyOwnershipMode(file.Path, file.Owner, file.Group, file.Mode); err != nil {
 			return false, err
 		}
+	}
+	// Write a SHA-256 sidecar for systemd unit files so the node-agent heartbeat
+	// can detect unit definition drift after installation.
+	if strings.HasSuffix(file.Path, ".service") {
+		_ = writeUnitHashSidecar(file.Path, file.Data)
 	}
 	return true, nil
 }
@@ -375,4 +382,25 @@ func getent(db, name string) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// UnitHashSidecarPath returns the sidecar path for a systemd unit file.
+// The sidecar stores the SHA-256 of the installed unit content so the
+// node-agent heartbeat can detect unit definition drift after installation.
+func UnitHashSidecarPath(unitPath string) string {
+	return unitPath + ".sha256"
+}
+
+// writeUnitHashSidecar atomically writes the SHA-256 hex digest of data
+// to the sidecar file next to unitPath. Failures are non-fatal — install
+// succeeds even if the sidecar cannot be written (e.g. read-only FS in tests).
+func writeUnitHashSidecar(unitPath string, data []byte) error {
+	sum := sha256.Sum256(data)
+	hex := hex.EncodeToString(sum[:])
+	sidecar := UnitHashSidecarPath(unitPath)
+	tmp := sidecar + ".tmp"
+	if err := os.WriteFile(tmp, []byte(hex), 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, sidecar)
 }

@@ -2,6 +2,8 @@ package linux
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"testing"
@@ -79,5 +81,50 @@ func TestEnsureDirs_RepeatedInstallPreserves0755(t *testing.T) {
 		if info.Mode().Perm()&0o005 == 0 {
 			t.Fatalf("iteration %d: shared root lost world-traversable (mode=%o)", i, info.Mode().Perm())
 		}
+	}
+}
+
+// TestInstallFiles_ServiceUnitWritesSidecar verifies that installing a .service
+// file via InstallFiles produces a matching .sha256 sidecar.
+// Guardrail 4: unit definition drift detection.
+func TestInstallFiles_ServiceUnitWritesSidecar(t *testing.T) {
+	dir := t.TempDir()
+	content := []byte("[Unit]\nDescription=test\n")
+	unitPath := filepath.Join(dir, "globular-test.service")
+
+	files := []platform.FileSpec{
+		{Path: unitPath, Data: content, Mode: 0o644},
+	}
+	if err := InstallFiles(context.Background(), files); err != nil {
+		t.Fatalf("InstallFiles: %v", err)
+	}
+
+	sidecar, err := os.ReadFile(unitPath + ".sha256")
+	if err != nil {
+		t.Fatalf("sidecar not written: %v", err)
+	}
+
+	sum := sha256.Sum256(content)
+	want := hex.EncodeToString(sum[:])
+	if string(sidecar) != want {
+		t.Errorf("sidecar hash = %q; want %q", string(sidecar), want)
+	}
+}
+
+// TestInstallFiles_NonServiceNoSidecar verifies that non-unit files (config,
+// binary, etc.) do NOT produce a .sha256 sidecar.
+func TestInstallFiles_NonServiceNoSidecar(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "prometheus.yml")
+
+	files := []platform.FileSpec{
+		{Path: configPath, Data: []byte("global:\n  scrape_interval: 15s\n"), Mode: 0o644},
+	}
+	if err := InstallFiles(context.Background(), files); err != nil {
+		t.Fatalf("InstallFiles: %v", err)
+	}
+
+	if _, err := os.Stat(configPath + ".sha256"); err == nil {
+		t.Errorf("sidecar unexpectedly written for non-unit file %s", configPath)
 	}
 }
