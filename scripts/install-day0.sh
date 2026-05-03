@@ -292,6 +292,31 @@ install_from_extracted_spec() {
     return 2
   fi
 
+  # Validate package kind consistency before invoking the installer.
+  # The --staging-dir path bypasses StagePackageStep (which validates
+  # package.json type for service packages). We enforce it here so that
+  # a package published with a wrong "type" in package.json is caught
+  # at Day-0 rather than silently producing wrong etcd records later.
+  local pkg_json="$staging/package.json"
+  if [[ -f "$pkg_json" ]]; then
+    local pkg_type spec_kind
+    # Extract "type" from package.json.
+    if command -v jq &>/dev/null; then
+      pkg_type="$(jq -r '.type // empty' "$pkg_json" 2>/dev/null)"
+    elif command -v python3 &>/dev/null; then
+      pkg_type="$(python3 -c "import json,sys; d=json.load(open('$pkg_json')); print(d.get('type',''))" 2>/dev/null)"
+    fi
+    # Extract metadata.kind from spec (grep is portable enough for this).
+    spec_kind="$(grep -E '^\s{2}kind:\s*\S+' "$spec" 2>/dev/null | head -1 | sed 's/.*kind:[[:space:]]*//' | tr -d '[:space:]')"
+    if [[ -n "$spec_kind" && -n "$pkg_type" && "$spec_kind" != "$pkg_type" ]]; then
+      echo "    ✗ Package kind mismatch in $(basename "$pkgfile"):" >&2
+      echo "      spec metadata.kind = $spec_kind" >&2
+      echo "      package.json type  = $pkg_type" >&2
+      echo "      These must agree. Re-build the package from the corrected spec." >&2
+      return 2
+    fi
+  fi
+
   set +e
   # shellcheck disable=SC2086
   out="$("$INSTALLER_BIN" install --staging-dir "$staging" --spec "$spec" $FORCE_FLAG $MINIO_DATA_DIR_FLAG 2>&1)"
