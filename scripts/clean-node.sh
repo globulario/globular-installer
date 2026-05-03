@@ -111,6 +111,19 @@ log_step "Wiping State"
 
 # Globular state — unconditional rm -rf (safe on missing dirs, avoids
 # permission-race with the globular user that was just removed)
+# Remove stale Globular wrapper scripts from /usr/local/bin that point
+# into /usr/lib/globular/bin (which gets removed below). Without this
+# they break system commands like sha256sum after the wipe.
+for wrapper in /usr/local/bin/claude /usr/local/bin/ffmpeg /usr/local/bin/sctool \
+               /usr/local/bin/mc /usr/local/bin/etcdctl /usr/local/bin/globular \
+               /usr/local/bin/globularcli /usr/local/bin/restic /usr/local/bin/rclone \
+               /usr/local/bin/yt-dlp /usr/local/bin/sha256sum; do
+  if [[ -f "$wrapper" ]] && grep -q "usr/lib/globular" "$wrapper" 2>/dev/null; then
+    rm -f "$wrapper"
+    log_success "Removed stale wrapper $(basename "$wrapper")"
+  fi
+done
+
 for dir in /var/lib/globular /etc/globular /usr/lib/globular; do
   rm -rf "$dir" && log_success "Removed $dir" || log_warn "Could not fully remove $dir (retrying with -f)"
   rm -rf "$dir" 2>/dev/null || true
