@@ -53,6 +53,13 @@ func (s *StartServicesStep) Check(ctx *Context) (StepStatus, error) {
 		if !active {
 			return StatusNeedsApply, nil
 		}
+		// A running service whose binary (or unit file) changed must be
+		// restarted so it loads the new code. Without this check the runner
+		// sees StatusOK and skips Apply() entirely, leaving the old binary
+		// running in memory.
+		if s.needsRestart(ctx, unit) {
+			return StatusNeedsApply, nil
+		}
 	}
 	return StatusOK, nil
 }

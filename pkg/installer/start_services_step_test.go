@@ -181,3 +181,66 @@ func makeFailBinary(t *testing.T, dir string, exitCode int) string {
 	}
 	return path
 }
+
+// TestStartServicesStepCheckNeedsApplyWhenBinaryChanged ensures that Check()
+// returns StatusNeedsApply for an already-active service whose binary was
+// replaced on disk. Without this, the runner skips Apply() and the old code
+// keeps running in memory after an in-place upgrade.
+func TestStartServicesStepCheckNeedsApplyWhenBinaryChanged(t *testing.T) {
+	binPath := "/usr/lib/globular/bin/cluster_doctor_server"
+	mgr := &startFakeServiceManager{
+		active: map[string]bool{"globular-cluster-doctor.service": true},
+	}
+	plat := &startFakePlatform{sm: mgr}
+	ctx := &Context{
+		Prefix:   "/usr/lib/globular",
+		Platform: plat,
+		Runtime: &RuntimeState{
+			ChangedBinaries: map[string]bool{binPath: true},
+			ChangedFiles:    map[string]bool{},
+			ChangedUnits:    map[string]bool{},
+		},
+	}
+	step := &StartServicesStep{
+		Services: []string{"globular-cluster-doctor.service"},
+		Binaries: map[string]string{"globular-cluster-doctor.service": "cluster_doctor_server"},
+	}
+
+	status, err := step.Check(ctx)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if status != StatusNeedsApply {
+		t.Fatalf("expected StatusNeedsApply when binary changed, got %v", status)
+	}
+}
+
+// TestStartServicesStepCheckOKWhenActiveAndUnchanged ensures that Check()
+// returns StatusOK (no restart) when the service is active and no files changed.
+func TestStartServicesStepCheckOKWhenActiveAndUnchanged(t *testing.T) {
+	mgr := &startFakeServiceManager{
+		active: map[string]bool{"globular-cluster-doctor.service": true},
+	}
+	plat := &startFakePlatform{sm: mgr}
+	ctx := &Context{
+		Prefix:   "/usr/lib/globular",
+		Platform: plat,
+		Runtime: &RuntimeState{
+			ChangedBinaries: map[string]bool{},
+			ChangedFiles:    map[string]bool{},
+			ChangedUnits:    map[string]bool{},
+		},
+	}
+	step := &StartServicesStep{
+		Services: []string{"globular-cluster-doctor.service"},
+		Binaries: map[string]string{"globular-cluster-doctor.service": "cluster_doctor_server"},
+	}
+
+	status, err := step.Check(ctx)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if status != StatusOK {
+		t.Fatalf("expected StatusOK when nothing changed, got %v", status)
+	}
+}
