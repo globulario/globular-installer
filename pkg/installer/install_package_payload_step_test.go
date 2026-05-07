@@ -48,9 +48,10 @@ func TestInstallPackagePayloadInstallsFiles(t *testing.T) {
 	}
 
 	expectPaths := map[string]bool{
-		filepath.Join(DefaultConfigDir, "svc", "a.conf"):     true,
-		filepath.Join("/var/lib/globular/specs", "svc.yaml"): true,
-		"/etc/systemd/system/svc.service":                    true,
+		filepath.Join(DefaultConfigDir, "svc", "a.conf"):          true,
+		filepath.Join("/var/lib/globular/specs", "svc.yaml"):      true,
+		"/etc/systemd/system/svc.service":                         true,
+		"/etc/systemd/system/svc.service.sha256":                  true,
 	}
 	for _, f := range plat.files {
 		if !expectPaths[f.Path] {

@@ -3,6 +3,8 @@ package installer
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io/fs"
 	"os"
@@ -388,6 +390,19 @@ func collectServiceUnitSpecs(systemdDir, destRoot string, ctx *Context) ([]platf
 		specs = append(specs, platform.FileSpec{
 			Path:   filepath.Join(destRoot, name),
 			Data:   expandedData,
+			Owner:  "root",
+			Group:  "root",
+			Mode:   0o644,
+			Atomic: true,
+		})
+		// Write a SHA-256 sidecar alongside the unit file so the node-agent
+		// heartbeat's checkUnitHashDrift check does not false-positive after
+		// an INFRASTRUCTURE install overwrites a unit previously installed via
+		// the SERVICE path (which also writes a sidecar).
+		sum := sha256.Sum256(expandedData)
+		specs = append(specs, platform.FileSpec{
+			Path:   filepath.Join(destRoot, name+".sha256"),
+			Data:   []byte(hex.EncodeToString(sum[:]) + "\n"),
 			Owner:  "root",
 			Group:  "root",
 			Mode:   0o644,
