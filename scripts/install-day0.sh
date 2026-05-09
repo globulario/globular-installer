@@ -980,11 +980,11 @@ if [[ "$USE_WORKFLOW" == "1" ]]; then
   log_step "Workflow-Driven Bootstrap"
 
   # Install node-agent (the workflow runner).
-  NODE_AGENT_PKG="$PKG_DIR/node-agent_0.0.1_linux_amd64.tgz"
-  if [[ -f "$NODE_AGENT_PKG" ]]; then
+  NODE_AGENT_PKG=$(ls "$PKG_DIR/node-agent_"*"_linux_amd64.tgz" 2>/dev/null | head -1)
+  if [[ -n "$NODE_AGENT_PKG" ]]; then
     run_install "$NODE_AGENT_PKG"
   else
-    die "node-agent package not found at $NODE_AGENT_PKG"
+    die "node-agent package not found in $PKG_DIR"
   fi
 
   # Copy all .tgz packages to the local fallback directory so the workflow
@@ -1133,7 +1133,7 @@ log_step "Bootstrap Services (xds, envoy, gateway, agents)"
 install_list "${BOOTSTRAP_REST_PKGS[@]}"
 
 # Explicitly ensure cluster-doctor is installed and running (common omission)
-CLUSTER_DOCTOR_PKG="$PKG_DIR/cluster-doctor_0.0.1_linux_amd64.tgz"
+CLUSTER_DOCTOR_PKG=$(ls "$PKG_DIR/cluster-doctor_"*"_linux_amd64.tgz" 2>/dev/null | head -1)
 if [[ -f "$CLUSTER_DOCTOR_PKG" ]]; then
   if ! systemctl list-unit-files | grep -q "^globular-cluster-doctor.service"; then
     log_substep "cluster-doctor unit missing; reinstalling from package..."
