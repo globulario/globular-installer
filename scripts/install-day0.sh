@@ -644,6 +644,16 @@ else
   fi
 fi
 
+# The globular system user must exist before infrastructure packages are
+# installed so that the PKI ownership fix below can succeed.  setup-tls.sh
+# runs before packages and cannot chown to globular if the user doesn't exist
+# yet — etcd would then fail to read service.key on its very first start.
+if ! id globular >/dev/null 2>&1; then
+  useradd --system --no-create-home --shell /usr/sbin/nologin \
+          --home /var/lib/globular globular 2>/dev/null || true
+  log_substep "Created globular system user (pre-infra)"
+fi
+
 # TLS ownership fix: certs were generated as root during TLS Bootstrap but
 # infrastructure services (etcd, gateway, etc.) run as the globular user.
 # Fix ownership NOW, before any globular-user service tries to read them.

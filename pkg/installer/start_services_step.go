@@ -115,6 +115,16 @@ func (s *StartServicesStep) Apply(ctx *Context) error {
 			if err := sm.Restart(context.Background(), unit); err != nil {
 				return fmt.Errorf("restart %s: %w", unit, err)
 			}
+			// Wait briefly for systemd to transition out of "deactivating".
+			for i := 0; i < 5; i++ {
+				time.Sleep(500 * time.Millisecond)
+				if isActive, _ := sm.IsActive(context.Background(), unit); isActive {
+					break
+				}
+			}
+			// Clear changed flags so the convergence re-check doesn't see
+			// needsRestart=true again and report a false "did not converge".
+			s.clearChangedFlags(ctx, unit)
 			continue
 		}
 		if bin, ok := s.Binaries[unit]; ok && bin != "" {
@@ -147,10 +157,45 @@ func (s *StartServicesStep) Apply(ctx *Context) error {
 				}
 				return fmt.Errorf("start %s: %w", unit, err)
 			}
+		} else {
+			// Start succeeded. Wait briefly for Type=simple services to
+			// transition from "activating" to "active" so the convergence
+			// re-check sees IsActive=true.
+			for i := 0; i < 5; i++ {
+				if isActive, _ := sm.IsActive(context.Background(), unit); isActive {
+					break
+				}
+				time.Sleep(500 * time.Millisecond)
+			}
 		}
+		// Clear changed flags so convergence re-check doesn't see
+		// needsRestart=true and report a false "did not converge".
+		s.clearChangedFlags(ctx, unit)
 	}
 
 	return nil
+}
+
+// clearChangedFlags removes the binary, unit, and restart-on-file change
+// markers for a service after it has been successfully started or restarted.
+// Without this the convergence re-check in runner.go would call
+// needsRestart() → true and report "did not converge" even though the service
+// is healthy. RestartOnFiles entries must be cleared too: if a config was just
+// written by an earlier step it will be in ChangedFiles, causing needsRestart
+// to return true on the convergence re-check even after a successful start.
+func (s *StartServicesStep) clearChangedFlags(ctx *Context, unit string) {
+	if ctx == nil || ctx.Runtime == nil {
+		return
+	}
+	ensureRuntimeMaps(ctx.Runtime)
+	if bin, ok := s.Binaries[unit]; ok && bin != "" {
+		delete(ctx.Runtime.ChangedBinaries, prefixedBinaryPath(ctx, bin))
+	}
+	delete(ctx.Runtime.ChangedUnits, unitPath(unit))
+	delete(ctx.Runtime.ChangedUnits, unit)
+	for _, file := range s.RestartOnFiles[unit] {
+		delete(ctx.Runtime.ChangedFiles, file)
+	}
 }
 
 func (s *StartServicesStep) serviceList(ctx *Context) []string {

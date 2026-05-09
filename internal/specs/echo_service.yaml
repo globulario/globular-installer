@@ -33,7 +33,7 @@ steps:
       - path: "{{.StateDir}}"
         owner: globular
         group: globular
-        mode: 0755
+        mode: 0750
       - path: "{{.StateDir}}/services"
         owner: globular
         group: globular
@@ -47,7 +47,7 @@ steps:
       - path: "{{.StateDir}}/pki"
         owner: globular
         group: globular
-        mode: 0755
+        mode: 0750
       # INV-PKI-1: Removed obsolete config/tls directory - all certs under pki/
 
   - id: install-echo-payload

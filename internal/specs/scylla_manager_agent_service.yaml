@@ -33,7 +33,7 @@ steps:
       - path: "{{.StateDir}}"
         owner: globular
         group: globular
-        mode: 0755
+        mode: 0750
       - path: "{{.StateDir}}/scylla-manager-agent"
         owner: scylla
         group: globular
@@ -79,7 +79,6 @@ steps:
           User=scylla
           Group=scylla
           SupplementaryGroups=globular
-          WorkingDirectory={{.StateDir}}
           ExecStart={{.Prefix}}/bin/scylla_manager_agent --config-file {{.StateDir}}/scylla-manager-agent/scylla-manager-agent.yaml
           Restart=on-failure
           RestartSec=5

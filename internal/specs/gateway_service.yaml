@@ -3,7 +3,7 @@ version: 1
 metadata:
   name: gateway
   version: "0.0.1"
-  kind: service
+  kind: infrastructure
   description: "HTTP/gRPC gateway that serves the admin UI and proxies API requests to backend services."
   keywords: [gateway, http, grpc, admin-ui, api-proxy]
   license: MIT
@@ -37,7 +37,7 @@ steps:
       - path: "{{.StateDir}}"
         owner: globular
         group: globular
-        mode: 0755
+        mode: 0750
       - path: "{{.StateDir}}/services"
         owner: globular
         group: globular
@@ -47,7 +47,7 @@ steps:
       - path: "{{.StateDir}}/pki"
         owner: globular
         group: globular
-        mode: 0755
+        mode: 0750
 
   - id: install-gateway-bin
     type: install_binaries
@@ -78,7 +78,6 @@ steps:
           Type=simple
           User=globular
           Group=globular
-          WorkingDirectory={{.StateDir}}
           Environment=GLOBULAR_SERVICES_DIR={{.StateDir}}/services
           ExecStart={{.Prefix}}/bin/gateway
           Restart=on-failure
