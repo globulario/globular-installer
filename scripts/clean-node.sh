@@ -170,15 +170,20 @@ fi
 
 TRUST_CHANGED=0
 
-# /usr/local/share/ca-certificates/ — canonical Debian/Ubuntu location
-if [[ -f /usr/local/share/ca-certificates/globular-ca.crt ]]; then
-  rm -f /usr/local/share/ca-certificates/globular-ca.crt
+# /usr/local/share/ca-certificates/ — canonical Debian/Ubuntu location.
+# Use a wildcard (not exact filename) because the installer has shipped
+# different names over time: globular-ca.crt, globular-root-ca.crt, etc.
+# Without the wildcard, update-ca-certificates re-symlinks the leftover
+# .crt back into /etc/ssl/certs/ on the next pass.
+for cert in /usr/local/share/ca-certificates/*globular* /usr/local/share/ca-certificates/*Globular*; do
+  [[ -e "$cert" ]] || continue
+  rm -f "$cert"
   TRUST_CHANGED=1
-  log_success "Removed /usr/local/share/ca-certificates/globular-ca.crt"
-fi
+  log_success "Removed $cert"
+done
 
 # /etc/ssl/certs/ — symlinks created by update-ca-certificates; also catch any
-# manually placed copies.
+# manually placed copies. The .0 suffix is the OpenSSL hash-based symlink.
 for cert in /etc/ssl/certs/*globular* /etc/ssl/certs/*Globular*; do
   [[ -e "$cert" ]] || continue
   rm -f "$cert"
