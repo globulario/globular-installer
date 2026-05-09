@@ -147,6 +147,16 @@ FORCE_REINSTALL="0"
 
 # Canonical cluster domain — single source of truth for all Day-0 scripts
 DOMAIN="globular.internal"
+
+# Profiles for the bootstrap (founding) node. The day0.bootstrap workflow
+# requires this — the verify_profile_install_set step uses it to derive
+# the canonical install set from the shared component_catalog map.
+#
+# Founding nodes MUST have core+control-plane+storage to satisfy the
+# infrastructure quorum invariants (etcd on all nodes, ScyllaDB ≥3,
+# MinIO ≥3). Override via env var only when bootstrapping a non-founding
+# node (rare — usually you join existing clusters via /join).
+BOOTSTRAP_NODE_PROFILES="${BOOTSTRAP_NODE_PROFILES:-core,control-plane,storage}"
 FORCE_FLAG=""
 if [[ "$FORCE_REINSTALL" == "1" ]]; then
   FORCE_FLAG="--force"
@@ -1042,7 +1052,14 @@ if [[ "$USE_WORKFLOW" == "1" ]]; then
 
   NODE_ID="$(cat /var/lib/globular/nodeagent/node_id 2>/dev/null || echo 'bootstrap')"
 
-  GRPC_REQUEST="{\"workflow_name\":\"day0.bootstrap\",\"inputs\":{\"cluster_id\":\"$DOMAIN\",\"bootstrap_node_id\":\"$NODE_ID\",\"bootstrap_node_hostname\":\"$NODE_HOSTNAME\",\"domain\":\"$DOMAIN\"}}"
+  # Convert comma-separated BOOTSTRAP_NODE_PROFILES into a JSON array
+  # (e.g. "core,control-plane,storage" → ["core","control-plane","storage"]).
+  # The day0.bootstrap workflow requires bootstrap_node_profiles for its
+  # profile-driven verify_profile_install_set step.
+  PROFILES_JSON="$(printf '%s' "$BOOTSTRAP_NODE_PROFILES" \
+    | awk -F, 'BEGIN{printf "["} {for (i=1; i<=NF; i++) {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $i); printf (i==1?"%s":",%s"), "\""$i"\""}} END{print "]"}')"
+
+  GRPC_REQUEST="{\"workflow_name\":\"day0.bootstrap\",\"inputs\":{\"cluster_id\":\"$DOMAIN\",\"bootstrap_node_id\":\"$NODE_ID\",\"bootstrap_node_hostname\":\"$NODE_HOSTNAME\",\"domain\":\"$DOMAIN\",\"bootstrap_node_profiles\":${PROFILES_JSON}}}"
 
   log_substep "Triggering day0.bootstrap workflow..."
   log_substep "  Request: $GRPC_REQUEST"
@@ -1192,12 +1209,19 @@ if [[ -f "${CC_CONFIG_FILE}" ]]; then
   jq --arg d "$DOMAIN" '.cluster_domain = $d' "${CC_CONFIG_FILE}" > "${CC_CONFIG_FILE}.tmp"
   mv "${CC_CONFIG_FILE}.tmp" "${CC_CONFIG_FILE}"
 else
-  # Seed only cluster_domain and default_profiles — omit port so the controller
-  # uses its own built-in default. The port is read from etcd after first start.
+  # Seed cluster_domain and default_profiles — omit port so the controller
+  # uses its own built-in default. The port is read from etcd after first
+  # start. default_profiles uses BOOTSTRAP_NODE_PROFILES (same as the
+  # workflow input) so the controller's view of the founding node matches
+  # what the day0.bootstrap workflow actually installed. Previously this
+  # seeded ["core"], which left the founding node missing control-plane
+  # and storage profiles per the founding-quorum invariant.
+  PROFILES_SEED="$(printf '%s' "$BOOTSTRAP_NODE_PROFILES" \
+    | awk -F, 'BEGIN{printf "["} {for (i=1; i<=NF; i++) {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $i); printf (i==1?"%s":",%s"), "\""$i"\""}} END{print "]"}')"
   cat > "${CC_CONFIG_FILE}" <<CCEOF
 {
   "cluster_domain": "${DOMAIN}",
-  "default_profiles": ["core"]
+  "default_profiles": ${PROFILES_SEED}
 }
 CCEOF
 fi
