@@ -1501,6 +1501,66 @@ else
   log_substep "Conformance tests disabled"
 fi
 
+# ── Awareness Bundle (local install) ─────────────────────────────────────────
+# Ship the awareness bundle from the release tarball to the on-disk path the
+# evidence collector reads (/var/lib/globular/awareness/current/manifest.json).
+# Without this step, Phase 8 of validate-cluster-health.sh and any subsequent
+# Day-1 readiness check would report AWARENESS_BUNDLE_MISSING until node-agent
+# has had time to fetch a published bundle from the repository.
+#
+# The bundle is shipped as ${RELEASE_DIR}/awareness/awareness-bundle-*.tar.gz
+# by scripts/build-release.sh. We extract to /usr/local/share/globular/awareness/<build_id>/
+# and atomically point /var/lib/globular/awareness/current at it.
+log_step "Awareness Bundle"
+AWARENESS_DIR="$SCRIPT_DIR/../awareness"
+AWARENESS_BUNDLE_FILE="$(ls "$AWARENESS_DIR"/awareness-bundle-*.tar.gz 2>/dev/null | head -1)"
+
+if [[ -n "$AWARENESS_BUNDLE_FILE" && -f "$AWARENESS_BUNDLE_FILE" ]]; then
+  log_substep "Bundle: $(basename "$AWARENESS_BUNDLE_FILE")"
+
+  AW_TMP=$(mktemp -d)
+  if ! tar xzf "$AWARENESS_BUNDLE_FILE" -C "$AW_TMP" manifest.json 2>/dev/null; then
+    log_warn "Bundle missing manifest.json — skipping local install (Phase 8 will report MISSING)"
+  else
+    AW_BUILD_ID=$(jq -r '.build_id // empty' "$AW_TMP/manifest.json" 2>/dev/null)
+    AW_VERSION=$(jq -r '.version // empty' "$AW_TMP/manifest.json" 2>/dev/null)
+    rm -rf "$AW_TMP"
+
+    if [[ -z "$AW_BUILD_ID" ]]; then
+      log_warn "Bundle manifest missing build_id — skipping local install"
+    else
+      AW_BASE="/usr/local/share/globular/awareness"
+      AW_DEST="$AW_BASE/$AW_BUILD_ID"
+      AW_LINK="/var/lib/globular/awareness/current"
+
+      mkdir -p "$AW_BASE" "$(dirname "$AW_LINK")"
+
+      if [[ -d "$AW_DEST" ]]; then
+        log_substep "Bundle build_id=$AW_BUILD_ID already extracted; refreshing symlink"
+      else
+        AW_EXTRACT=$(mktemp -d -p "$AW_BASE" .bundle-extract-XXXXXX)
+        if tar xzf "$AWARENESS_BUNDLE_FILE" -C "$AW_EXTRACT"; then
+          mv "$AW_EXTRACT" "$AW_DEST"
+          log_substep "Extracted bundle to $AW_DEST"
+        else
+          rm -rf "$AW_EXTRACT"
+          log_warn "Bundle extraction failed — Phase 8 will report MISSING"
+          AW_DEST=""
+        fi
+      fi
+
+      if [[ -n "$AW_DEST" && -d "$AW_DEST" ]]; then
+        ln -sfn "$AW_DEST" "${AW_LINK}.tmp.$$"
+        mv -Tf "${AW_LINK}.tmp.$$" "$AW_LINK"
+        log_success "Awareness bundle installed: version=$AW_VERSION build_id=$AW_BUILD_ID"
+      fi
+    fi
+  fi
+else
+  log_warn "No awareness bundle found at $AWARENESS_DIR/awareness-bundle-*.tar.gz"
+  log_warn "Day-1 readiness checks will report AWARENESS_BUNDLE_MISSING until node-agent fetches one from the repository."
+fi
+
 # Cluster Health Validation
 log_step "Cluster Health Validation"
 trace_step "running" "phase.health" "Cluster Health Validation" 8
