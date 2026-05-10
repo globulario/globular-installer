@@ -16,6 +16,17 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+# Mode flag. --day0 is set by install-day0.sh: skips Day-1 readiness checks
+# (cluster membership, BOM convergence, awareness bundle, workflow service)
+# that cannot be true on a freshly-installed node before it joins/reconciles.
+# Day-1 readiness is its own concern, run via:  globular awareness evidence classify
+DAY0_MODE=0
+for arg in "$@"; do
+    case "$arg" in
+        --day0) DAY0_MODE=1 ;;
+    esac
+done
+
 # Counters
 TOTAL_CHECKS=0
 PASSED_CHECKS=0
@@ -345,26 +356,31 @@ fi
 echo ""
 
 # ============================================================================
-# 8. AWARENESS EVIDENCE CLASSIFIER (codified Day-1 readiness gate)
+# 8. AWARENESS EVIDENCE CLASSIFIER (Day-1 readiness gate)
 # ============================================================================
-# Day-0 cannot be called complete just because systemd reports services as
-# active. The repo already contains the codified gate that answers
-# "is this node truly Day-1 ready?": the awareness evidence pipeline at
-# golang/awareness/evidence/. It collects local runtime facts, normalizes
-# them into a readiness ladder (PKI → ETCD_MEMBER → SCYLLA → BOM →
-# WORKFLOW → OBJECTSTORE → AWARENESS → WORKLOAD → DAY1_COMPLETE) and
-# emits a verdict: PASS / BLOCK / UNKNOWN with a primary_blocker.
+# This calls the codified readiness ladder at golang/awareness/evidence/.
+# It answers: "is this node Day-1 ready?" — i.e. cluster member, BOM
+# converged, awareness bundle present, workflow service up, workloads
+# healthy.
 #
-# This is the same classifier the day1.scylla_dependency_gate invariant
-# (docs/awareness/invariants.yaml) protects, with explicit warnings
-# against forbidden fixes like 'mark_node_day1_complete_before_scylla_ready'.
+# DAY-0 vs DAY-1 — KEEP THESE SEPARATE
+# A freshly-installed node has not joined the cluster yet, has no
+# DesiredService records, has not fetched the awareness bundle from the
+# repository, and may not be a registered etcd member. ALL of those gates
+# correctly return false. Failing Day-0 install on them is a category
+# error: Day-0 = local infrastructure bootstrap; Day-1 = cluster
+# membership + convergence. Phases 1–7 above already cover Day-0.
 #
-# Calling it from Day-0 makes one rule the source of truth. If the
-# classifier ever needs more checks (new layer, new failure mode), they
-# get added in Go with tests, not bash.
+# When invoked with --day0 (from install-day0.sh) we skip this phase and
+# leave Day-1 readiness as a separate operator-driven check:
+#   globular awareness evidence classify
 echo -e "${YELLOW}[8/8] Awareness Evidence — Day-1 Readiness Classifier...${NC}"
 
-if [[ -z "$GLOBULAR_BIN" ]] || [[ ! -x "$GLOBULAR_BIN" ]]; then
+if [[ "$DAY0_MODE" == "1" ]]; then
+    echo "  → SKIP during Day-0 install: this is a Day-1 readiness gate."
+    echo "    Run after the node joins the cluster:"
+    echo "      globular awareness evidence classify"
+elif [[ -z "$GLOBULAR_BIN" ]] || [[ ! -x "$GLOBULAR_BIN" ]]; then
     echo "  → SKIP: globular CLI not available; cannot run classifier"
     FAILED_CHECKS=$((FAILED_CHECKS + 1))
     FAILURES+=("L8 awareness evidence classify: globular CLI unavailable")

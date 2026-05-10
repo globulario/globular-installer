@@ -1510,8 +1510,13 @@ if [[ -x "$VALIDATION_SCRIPT" ]]; then
   log_substep "Running comprehensive cluster health checks..."
   echo ""
 
-  # Run validation and capture exit code
-  if "$VALIDATION_SCRIPT"; then
+  # Run validation in Day-0 mode. The validator's Phase 8 is a Day-1
+  # readiness gate (cluster membership, BOM convergence, awareness bundle,
+  # workflow service) — none of which can be true on a freshly-installed
+  # node before it joins the cluster. --day0 skips that phase. Day-1
+  # readiness is an operator-driven check, run via:
+  #   globular awareness evidence classify
+  if "$VALIDATION_SCRIPT" --day0; then
     VALIDATION_PASSED=1
   else
     VALIDATION_PASSED=0
