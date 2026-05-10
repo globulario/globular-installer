@@ -28,28 +28,25 @@ declare -a FAILURES=()
 # Root certificates are generated during Day-0 installation and are the
 # canonical certificates for admin/system operations.
 #
-# Previous approach tried to guess the original user (SUDO_USER detection,
-# directory ownership, user search) but this was fragile and caused recurring
-# issues. The proper solution is to use root's certificates when running as root.
+# Previous approach tried multiple user-guessing paths, but this was fragile.
+# The proper solution is to use root's certificates when running as root.
 
 if [[ $EUID -eq 0 ]]; then
-    # Running as root - use root's certificates
-    export HOME="/root"
+    HOME_DIR="/root"
 else
-    # Running as normal user - use their certificates
-    export HOME="${HOME}"
+    HOME_DIR="$(getent passwd "$(whoami)" | cut -d: -f6)"
 fi
 
-# Detect TLS cert directory (domain from config, fallback to localhost)
+# Detect TLS cert directory from the configured domain only.
 _TLS_DOMAIN=""
 if [[ -f /var/lib/globular/config.json ]]; then
     _TLS_DOMAIN=$(jq -r '.Domain // ""' /var/lib/globular/config.json 2>/dev/null || true)
 fi
 CLIENT_TLS_DIR=""
-for _d in "${_TLS_DOMAIN}" "localhost"; do
+for _d in "${_TLS_DOMAIN}"; do
     [[ -z "$_d" ]] && continue
-    if [[ -d "$HOME/.config/globular/tls/${_d}" ]]; then
-        CLIENT_TLS_DIR="$HOME/.config/globular/tls/${_d}"
+    if [[ -d "$HOME_DIR/.config/globular/tls/${_d}" ]]; then
+        CLIENT_TLS_DIR="$HOME_DIR/.config/globular/tls/${_d}"
         break
     fi
 done
@@ -57,7 +54,7 @@ done
 # Ensure root certificates exist
 if [[ $EUID -eq 0 ]] && [[ -z "$CLIENT_TLS_DIR" ]]; then
     echo -e "${RED}ERROR: Root client certificates not found under /root/.config/globular/tls/${NC}"
-    echo "Tried: ${_TLS_DOMAIN:-<none>}, localhost"
+    echo "Tried: ${_TLS_DOMAIN:-<none>}"
     echo "This should have been generated during Day-0 installation."
     echo "Run: sudo /path/to/generate-user-client-cert.sh"
     exit 1
@@ -67,7 +64,7 @@ echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━�
 echo -e "${BLUE}  Day-0 Cluster Health Validation${NC}"
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
-echo "Environment: HOME=$HOME USER=$(whoami)"
+echo "Environment: HOME=$HOME_DIR USER=$(whoami)"
 echo "Client certificates: ${CLIENT_TLS_DIR:-NOT FOUND}"
 if [[ -n "$CLIENT_TLS_DIR" ]]; then
     echo "✓ Certificate directory exists"
@@ -109,7 +106,7 @@ check() {
 # ============================================================================
 # 1. SERVICE STATUS CHECKS
 # ============================================================================
-echo -e "${YELLOW}[1/7] Checking Service Status...${NC}"
+echo -e "${YELLOW}[1/8] Checking Service Status...${NC}"
 
 check "etcd service running" \
     "systemctl is-active globular-etcd" \
@@ -152,7 +149,7 @@ echo ""
 # ============================================================================
 # 2. PORT BINDING CHECKS
 # ============================================================================
-echo -e "${YELLOW}[2/7] Checking Port Bindings...${NC}"
+echo -e "${YELLOW}[2/8] Checking Port Bindings...${NC}"
 
 check "etcd listening on port 2379" \
     "ss -tlnp | grep ':2379'" \
@@ -183,7 +180,7 @@ echo ""
 # ============================================================================
 # 3. TLS CONFIGURATION CHECKS
 # ============================================================================
-echo -e "${YELLOW}[3/7] Checking TLS Configuration...${NC}"
+echo -e "${YELLOW}[3/8] Checking TLS Configuration...${NC}"
 
 # INV-PKI-1: Validate canonical PKI paths
 check "Service certificate exists" \
@@ -219,7 +216,7 @@ echo ""
 # ============================================================================
 # 4. SERVICE HEALTH CHECKS
 # ============================================================================
-echo -e "${YELLOW}[4/7] Checking Service Health...${NC}"
+echo -e "${YELLOW}[4/8] Checking Service Health...${NC}"
 
 # Give services time to fully initialize before connectivity tests
 # Gateway needs to connect to etcd, xDS, and register with service mesh
@@ -240,8 +237,15 @@ fi
 
 # Authenticate as sa to get a token for RBAC-protected gRPC calls.
 SA_TOKEN=""
-STATE_DIR="${STATE_DIR:-/var/lib/globular}"
+STATE_DIR="/var/lib/globular"
 SA_CRED_FILE="${STATE_DIR}/.bootstrap-sa-password"
+NODE_IP=$(jq -r '.Address // ""' "${STATE_DIR}/config.json" 2>/dev/null || true)
+if [[ -z "${NODE_IP}" ]]; then
+    NODE_IP=$(ip route get 1.1.1.1 2>/dev/null | awk '{print $7; exit}')
+fi
+if [[ -z "${NODE_IP}" ]]; then
+    NODE_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+fi
 if [[ -n "$GLOBULAR_BIN" ]] && [[ -f "$SA_CRED_FILE" ]]; then
     SA_PASS=$(cat "$SA_CRED_FILE")
     if [[ -n "$SA_PASS" ]]; then
@@ -255,7 +259,7 @@ fi
 
 if [[ -n "$GLOBULAR_BIN" ]] && [[ -x "$GLOBULAR_BIN" ]]; then
     check "DNS service responding (gRPC)" \
-        "attempt=0; while [ \$attempt -lt 3 ]; do if $GLOBULAR_BIN --timeout 15s --dns localhost:10006 $TOKEN_FLAG dns domains get 2>&1 | grep -q 'globular.internal'; then echo 'ok'; exit 0; fi; attempt=\$((attempt + 1)); sleep 3; done; exit 1" \
+        "attempt=0; while [ \$attempt -lt 3 ]; do if $GLOBULAR_BIN --timeout 15s --dns ${NODE_IP}:10006 $TOKEN_FLAG dns domains get 2>&1 | grep -q 'globular.internal'; then echo 'ok'; exit 0; fi; attempt=\$((attempt + 1)); sleep 3; done; exit 1" \
         "ok"
 else
     check "DNS service responding (gRPC)" \
@@ -278,7 +282,7 @@ echo ""
 # ============================================================================
 # 5. CONFIGURATION VALIDATION
 # ============================================================================
-echo -e "${YELLOW}[5/7] Checking Configuration...${NC}"
+echo -e "${YELLOW}[5/8] Checking Configuration...${NC}"
 
 # Skip network.json checks if file doesn't exist (created by cluster-controller post-bootstrap)
 if [[ -f /var/lib/globular/network.json ]]; then
@@ -294,7 +298,7 @@ else
 fi
 
 check "DNS domain configured" \
-    "$GLOBULAR_BIN --timeout 10s --dns localhost:10006 $TOKEN_FLAG dns domains get 2>&1 | grep -q '\.internal' && echo 'ok'" \
+    "$GLOBULAR_BIN --timeout 10s --dns ${NODE_IP}:10006 $TOKEN_FLAG dns domains get 2>&1 | grep -q '\.internal' && echo 'ok'" \
     "ok"
 
 echo ""
@@ -302,7 +306,7 @@ echo ""
 # ============================================================================
 # 6. ETCD HEALTH CHECKS
 # ============================================================================
-echo -e "${YELLOW}[6/7] Checking etcd Health...${NC}"
+echo -e "${YELLOW}[6/8] Checking etcd Health...${NC}"
 
 ETCD_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
 check "etcd cluster health" \
@@ -318,7 +322,7 @@ echo ""
 # ============================================================================
 # 7. SECURITY MODEL VALIDATION
 # ============================================================================
-echo -e "${YELLOW}[7/7] Checking Security Model...${NC}"
+echo -e "${YELLOW}[7/8] Checking Security Model...${NC}"
 
 check "TLS certificates have correct permissions" \
     "perms=\$(stat -c '%a' /var/lib/globular/pki/issued/services/service.key 2>&1); if echo \"\$perms\" | grep -qE '^[46]00$'; then echo 'ok'; else echo \"FAIL: perms=\$perms (expected 600 or 400)\" >&2; exit 1; fi" \
@@ -336,6 +340,60 @@ else
     check "Bootstrap flag file removed" \
         "echo 'ok'" \
         "ok"
+fi
+
+echo ""
+
+# ============================================================================
+# 8. AWARENESS EVIDENCE CLASSIFIER (codified Day-1 readiness gate)
+# ============================================================================
+# Day-0 cannot be called complete just because systemd reports services as
+# active. The repo already contains the codified gate that answers
+# "is this node truly Day-1 ready?": the awareness evidence pipeline at
+# golang/awareness/evidence/. It collects local runtime facts, normalizes
+# them into a readiness ladder (PKI → ETCD_MEMBER → SCYLLA → BOM →
+# WORKFLOW → OBJECTSTORE → AWARENESS → WORKLOAD → DAY1_COMPLETE) and
+# emits a verdict: PASS / BLOCK / UNKNOWN with a primary_blocker.
+#
+# This is the same classifier the day1.scylla_dependency_gate invariant
+# (docs/awareness/invariants.yaml) protects, with explicit warnings
+# against forbidden fixes like 'mark_node_day1_complete_before_scylla_ready'.
+#
+# Calling it from Day-0 makes one rule the source of truth. If the
+# classifier ever needs more checks (new layer, new failure mode), they
+# get added in Go with tests, not bash.
+echo -e "${YELLOW}[8/8] Awareness Evidence — Day-1 Readiness Classifier...${NC}"
+
+if [[ -z "$GLOBULAR_BIN" ]] || [[ ! -x "$GLOBULAR_BIN" ]]; then
+    echo "  → SKIP: globular CLI not available; cannot run classifier"
+    FAILED_CHECKS=$((FAILED_CHECKS + 1))
+    FAILURES+=("L8 awareness evidence classify: globular CLI unavailable")
+else
+    CLASSIFY_JSON=$($GLOBULAR_BIN --timeout 30s awareness evidence classify --format json 2>/dev/null || echo '{"verdict":"UNKNOWN","primary_blocker":"classifier failed to run"}')
+    VERDICT=$(echo "$CLASSIFY_JSON" | jq -r '.verdict // "UNKNOWN"' 2>/dev/null || echo "UNKNOWN")
+    CLASSIFICATION=$(echo "$CLASSIFY_JSON" | jq -r '.classification // ""' 2>/dev/null)
+    BLOCKER=$(echo "$CLASSIFY_JSON" | jq -r '.primary_blocker // ""' 2>/dev/null)
+
+    TOTAL_CHECKS=$((TOTAL_CHECKS + 1))
+    printf "%-50s " "awareness evidence verdict"
+    if [[ "$VERDICT" == "PASS" ]]; then
+        echo -e "${GREEN}✓ PASS${NC}"
+        PASSED_CHECKS=$((PASSED_CHECKS + 1))
+    else
+        echo -e "${RED}✗ FAIL${NC} (verdict=$VERDICT)"
+        FAILED_CHECKS=$((FAILED_CHECKS + 1))
+        FAILURES+=("awareness evidence classify: verdict=$VERDICT classification=$CLASSIFICATION blocker=$BLOCKER")
+        echo ""
+        echo "  Verdict:        $VERDICT"
+        echo "  Classification: $CLASSIFICATION"
+        echo "  Primary blocker: $BLOCKER"
+        echo ""
+        echo "  Readiness ladder:"
+        echo "$CLASSIFY_JSON" | jq -r '.readiness // {} | to_entries[] | "    \(.key): \(.value)"' 2>/dev/null || true
+        echo ""
+        echo "  Allowed next actions:"
+        echo "$CLASSIFY_JSON" | jq -r '.allowed_actions // [] | .[] | "    • \(.)"' 2>/dev/null || true
+    fi
 fi
 
 echo ""
@@ -385,6 +443,8 @@ if [ $FAILED_CHECKS -eq 0 ]; then
     echo "  ✓ TLS/HTTPS enforced across all services"
     echo "  ✓ DNS working with local domain"
     echo "  ✓ Security model v1 fully implemented"
+    echo "  ✓ Awareness evidence verdict: PASS"
+    echo "      (codified gate: day1.scylla_dependency_gate + readiness ladder)"
     echo ""
     exit 0
 else
