@@ -1,0 +1,78 @@
+# forbidden_fixes.yaml — globular-installer
+#
+# Patterns that look like reasonable shortcuts but are wrong in this codebase.
+# Re-running registration ADDS entries; IDs are stable identity.
+
+forbidden_fixes:
+
+    - id: no.apply.without.check
+      summary: |
+          Do not call Apply without first calling Check.
+          Every step must follow the Check/Apply pattern. Skipping Check and calling
+          Apply unconditionally breaks idempotency: a second run re-applies already-correct
+          state, potentially overwriting files that were intentionally modified post-install.
+      related_invariants:
+          - installer.check.before.apply
+
+    - id: no.manifest.on.partial.success
+      summary: |
+          Do not write install-manifest.json if any step in the plan failed.
+          A manifest written after a partial install tells subsequent runs that the
+          install is complete. They skip steps that were never actually applied.
+          Only write the manifest after every step returns success.
+      related_invariants:
+          - installer.manifest.written.after.full.success
+
+    - id: no.overwrite.binary.in.place
+      summary: |
+          Do not write a new binary directly to /usr/lib/globular/bin/<name>.
+          Always write to a temp file in the same directory and rename atomically.
+          Direct overwrite of a running binary causes SIGBUS in the running service
+          and leaves a partially-written file on interrupted writes.
+      related_invariants:
+          - installer.binary.replace.atomic
+
+    - id: no.skip.root.check
+      summary: |
+          Do not remove or bypass RequireRootStep.
+          All OS-level mutations (binary writes, unit files, user creation, /etc/hosts)
+          require root. Removing the root check to simplify testing or to allow
+          user-level dry runs hides real permission failures from CI.
+          Test with a mock platform instead.
+      related_invariants:
+          - installer.root.required
+
+    - id: no.purge.without.flag
+      summary: |
+          Do not delete /var/lib/globular, /var/lib/globular/pki, or any persistent
+          cluster state directory unless --purge was explicitly set by the operator.
+          Unconditional purge on uninstall destroys PKI and cluster data with no recovery path.
+      related_invariants:
+          - installer.purge.explicit.flag.only
+
+    - id: no.start.without.daemon.reload
+      summary: |
+          Do not call systemctl start or systemctl restart after writing a unit file
+          without first calling systemctl daemon-reload.
+          Systemd will run the previously-loaded unit definition, silently ignoring
+          the file that was just written. The service starts but with wrong parameters.
+      related_invariants:
+          - installer.daemon.reload.before.start
+
+    - id: no.swallow.fetch.error
+      summary: |
+          Do not retry a failed HTTP download silently or swallow a non-200 response.
+          Surface the error immediately with the URL, status code, and expected content.
+          Silent retries mask MITM redirects and 404s that indicate a broken release artifact.
+          Do not treat a partial download as success.
+      related_invariants:
+          - installer.fetch.checksum.required
+
+    - id: no.hardcoded.uid
+      summary: |
+          Do not hardcode a numeric UID or GID for the globular user or group.
+          Always resolve via user.Lookup("globular") and group.Lookup("globular").
+          Hardcoded UIDs collide with existing system accounts on different distributions
+          (e.g., UID 110 is avahi on Ubuntu, nobody on Alpine, a different daemon elsewhere).
+      related_invariants:
+          - installer.no.hardcoded.uid

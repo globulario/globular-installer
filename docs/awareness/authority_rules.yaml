@@ -1,0 +1,90 @@
+# authority_rules.yaml — globular-installer
+#
+# Maps every category of state the installer manages to its canonical authority.
+# An AI agent editing any step, plan builder, or spec loader must check this map first.
+#
+# Core mental model: installer is DECLARATIVE ONE-SHOT BOOTSTRAP, not continuous
+# reconciliation. It reads desired state from YAML specs, applies it stepwise,
+# and records what it did in the manifest. It does NOT talk to etcd.
+
+authorities:
+
+  - id: install.desired.state
+    owns:
+      - which binaries to install, to which paths
+      - which systemd units to create and enable
+      - which OS packages to install
+      - which users/groups to create
+      - which directories and files to ensure
+    source: YAML spec files (--spec flag or internal/specs/*.yaml embedded assets)
+    must_not_infer:
+      - desired state from the current filesystem (filesystem = installed state, not desired)
+      - desired state from a running service's reported version
+    stale_states:
+      - spec embedded in binary is older than deployed packages (make check-specs gate)
+    consumers:
+      - pkg/installer/spec/ (spec loading and validation)
+      - pkg/installer/ (SpecPlanBuilder, step execution)
+
+  - id: install.applied.state
+    owns:
+      - which files were written during this install run
+      - which binary versions are on disk
+      - which systemd units are enabled
+    source: /var/lib/globular/install-manifest.json (JSON, written after full plan success)
+    must_not_infer:
+      - applied state from filesystem alone (file presence ≠ manifest entry; partial installs exist)
+      - success from plan execution without manifest write
+    stale_states:
+      - manifest absent (first install or failed previous install — treat as clean slate)
+      - manifest present but some listed files deleted externally
+    consumers:
+      - pkg/installer/manifest/ (idempotency checks and post-success recording)
+
+  - id: systemd.unit.state
+    owns:
+      - whether a service unit file exists on disk
+      - whether a unit is enabled (starts at boot)
+      - whether a unit is currently active (running)
+    source: /etc/systemd/system/*.service files + systemctl query
+    must_not_infer:
+      - unit is running from unit-enabled state (enabled ≠ running)
+      - unit is healthy from running state (active ≠ healthy — service may be crashing)
+    stale_states:
+      - unit file on disk but daemon-reload not yet run (systemd has not seen the new file)
+      - unit enabled but start not yet called (enabled ≠ running on current boot)
+    consumers:
+      - pkg/platform/linux/systemd.go
+      - pkg/installer/ (StartServicesStep, EnableServicesStep)
+
+  - id: filesystem.installed
+    owns:
+      - binary presence and content at /usr/lib/globular/bin/
+      - config files at /var/lib/globular/
+      - log directory at /var/log/globular/
+      - TLS cert symlinks at /var/lib/globular/pki/
+    source: filesystem stat + content hash
+    must_not_infer:
+      - binary is correct version from filename alone (check content hash)
+      - config is current from presence alone (content may be from a different version)
+    stale_states:
+      - binary replaced non-atomically (temp file present, rename not completed)
+      - directory present but wrong ownership (globular:globular not applied)
+
+  - id: os.user.group
+    owns:
+      - globular user and group existence and UID/GID
+    source: /etc/passwd and /etc/group (adduser/addgroup output)
+    must_not_infer:
+      - UID is a fixed value (never hardcode UIDs — lookup by name)
+    consumers:
+      - pkg/platform/linux/users.go (EnsureUserGroupStep)
+
+  - id: etc.hosts
+    owns:
+      - cluster DNS entries for globular.internal and node FQDNs
+    source: /etc/hosts (managed block delimited by globular markers)
+    must_not_infer:
+      - DNS resolution will succeed from /etc/hosts alone (resolver order matters)
+    consumers:
+      - pkg/net/hostsblock/ (block read/write/remove)

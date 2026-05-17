@@ -1,0 +1,135 @@
+# failure_modes.yaml — globular-installer
+#
+# Re-running registration ADDS entries; IDs are stable identity.
+
+failure_modes:
+
+    - id: fm.partial.install.no.manifest
+      title: Plan fails mid-way; files written but manifest never persisted
+      severity: critical
+      # origin: { type: principle, confidence: high }
+      root_cause: |
+          The install plan applies steps sequentially. If a step fails after earlier
+          steps have already written binaries, unit files, or directories, the manifest
+          is never written (it is only written on full success). On the next run, the
+          installer sees no manifest and re-applies all steps from scratch. This is
+          usually safe — but if the failed step left a partially-written file or a
+          half-configured service, the re-run may overwrite or conflict with it.
+      symptoms:
+          - installer exits with error but /usr/lib/globular/bin/ contains some binaries
+          - systemd units are present but service is not enabled or running
+          - /var/lib/globular/install-manifest.json does not exist after a reported failure
+          - second run re-applies all steps, some of which conflict with partial state
+      related_invariants:
+          - installer.manifest.written.after.full.success
+          - installer.check.before.apply
+
+    - id: fm.binary.overwrite.sigbus
+      title: Binary replaced non-atomically while service is running — SIGBUS or corruption
+      severity: critical
+      # origin: { type: principle, confidence: high }
+      root_cause: |
+          If a running service binary is overwritten in place (open + write) rather
+          than via temp-file rename, the running process's memory-mapped pages
+          become inconsistent with the on-disk file. This causes SIGBUS when the OS
+          tries to page in code from the new file content, or leaves the binary in a
+          partially-written state if the write is interrupted.
+      symptoms:
+          - service crashes with SIGBUS immediately after an upgrade
+          - binary at /usr/lib/globular/bin/ has file size = 0 or is truncated
+          - journalctl shows text file busy error during install
+      forbidden_fixes:
+          - no.overwrite.binary.in.place
+      related_invariants:
+          - installer.binary.replace.atomic
+
+    - id: fm.stale.unit.on.start
+      title: Service started with old unit definition because daemon-reload was skipped
+      severity: error
+      # origin: { type: principle, confidence: high }
+      root_cause: |
+          When a unit file is written to /etc/systemd/system/ and systemctl start
+          is called without an intervening daemon-reload, systemd uses the previously
+          loaded definition. The new unit file is on disk but ignored until the next
+          daemon-reload. The service may start on the wrong port, with wrong
+          environment variables, or with outdated ExecStart arguments.
+      symptoms:
+          - service starts successfully but uses wrong port or binary path
+          - systemctl status shows unit definition differs from /etc/systemd/system/ file
+          - changes to unit file have no effect until manual daemon-reload
+      forbidden_fixes:
+          - no.start.without.daemon.reload
+      related_invariants:
+          - installer.daemon.reload.before.start
+
+    - id: fm.fetch.tampered.binary
+      title: Network-fetched binary installed without checksum verification
+      severity: critical
+      # origin: { type: principle, confidence: high }
+      root_cause: |
+          FetchFileStep downloads a file over HTTP/HTTPS and moves it into place
+          without verifying a SHA-256 or signature. A MITM attack, CDN cache poisoning,
+          or a simple URL redirect can cause a tampered or wrong-version binary to
+          be installed as a Globular service binary. The installer reports success.
+      symptoms:
+          - service starts but behaves unexpectedly or crashes immediately
+          - binary hash does not match the expected release artifact
+          - no checksum error in installer output (verification was never done)
+      forbidden_fixes:
+          - no.swallow.fetch.error
+      related_invariants:
+          - installer.fetch.checksum.required
+
+    - id: fm.purge.on.soft.uninstall
+      title: /var/lib/globular deleted during uninstall without explicit --purge
+      severity: critical
+      # origin: { type: principle, confidence: high }
+      root_cause: |
+          If the uninstall command deletes /var/lib/globular unconditionally (without
+          checking --purge), all cluster state is destroyed: PKI keys, etcd data
+          references, ScyllaDB config, service configs, and the install manifest.
+          This is unrecoverable without a full re-bootstrap from scratch.
+      symptoms:
+          - /var/lib/globular is empty or missing after uninstall
+          - PKI certs and private keys are gone
+          - etcd cannot start (data directory missing)
+          - re-install required to recover
+      forbidden_fixes:
+          - no.purge.without.flag
+      related_invariants:
+          - installer.purge.explicit.flag.only
+
+    - id: fm.uid.collision
+      title: Hardcoded UID for globular user collides with existing system account
+      severity: error
+      # origin: { type: principle, confidence: high }
+      root_cause: |
+          If the installer creates the globular user with a hardcoded UID (e.g., 999),
+          it collides with an existing system user on distributions that assign UIDs
+          differently. The user creation fails or worse, silently reuses the wrong
+          account. Files owned by the colliding UID gain unintended access to
+          globular service data.
+      symptoms:
+          - adduser fails with UID already in use
+          - globular user created but maps to a different username (avahi, nobody, etc.)
+          - service data files readable by unexpected users
+      related_invariants:
+          - installer.no.hardcoded.uid
+
+    - id: fm.spec.stale.at.release
+      title: Embedded specs out of sync with packaged services — make check-specs not run
+      severity: error
+      # origin: { type: inferred_from_code, confidence: medium, status: candidate }
+      root_cause: |
+          The installer embeds YAML specs from internal/specs/. These specs are
+          generated from the services package manifests via make sync-specs. If
+          check-specs is not run in CI before release, the embedded specs can be
+          stale: wrong binary paths, wrong port assignments, or missing new services.
+          The installer applies the stale spec without error; services start on the
+          wrong port or not at all.
+      symptoms:
+          - installed services report wrong port in globular service discovery
+          - new services added to packages/ not present in installer spec
+          - make check-specs fails post-release with diff between expected and actual
+      related_invariants:
+          - installer.spec.validated.before.plan

@@ -1,0 +1,177 @@
+# invariants.yaml — globular-installer
+#
+# Laws the installer must uphold. An AI agent editing any step, plan builder,
+# spec loader, or manifest writer must not introduce changes that violate these.
+#
+# Re-running registration ADDS entries; IDs are stable identity.
+
+invariants:
+
+    - id: installer.check.before.apply
+      title: Every step must Check before Apply; Apply is skipped if Check passes
+      severity: critical
+      status: active
+      # origin: { type: principle, confidence: high }
+      summary: |
+          Every installer step implements the Check/Apply pattern. Check() returns
+          whether the desired state is already in place. If Check passes, Apply is
+          skipped. This makes the installer idempotent: running it twice on a
+          correctly installed system is a no-op.
+          An AI agent must not add Apply logic that bypasses Check, and must not
+          weaken Check to always return false (which forces redundant re-application).
+      protects:
+          files:
+              - pkg/installer/
+      forbidden_fixes:
+          - no.apply.without.check
+
+    - id: installer.manifest.written.after.full.success
+      title: The install manifest must be written only after all steps succeed
+      severity: critical
+      status: active
+      # origin: { type: principle, confidence: high }
+      summary: |
+          /var/lib/globular/install-manifest.json is the record of a successful install.
+          It must be written only after every step in the plan has applied successfully.
+          Writing a partial manifest (written mid-plan or after a failed step) is
+          worse than no manifest: subsequent runs see it as complete and skip steps
+          that were never applied.
+      protects:
+          files:
+              - pkg/installer/manifest/manifest.go
+              - pkg/installer/
+      forbidden_fixes:
+          - no.manifest.on.partial.success
+
+    - id: installer.binary.replace.atomic
+      title: Binary files must be replaced atomically via temp-file rename
+      severity: critical
+      status: active
+      # origin: { type: principle, confidence: high }
+      summary: |
+          When installing or upgrading a binary at /usr/lib/globular/bin/, the write
+          must use a temp file in the same directory followed by an atomic rename.
+          Direct overwrite of a running binary causes SIGBUS or text-file-busy errors
+          and leaves a partially-written binary on failure.
+      protects:
+          files:
+              - pkg/installer/
+              - pkg/platform/linux/filesystem.go
+      forbidden_fixes:
+          - no.overwrite.binary.in.place
+
+    - id: installer.root.required
+      title: All OS-mutating operations require root; no silent fallback to user-level
+      severity: critical
+      status: active
+      # origin: { type: principle, confidence: high }
+      summary: |
+          The installer writes to /usr/lib/, /var/lib/, /etc/systemd/system/, and
+          /etc/hosts — all requiring root. RequireRootStep must run as the first
+          step in any mutating plan. There must be no code path that silently
+          continues with degraded behaviour when not running as root.
+      protects:
+          files:
+              - pkg/installer/
+      forbidden_fixes:
+          - no.skip.root.check
+
+    - id: installer.purge.explicit.flag.only
+      title: Destructive purge (deleting /var/lib/globular) requires an explicit --purge flag
+      severity: critical
+      status: active
+      # origin: { type: principle, confidence: high }
+      summary: |
+          The uninstall command has two modes: soft uninstall (removes binaries and units,
+          preserves /var/lib/globular) and purge (deletes all state). Purge must only
+          execute when --purge is explicitly set. Running uninstall without --purge must
+          never delete cluster state, PKI, or the manifest.
+          An AI agent must not add logic that purges state unconditionally on uninstall.
+      protects:
+          files:
+              - cmd/globular-installer/main.go
+              - pkg/installer/
+      forbidden_fixes:
+          - no.purge.without.flag
+
+    - id: installer.daemon.reload.before.start
+      title: systemctl daemon-reload must be called after every unit file write before start/restart
+      severity: error
+      status: active
+      # origin: { type: principle, confidence: high }
+      summary: |
+          After writing or modifying a systemd unit file in /etc/systemd/system/,
+          daemon-reload must be called before starting or restarting the service.
+          Starting with a stale unit means systemd runs the old unit definition,
+          silently ignoring the new one.
+      protects:
+          files:
+              - pkg/platform/linux/systemd.go
+              - pkg/installer/
+      forbidden_fixes:
+          - no.start.without.daemon.reload
+
+    - id: installer.dir.permissions.traversable
+      title: /var/lib/globular directories must be world-traversable (0755), not 0750
+      severity: error
+      status: active
+      # origin: { type: inferred_from_code, confidence: high }
+      summary: |
+          The globular user and the root user are not the only principals that need
+          to traverse /var/lib/globular. The TLS cert paths and socket paths must be
+          reachable by service processes running under different users. Directories
+          set to 0750 break cert loading for non-globular service accounts.
+          This invariant is enforced in filesystem.go and tested by install-day0.sh.
+      protects:
+          files:
+              - pkg/platform/linux/filesystem.go
+
+    - id: installer.fetch.checksum.required
+      title: Network-fetched files must be checksum-verified before use
+      severity: error
+      status: active
+      # origin: { type: principle, confidence: high }
+      summary: |
+          FetchFileStep downloads files over HTTP/HTTPS. Without a checksum check,
+          a man-in-the-middle attack, CDN corruption, or a redirect to a wrong URL
+          can install a tampered binary with no error. Any FetchFileStep that installs
+          an executable or config file must specify an expected SHA-256 and verify it
+          before moving the file into place.
+          Current gap: FetchFileStep has no signature verification (medium risk, candidate).
+      protects:
+          files:
+              - pkg/installer/
+      forbidden_fixes:
+          - no.swallow.fetch.error
+
+    - id: installer.no.hardcoded.uid
+      title: Never hardcode a UID or GID; always resolve by name
+      severity: error
+      status: active
+      # origin: { type: principle, confidence: high }
+      summary: |
+          UIDs and GIDs are assigned by the OS and vary between distributions and
+          installations. Hardcoding UID 999 for the globular user (or any other UID)
+          will collide with an existing system account on some machines.
+          Always use user.Lookup("globular") and group.Lookup("globular") to resolve.
+      protects:
+          files:
+              - pkg/platform/linux/users.go
+      forbidden_fixes:
+          - no.hardcoded.uid
+
+    - id: installer.spec.validated.before.plan
+      title: Install specs must be validated before plan construction begins
+      severity: error
+      status: active
+      # origin: { type: inferred_from_code, confidence: medium, status: candidate }
+      summary: |
+          SpecPlanBuilder accepts a parsed spec and constructs the step plan. If the
+          spec is structurally invalid (unknown step type, missing required param,
+          version field absent), the plan builder may silently skip the bad step or
+          panic mid-install. Validation must reject the spec before any steps are
+          constructed or executed.
+      protects:
+          files:
+              - pkg/installer/spec/
+              - pkg/installer/

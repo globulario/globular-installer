@@ -1,0 +1,1269 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "id": "invariant:installer.binary.replace.atomic",
+      "type": "invariant",
+      "name": "installer.binary.replace.atomic",
+      "summary": "When installing or upgrading a binary at /usr/lib/globular/bin/, the write\nmust use a temp file in the same directory followed by an atomic rename.\nDirect overwrite of a running binary causes SIGBUS or text-file-busy errors\nand leaves a partially-written binary on failure.\n",
+      "created_at": 1779061317,
+      "updated_at": 1779061317
+    },
+    {
+      "id": "failure_mode:fm.purge.on.soft.uninstall",
+      "type": "failure_mode",
+      "name": "fm.purge.on.soft.uninstall",
+      "summary": "If the uninstall command deletes /var/lib/globular unconditionally (without\nchecking --purge), all cluster state is destroyed: PKI keys, etcd data\nreferences, ScyllaDB config, service configs, and the install manifest.\nThis is unrecoverable without a full re-bootstrap from scratch.\n",
+      "metadata": {
+        "coverage_state": "",
+        "deprecated": false,
+        "intentional_gap": false,
+        "severity": "critical"
+      },
+      "created_at": 1779061317,
+      "updated_at": 1779061317
+    },
+    {
+      "id": "source_file:pkg/installer/",
+      "type": "source_file",
+      "name": "pkg/installer/",
+      "path": "pkg/installer/",
+      "created_at": 1779061317,
+      "updated_at": 1779061317
+    },
+    {
+      "id": "source_file:cmd/globular-installer/main.go",
+      "type": "source_file",
+      "name": "cmd/globular-installer/main.go",
+      "path": "cmd/globular-installer/main.go",
+      "created_at": 1779061317,
+      "updated_at": 1779061317
+    },
+    {
+      "id": "invariant:installer.check.before.apply",
+      "type": "invariant",
+      "name": "installer.check.before.apply",
+      "summary": "Every installer step implements the Check/Apply pattern. Check() returns\nwhether the desired state is already in place. If Check passes, Apply is\nskipped. This makes the installer idempotent: running it twice on a\ncorrectly installed system is a no-op.\nAn AI agent must not add Apply logic that bypasses Check, and must not\nweaken Check to always return false (which forces redundant re-application).\n",
+      "created_at": 1779061317,
+      "updated_at": 1779061317
+    },
+    {
+      "id": "failure_mode:fm.stale.unit.on.start",
+      "type": "failure_mode",
+      "name": "fm.stale.unit.on.start",
+      "summary": "When a unit file is written to /etc/systemd/system/ and systemctl start\nis called without an intervening daemon-reload, systemd uses the previously\nloaded definition. The new unit file is on disk but ignored until the next\ndaemon-reload. The service may start on the wrong port, with wrong\nenvironment variables, or with outdated ExecStart arguments.\n",
+      "metadata": {
+        "coverage_state": "",
+        "deprecated": false,
+        "intentional_gap": false,
+        "severity": "error"
+      },
+      "created_at": 1779061317,
+      "updated_at": 1779061317
+    },
+    {
+      "id": "forbidden_fix:no.manifest.on.partial.success",
+      "type": "forbidden_fix",
+      "name": "no.manifest.on.partial.success",
+      "created_at": 1779061317,
+      "updated_at": 1779061317
+    },
+    {
+      "id": "metric_warning_rule:etcd_fsync_latency_ms",
+      "type": "metric_warning_rule",
+      "name": "metric_warning:etcd_fsync_latency_ms",
+      "summary": "High etcd fsync latency risks leader election instability and workflow dispatch timeouts",
+      "metadata": {
+        "critical": 0,
+        "explanation": "High etcd fsync latency risks leader election instability and workflow dispatch timeouts",
+        "linked_drs": 0,
+        "linked_fms": 0,
+        "linked_invs": 0,
+        "missing_drs": 1,
+        "missing_fms": 2,
+        "missing_invs": 1,
+        "query_id": "etcd_fsync_latency_ms",
+        "threshold_key": "etcd:fsync_latency_ms",
+        "warn": 0
+      },
+      "created_at": 1779061317,
+      "updated_at": 1779061317
+    },
+    {
+      "id": "forbidden_fix:no.overwrite.binary.in.place",
+      "type": "forbidden_fix",
+      "name": "no.overwrite.binary.in.place",
+      "created_at": 1779061317,
+      "updated_at": 1779061317
+    },
+    {
+      "id": "invariant:installer.purge.explicit.flag.only",
+      "type": "invariant",
+      "name": "installer.purge.explicit.flag.only",
+      "summary": "The uninstall command has two modes: soft uninstall (removes binaries and units,\npreserves /var/lib/globular) and purge (deletes all state). Purge must only\nexecute when --purge is explicitly set. Running uninstall without --purge must\nnever delete cluster state, PKI, or the manifest.\nAn AI agent must not add logic that purges state unconditionally on uninstall.\n",
+      "created_at": 1779061317,
+      "updated_at": 1779061317
+    },
+    {
+      "id": "forbidden_fix:no.skip.root.check",
+      "type": "forbidden_fix",
+      "name": "no.skip.root.check",
+      "created_at": 1779061317,
+      "updated_at": 1779061317
+    },
+    {
+      "id": "source_file:pkg/installer/manifest/manifest.go",
+      "type": "source_file",
+      "name": "pkg/installer/manifest/manifest.go",
+      "path": "pkg/installer/manifest/manifest.go",
+      "created_at": 1779061317,
+      "updated_at": 1779061317
+    },
+    {
+      "id": "source_file:pkg/platform/linux/systemd.go",
+      "type": "source_file",
+      "name": "pkg/platform/linux/systemd.go",
+      "path": "pkg/platform/linux/systemd.go",
+      "created_at": 1779061317,
+      "updated_at": 1779061317
+    },
+    {
+      "id": "invariant:installer.dir.permissions.traversable",
+      "type": "invariant",
+      "name": "installer.dir.permissions.traversable",
+      "summary": "The globular user and the root user are not the only principals that need\nto traverse /var/lib/globular. The TLS cert paths and socket paths must be\nreachable by service processes running under different users. Directories\nset to 0750 break cert loading for non-globular service accounts.\nThis invariant is enforced in filesystem.go and tested by install-day0.sh.\n",
+      "created_at": 1779061317,
+      "updated_at": 1779061317
+    },
+    {
+      "id": "metric_warning_rule:etcd_disk_percent",
+      "type": "metric_warning_rule",
+      "name": "metric_warning:etcd_disk_percent",
+      "summary": "etcd disk full triggers NOSPACE alarm, blocks all writes, halts convergence",
+      "metadata": {
+        "critical": 0,
+        "explanation": "etcd disk full triggers NOSPACE alarm, blocks all writes, halts convergence",
+        "linked_drs": 0,
+        "linked_fms": 0,
+        "linked_invs": 0,
+        "missing_drs": 1,
+        "missing_fms": 2,
+        "missing_invs": 1,
+        "query_id": "etcd_disk_percent",
+        "threshold_key": "etcd:disk_percent",
+        "warn": 0
+      },
+      "created_at": 1779061317,
+      "updated_at": 1779061317
+    },
+    {
+      "id": "invariant:installer.root.required",
+      "type": "invariant",
+      "name": "installer.root.required",
+      "summary": "The installer writes to /usr/lib/, /var/lib/, /etc/systemd/system/, and\n/etc/hosts — all requiring root. RequireRootStep must run as the first\nstep in any mutating plan. There must be no code path that silently\ncontinues with degraded behaviour when not running as root.\n",
+      "created_at": 1779061317,
+      "updated_at": 1779061317
+    },
+    {
+      "id": "source_file:pkg/platform/linux/filesystem.go",
+      "type": "source_file",
+      "name": "pkg/platform/linux/filesystem.go",
+      "path": "pkg/platform/linux/filesystem.go",
+      "created_at": 1779061317,
+      "updated_at": 1779061317
+    },
+    {
+      "id": "metric_warning_rule:minio_offline_disks",
+      "type": "metric_warning_rule",
+      "name": "metric_warning:minio_offline_disks",
+      "summary": "Offline MinIO disks risk artifact availability and violate topology contract",
+      "metadata": {
+        "critical": 0,
+        "explanation": "Offline MinIO disks risk artifact availability and violate topology contract",
+        "linked_drs": 0,
+        "linked_fms": 0,
+        "linked_invs": 0,
+        "missing_drs": 1,
+        "missing_fms": 1,
+        "missing_invs": 1,
+        "query_id": "minio_offline_disks",
+        "threshold_key": "minio:offline_disks",
+        "warn": 0
+      },
+      "created_at": 1779061317,
+      "updated_at": 1779061317
+    },
+    {
+      "id": "metric_warning_rule:scylla_disk_percent",
+      "type": "metric_warning_rule",
+      "name": "metric_warning:scylla_disk_percent",
+      "summary": "ScyllaDB disk pressure risks workflow/AI memory backend availability",
+      "metadata": {
+        "critical": 0,
+        "explanation": "ScyllaDB disk pressure risks workflow/AI memory backend availability",
+        "linked_drs": 0,
+        "linked_fms": 0,
+        "linked_invs": 0,
+        "missing_drs": 0,
+        "missing_fms": 1,
+        "missing_invs": 1,
+        "query_id": "scylla_disk_percent",
+        "threshold_key": "scylla:disk_percent",
+        "warn": 0
+      },
+      "created_at": 1779061317,
+      "updated_at": 1779061317
+    },
+    {
+      "id": "failure_mode:fm.partial.install.no.manifest",
+      "type": "failure_mode",
+      "name": "fm.partial.install.no.manifest",
+      "summary": "The install plan applies steps sequentially. If a step fails after earlier\nsteps have already written binaries, unit files, or directories, the manifest\nis never written (it is only written on full success). On the next run, the\ninstaller sees no manifest and re-applies all steps from scratch. This is\nusually safe — but if the failed step left a partially-written file or a\nhalf-configured service, the re-run may overwrite or conflict with it.\n",
+      "metadata": {
+        "coverage_state": "",
+        "deprecated": false,
+        "intentional_gap": false,
+        "severity": "critical"
+      },
+      "created_at": 1779061317,
+      "updated_at": 1779061317
+    },
+    {
+      "id": "failure_mode:fm.binary.overwrite.sigbus",
+      "type": "failure_mode",
+      "name": "fm.binary.overwrite.sigbus",
+      "summary": "If a running service binary is overwritten in place (open + write) rather\nthan via temp-file rename, the running process's memory-mapped pages\nbecome inconsistent with the on-disk file. This causes SIGBUS when the OS\ntries to page in code from the new file content, or leaves the binary in a\npartially-written state if the write is interrupted.\n",
+      "metadata": {
+        "coverage_state": "",
+        "deprecated": false,
+        "intentional_gap": false,
+        "severity": "critical"
+      },
+      "created_at": 1779061317,
+      "updated_at": 1779061317
+    },
+    {
+      "id": "forbidden_fix:no.start.without.daemon.reload",
+      "type": "forbidden_fix",
+      "name": "no.start.without.daemon.reload",
+      "created_at": 1779061317,
+      "updated_at": 1779061317
+    },
+    {
+      "id": "failure_mode:fm.fetch.tampered.binary",
+      "type": "failure_mode",
+      "name": "fm.fetch.tampered.binary",
+      "summary": "FetchFileStep downloads a file over HTTP/HTTPS and moves it into place\nwithout verifying a SHA-256 or signature. A MITM attack, CDN cache poisoning,\nor a simple URL redirect can cause a tampered or wrong-version binary to\nbe installed as a Globular service binary. The installer reports success.\n",
+      "metadata": {
+        "coverage_state": "",
+        "deprecated": false,
+        "intentional_gap": false,
+        "severity": "critical"
+      },
+      "created_at": 1779061317,
+      "updated_at": 1779061317
+    },
+    {
+      "id": "invariant:installer.fetch.checksum.required",
+      "type": "invariant",
+      "name": "installer.fetch.checksum.required",
+      "summary": "FetchFileStep downloads files over HTTP/HTTPS. Without a checksum check,\na man-in-the-middle attack, CDN corruption, or a redirect to a wrong URL\ncan install a tampered binary with no error. Any FetchFileStep that installs\nan executable or config file must specify an expected SHA-256 and verify it\nbefore moving the file into place.\nCurrent gap: FetchFileStep has no signature verification (medium risk, candidate).\n",
+      "created_at": 1779061317,
+      "updated_at": 1779061317
+    },
+    {
+      "id": "forbidden_fix:no.hardcoded.uid",
+      "type": "forbidden_fix",
+      "name": "no.hardcoded.uid",
+      "created_at": 1779061317,
+      "updated_at": 1779061317
+    },
+    {
+      "id": "invariant:installer.manifest.written.after.full.success",
+      "type": "invariant",
+      "name": "installer.manifest.written.after.full.success",
+      "summary": "/var/lib/globular/install-manifest.json is the record of a successful install.\nIt must be written only after every step in the plan has applied successfully.\nWriting a partial manifest (written mid-plan or after a failed step) is\nworse than no manifest: subsequent runs see it as complete and skip steps\nthat were never applied.\n",
+      "created_at": 1779061317,
+      "updated_at": 1779061317
+    },
+    {
+      "id": "invariant:installer.daemon.reload.before.start",
+      "type": "invariant",
+      "name": "installer.daemon.reload.before.start",
+      "summary": "After writing or modifying a systemd unit file in /etc/systemd/system/,\ndaemon-reload must be called before starting or restarting the service.\nStarting with a stale unit means systemd runs the old unit definition,\nsilently ignoring the new one.\n",
+      "created_at": 1779061317,
+      "updated_at": 1779061317
+    },
+    {
+      "id": "forbidden_fix:no.swallow.fetch.error",
+      "type": "forbidden_fix",
+      "name": "no.swallow.fetch.error",
+      "created_at": 1779061317,
+      "updated_at": 1779061317
+    },
+    {
+      "id": "forbidden_fix:no.purge.without.flag",
+      "type": "forbidden_fix",
+      "name": "no.purge.without.flag",
+      "created_at": 1779061317,
+      "updated_at": 1779061317
+    },
+    {
+      "id": "failure_mode:fm.uid.collision",
+      "type": "failure_mode",
+      "name": "fm.uid.collision",
+      "summary": "If the installer creates the globular user with a hardcoded UID (e.g., 999),\nit collides with an existing system user on distributions that assign UIDs\ndifferently. The user creation fails or worse, silently reuses the wrong\naccount. Files owned by the colliding UID gain unintended access to\nglobular service data.\n",
+      "metadata": {
+        "coverage_state": "",
+        "deprecated": false,
+        "intentional_gap": false,
+        "severity": "error"
+      },
+      "created_at": 1779061317,
+      "updated_at": 1779061317
+    },
+    {
+      "id": "invariant:installer.spec.validated.before.plan",
+      "type": "invariant",
+      "name": "installer.spec.validated.before.plan",
+      "summary": "SpecPlanBuilder accepts a parsed spec and constructs the step plan. If the\nspec is structurally invalid (unknown step type, missing required param,\nversion field absent), the plan builder may silently skip the bad step or\npanic mid-install. Validation must reject the spec before any steps are\nconstructed or executed.\n",
+      "created_at": 1779061317,
+      "updated_at": 1779061317
+    },
+    {
+      "id": "forbidden_fix:no.apply.without.check",
+      "type": "forbidden_fix",
+      "name": "no.apply.without.check",
+      "created_at": 1779061317,
+      "updated_at": 1779061317
+    },
+    {
+      "id": "source_file:pkg/platform/linux/users.go",
+      "type": "source_file",
+      "name": "pkg/platform/linux/users.go",
+      "path": "pkg/platform/linux/users.go",
+      "created_at": 1779061317,
+      "updated_at": 1779061317
+    },
+    {
+      "id": "invariant:installer.no.hardcoded.uid",
+      "type": "invariant",
+      "name": "installer.no.hardcoded.uid",
+      "summary": "UIDs and GIDs are assigned by the OS and vary between distributions and\ninstallations. Hardcoding UID 999 for the globular user (or any other UID)\nwill collide with an existing system account on some machines.\nAlways use user.Lookup(\"globular\") and group.Lookup(\"globular\") to resolve.\n",
+      "created_at": 1779061317,
+      "updated_at": 1779061317
+    },
+    {
+      "id": "failure_mode:fm.spec.stale.at.release",
+      "type": "failure_mode",
+      "name": "fm.spec.stale.at.release",
+      "summary": "The installer embeds YAML specs from internal/specs/. These specs are\ngenerated from the services package manifests via make sync-specs. If\ncheck-specs is not run in CI before release, the embedded specs can be\nstale: wrong binary paths, wrong port assignments, or missing new services.\nThe installer applies the stale spec without error; services start on the\nwrong port or not at all.\n",
+      "metadata": {
+        "coverage_state": "",
+        "deprecated": false,
+        "intentional_gap": false,
+        "severity": "error"
+      },
+      "created_at": 1779061317,
+      "updated_at": 1779061317
+    },
+    {
+      "id": "source_file:pkg/installer/spec/",
+      "type": "source_file",
+      "name": "pkg/installer/spec/",
+      "path": "pkg/installer/spec/",
+      "created_at": 1779061317,
+      "updated_at": 1779061317
+    },
+    {
+      "id": "metric_warning_rule:workflow_failed_runs_15m",
+      "type": "metric_warning_rule",
+      "name": "metric_warning:workflow_failed_runs_15m",
+      "summary": "Workflow failures indicate convergence risk and may threaten reconcile fairness",
+      "metadata": {
+        "critical": 0,
+        "explanation": "Workflow failures indicate convergence risk and may threaten reconcile fairness",
+        "linked_drs": 0,
+        "linked_fms": 0,
+        "linked_invs": 0,
+        "missing_drs": 0,
+        "missing_fms": 1,
+        "missing_invs": 1,
+        "query_id": "workflow_failed_runs_15m",
+        "threshold_key": "workflow:failed_runs_15m",
+        "warn": 0
+      },
+      "created_at": 1779061317,
+      "updated_at": 1779061317
+    }
+  ],
+  "edges": [
+    {
+      "src": "failure_mode:fm.partial.install.no.manifest",
+      "kind": "violates",
+      "dst": "invariant:installer.manifest.written.after.full.success",
+      "confidence": 1,
+      "class": "decision",
+      "weight": 1
+    },
+    {
+      "src": "failure_mode:fm.partial.install.no.manifest",
+      "kind": "violates",
+      "dst": "invariant:installer.check.before.apply",
+      "confidence": 1,
+      "class": "decision",
+      "weight": 1
+    },
+    {
+      "src": "failure_mode:fm.binary.overwrite.sigbus",
+      "kind": "forbids",
+      "dst": "forbidden_fix:no.overwrite.binary.in.place",
+      "confidence": 1,
+      "class": "decision",
+      "weight": 1
+    },
+    {
+      "src": "failure_mode:fm.binary.overwrite.sigbus",
+      "kind": "violates",
+      "dst": "invariant:installer.binary.replace.atomic",
+      "confidence": 1,
+      "class": "decision",
+      "weight": 1
+    },
+    {
+      "src": "failure_mode:fm.stale.unit.on.start",
+      "kind": "forbids",
+      "dst": "forbidden_fix:no.start.without.daemon.reload",
+      "confidence": 1,
+      "class": "decision",
+      "weight": 1
+    },
+    {
+      "src": "failure_mode:fm.stale.unit.on.start",
+      "kind": "violates",
+      "dst": "invariant:installer.daemon.reload.before.start",
+      "confidence": 1,
+      "class": "decision",
+      "weight": 1
+    },
+    {
+      "src": "failure_mode:fm.fetch.tampered.binary",
+      "kind": "forbids",
+      "dst": "forbidden_fix:no.swallow.fetch.error",
+      "confidence": 1,
+      "class": "decision",
+      "weight": 1
+    },
+    {
+      "src": "failure_mode:fm.fetch.tampered.binary",
+      "kind": "violates",
+      "dst": "invariant:installer.fetch.checksum.required",
+      "confidence": 1,
+      "class": "decision",
+      "weight": 1
+    },
+    {
+      "src": "failure_mode:fm.purge.on.soft.uninstall",
+      "kind": "forbids",
+      "dst": "forbidden_fix:no.purge.without.flag",
+      "confidence": 1,
+      "class": "decision",
+      "weight": 1
+    },
+    {
+      "src": "failure_mode:fm.purge.on.soft.uninstall",
+      "kind": "violates",
+      "dst": "invariant:installer.purge.explicit.flag.only",
+      "confidence": 1,
+      "class": "decision",
+      "weight": 1
+    },
+    {
+      "src": "failure_mode:fm.uid.collision",
+      "kind": "violates",
+      "dst": "invariant:installer.no.hardcoded.uid",
+      "confidence": 1,
+      "class": "decision",
+      "weight": 1
+    },
+    {
+      "src": "failure_mode:fm.spec.stale.at.release",
+      "kind": "violates",
+      "dst": "invariant:installer.spec.validated.before.plan",
+      "confidence": 1,
+      "class": "decision",
+      "weight": 1
+    },
+    {
+      "src": "invariant:installer.check.before.apply",
+      "kind": "forbids",
+      "dst": "forbidden_fix:no.apply.without.check",
+      "confidence": 1,
+      "class": "decision",
+      "weight": 1
+    },
+    {
+      "src": "invariant:installer.manifest.written.after.full.success",
+      "kind": "forbids",
+      "dst": "forbidden_fix:no.manifest.on.partial.success",
+      "confidence": 1,
+      "class": "decision",
+      "weight": 1
+    },
+    {
+      "src": "invariant:installer.binary.replace.atomic",
+      "kind": "forbids",
+      "dst": "forbidden_fix:no.overwrite.binary.in.place",
+      "confidence": 1,
+      "class": "decision",
+      "weight": 1
+    },
+    {
+      "src": "invariant:installer.root.required",
+      "kind": "forbids",
+      "dst": "forbidden_fix:no.skip.root.check",
+      "confidence": 1,
+      "class": "decision",
+      "weight": 1
+    },
+    {
+      "src": "invariant:installer.purge.explicit.flag.only",
+      "kind": "forbids",
+      "dst": "forbidden_fix:no.purge.without.flag",
+      "confidence": 1,
+      "class": "decision",
+      "weight": 1
+    },
+    {
+      "src": "invariant:installer.daemon.reload.before.start",
+      "kind": "forbids",
+      "dst": "forbidden_fix:no.start.without.daemon.reload",
+      "confidence": 1,
+      "class": "decision",
+      "weight": 1
+    },
+    {
+      "src": "invariant:installer.fetch.checksum.required",
+      "kind": "forbids",
+      "dst": "forbidden_fix:no.swallow.fetch.error",
+      "confidence": 1,
+      "class": "decision",
+      "weight": 1
+    },
+    {
+      "src": "invariant:installer.no.hardcoded.uid",
+      "kind": "forbids",
+      "dst": "forbidden_fix:no.hardcoded.uid",
+      "confidence": 1,
+      "class": "decision",
+      "weight": 1
+    },
+    {
+      "src": "invariant:installer.check.before.apply",
+      "kind": "protects",
+      "dst": "source_file:pkg/installer/",
+      "confidence": 1,
+      "class": "information",
+      "weight": 0.3
+    },
+    {
+      "src": "source_file:pkg/installer/",
+      "kind": "implements",
+      "dst": "invariant:installer.check.before.apply",
+      "confidence": 1,
+      "class": "structural",
+      "weight": 0.7
+    },
+    {
+      "src": "forbidden_fix:no.apply.without.check",
+      "kind": "blocks_forbidden_action",
+      "dst": "invariant:installer.check.before.apply",
+      "confidence": 1,
+      "class": "decision",
+      "weight": 1,
+      "metadata": {
+        "source_file": "/home/dave/Documents/github.com/globulario/globular-installer/docs/awareness/invariants.yaml",
+        "trust_level": "declared"
+      }
+    },
+    {
+      "src": "source_file:pkg/installer/",
+      "kind": "partially_implements",
+      "dst": "invariant:installer.check.before.apply",
+      "confidence": 1,
+      "class": "structural",
+      "weight": 0.7,
+      "metadata": {
+        "source_file": "/home/dave/Documents/github.com/globulario/globular-installer/docs/awareness/invariants.yaml",
+        "trust_level": "declared",
+        "weight_reason": "protects.files backward compat"
+      }
+    },
+    {
+      "src": "invariant:installer.manifest.written.after.full.success",
+      "kind": "protects",
+      "dst": "source_file:pkg/installer/manifest/manifest.go",
+      "confidence": 1,
+      "class": "information",
+      "weight": 0.3
+    },
+    {
+      "src": "source_file:pkg/installer/manifest/manifest.go",
+      "kind": "implements",
+      "dst": "invariant:installer.manifest.written.after.full.success",
+      "confidence": 1,
+      "class": "structural",
+      "weight": 0.7
+    },
+    {
+      "src": "invariant:installer.manifest.written.after.full.success",
+      "kind": "protects",
+      "dst": "source_file:pkg/installer/",
+      "confidence": 1,
+      "class": "information",
+      "weight": 0.3
+    },
+    {
+      "src": "source_file:pkg/installer/",
+      "kind": "implements",
+      "dst": "invariant:installer.manifest.written.after.full.success",
+      "confidence": 1,
+      "class": "structural",
+      "weight": 0.7
+    },
+    {
+      "src": "forbidden_fix:no.manifest.on.partial.success",
+      "kind": "blocks_forbidden_action",
+      "dst": "invariant:installer.manifest.written.after.full.success",
+      "confidence": 1,
+      "class": "decision",
+      "weight": 1,
+      "metadata": {
+        "source_file": "/home/dave/Documents/github.com/globulario/globular-installer/docs/awareness/invariants.yaml",
+        "trust_level": "declared"
+      }
+    },
+    {
+      "src": "source_file:pkg/installer/manifest/manifest.go",
+      "kind": "partially_implements",
+      "dst": "invariant:installer.manifest.written.after.full.success",
+      "confidence": 1,
+      "class": "structural",
+      "weight": 0.7,
+      "metadata": {
+        "source_file": "/home/dave/Documents/github.com/globulario/globular-installer/docs/awareness/invariants.yaml",
+        "trust_level": "declared",
+        "weight_reason": "protects.files backward compat"
+      }
+    },
+    {
+      "src": "source_file:pkg/installer/",
+      "kind": "partially_implements",
+      "dst": "invariant:installer.manifest.written.after.full.success",
+      "confidence": 1,
+      "class": "structural",
+      "weight": 0.7,
+      "metadata": {
+        "source_file": "/home/dave/Documents/github.com/globulario/globular-installer/docs/awareness/invariants.yaml",
+        "trust_level": "declared",
+        "weight_reason": "protects.files backward compat"
+      }
+    },
+    {
+      "src": "invariant:installer.binary.replace.atomic",
+      "kind": "protects",
+      "dst": "source_file:pkg/installer/",
+      "confidence": 1,
+      "class": "information",
+      "weight": 0.3
+    },
+    {
+      "src": "source_file:pkg/installer/",
+      "kind": "implements",
+      "dst": "invariant:installer.binary.replace.atomic",
+      "confidence": 1,
+      "class": "structural",
+      "weight": 0.7
+    },
+    {
+      "src": "invariant:installer.binary.replace.atomic",
+      "kind": "protects",
+      "dst": "source_file:pkg/platform/linux/filesystem.go",
+      "confidence": 1,
+      "class": "information",
+      "weight": 0.3
+    },
+    {
+      "src": "source_file:pkg/platform/linux/filesystem.go",
+      "kind": "implements",
+      "dst": "invariant:installer.binary.replace.atomic",
+      "confidence": 1,
+      "class": "structural",
+      "weight": 0.7
+    },
+    {
+      "src": "forbidden_fix:no.overwrite.binary.in.place",
+      "kind": "blocks_forbidden_action",
+      "dst": "invariant:installer.binary.replace.atomic",
+      "confidence": 1,
+      "class": "decision",
+      "weight": 1,
+      "metadata": {
+        "source_file": "/home/dave/Documents/github.com/globulario/globular-installer/docs/awareness/invariants.yaml",
+        "trust_level": "declared"
+      }
+    },
+    {
+      "src": "source_file:pkg/installer/",
+      "kind": "partially_implements",
+      "dst": "invariant:installer.binary.replace.atomic",
+      "confidence": 1,
+      "class": "structural",
+      "weight": 0.7,
+      "metadata": {
+        "source_file": "/home/dave/Documents/github.com/globulario/globular-installer/docs/awareness/invariants.yaml",
+        "trust_level": "declared",
+        "weight_reason": "protects.files backward compat"
+      }
+    },
+    {
+      "src": "source_file:pkg/platform/linux/filesystem.go",
+      "kind": "partially_implements",
+      "dst": "invariant:installer.binary.replace.atomic",
+      "confidence": 1,
+      "class": "structural",
+      "weight": 0.7,
+      "metadata": {
+        "source_file": "/home/dave/Documents/github.com/globulario/globular-installer/docs/awareness/invariants.yaml",
+        "trust_level": "declared",
+        "weight_reason": "protects.files backward compat"
+      }
+    },
+    {
+      "src": "invariant:installer.root.required",
+      "kind": "protects",
+      "dst": "source_file:pkg/installer/",
+      "confidence": 1,
+      "class": "information",
+      "weight": 0.3
+    },
+    {
+      "src": "source_file:pkg/installer/",
+      "kind": "implements",
+      "dst": "invariant:installer.root.required",
+      "confidence": 1,
+      "class": "structural",
+      "weight": 0.7
+    },
+    {
+      "src": "forbidden_fix:no.skip.root.check",
+      "kind": "blocks_forbidden_action",
+      "dst": "invariant:installer.root.required",
+      "confidence": 1,
+      "class": "decision",
+      "weight": 1,
+      "metadata": {
+        "source_file": "/home/dave/Documents/github.com/globulario/globular-installer/docs/awareness/invariants.yaml",
+        "trust_level": "declared"
+      }
+    },
+    {
+      "src": "source_file:pkg/installer/",
+      "kind": "partially_implements",
+      "dst": "invariant:installer.root.required",
+      "confidence": 1,
+      "class": "structural",
+      "weight": 0.7,
+      "metadata": {
+        "source_file": "/home/dave/Documents/github.com/globulario/globular-installer/docs/awareness/invariants.yaml",
+        "trust_level": "declared",
+        "weight_reason": "protects.files backward compat"
+      }
+    },
+    {
+      "src": "invariant:installer.purge.explicit.flag.only",
+      "kind": "protects",
+      "dst": "source_file:cmd/globular-installer/main.go",
+      "confidence": 1,
+      "class": "information",
+      "weight": 0.3
+    },
+    {
+      "src": "source_file:cmd/globular-installer/main.go",
+      "kind": "implements",
+      "dst": "invariant:installer.purge.explicit.flag.only",
+      "confidence": 1,
+      "class": "structural",
+      "weight": 0.7
+    },
+    {
+      "src": "invariant:installer.purge.explicit.flag.only",
+      "kind": "protects",
+      "dst": "source_file:pkg/installer/",
+      "confidence": 1,
+      "class": "information",
+      "weight": 0.3
+    },
+    {
+      "src": "source_file:pkg/installer/",
+      "kind": "implements",
+      "dst": "invariant:installer.purge.explicit.flag.only",
+      "confidence": 1,
+      "class": "structural",
+      "weight": 0.7
+    },
+    {
+      "src": "forbidden_fix:no.purge.without.flag",
+      "kind": "blocks_forbidden_action",
+      "dst": "invariant:installer.purge.explicit.flag.only",
+      "confidence": 1,
+      "class": "decision",
+      "weight": 1,
+      "metadata": {
+        "source_file": "/home/dave/Documents/github.com/globulario/globular-installer/docs/awareness/invariants.yaml",
+        "trust_level": "declared"
+      }
+    },
+    {
+      "src": "source_file:cmd/globular-installer/main.go",
+      "kind": "partially_implements",
+      "dst": "invariant:installer.purge.explicit.flag.only",
+      "confidence": 1,
+      "class": "structural",
+      "weight": 0.7,
+      "metadata": {
+        "source_file": "/home/dave/Documents/github.com/globulario/globular-installer/docs/awareness/invariants.yaml",
+        "trust_level": "declared",
+        "weight_reason": "protects.files backward compat"
+      }
+    },
+    {
+      "src": "source_file:pkg/installer/",
+      "kind": "partially_implements",
+      "dst": "invariant:installer.purge.explicit.flag.only",
+      "confidence": 1,
+      "class": "structural",
+      "weight": 0.7,
+      "metadata": {
+        "source_file": "/home/dave/Documents/github.com/globulario/globular-installer/docs/awareness/invariants.yaml",
+        "trust_level": "declared",
+        "weight_reason": "protects.files backward compat"
+      }
+    },
+    {
+      "src": "invariant:installer.daemon.reload.before.start",
+      "kind": "protects",
+      "dst": "source_file:pkg/platform/linux/systemd.go",
+      "confidence": 1,
+      "class": "information",
+      "weight": 0.3
+    },
+    {
+      "src": "source_file:pkg/platform/linux/systemd.go",
+      "kind": "implements",
+      "dst": "invariant:installer.daemon.reload.before.start",
+      "confidence": 1,
+      "class": "structural",
+      "weight": 0.7
+    },
+    {
+      "src": "invariant:installer.daemon.reload.before.start",
+      "kind": "protects",
+      "dst": "source_file:pkg/installer/",
+      "confidence": 1,
+      "class": "information",
+      "weight": 0.3
+    },
+    {
+      "src": "source_file:pkg/installer/",
+      "kind": "implements",
+      "dst": "invariant:installer.daemon.reload.before.start",
+      "confidence": 1,
+      "class": "structural",
+      "weight": 0.7
+    },
+    {
+      "src": "forbidden_fix:no.start.without.daemon.reload",
+      "kind": "blocks_forbidden_action",
+      "dst": "invariant:installer.daemon.reload.before.start",
+      "confidence": 1,
+      "class": "decision",
+      "weight": 1,
+      "metadata": {
+        "source_file": "/home/dave/Documents/github.com/globulario/globular-installer/docs/awareness/invariants.yaml",
+        "trust_level": "declared"
+      }
+    },
+    {
+      "src": "source_file:pkg/platform/linux/systemd.go",
+      "kind": "partially_implements",
+      "dst": "invariant:installer.daemon.reload.before.start",
+      "confidence": 1,
+      "class": "structural",
+      "weight": 0.7,
+      "metadata": {
+        "source_file": "/home/dave/Documents/github.com/globulario/globular-installer/docs/awareness/invariants.yaml",
+        "trust_level": "declared",
+        "weight_reason": "protects.files backward compat"
+      }
+    },
+    {
+      "src": "source_file:pkg/installer/",
+      "kind": "partially_implements",
+      "dst": "invariant:installer.daemon.reload.before.start",
+      "confidence": 1,
+      "class": "structural",
+      "weight": 0.7,
+      "metadata": {
+        "source_file": "/home/dave/Documents/github.com/globulario/globular-installer/docs/awareness/invariants.yaml",
+        "trust_level": "declared",
+        "weight_reason": "protects.files backward compat"
+      }
+    },
+    {
+      "src": "invariant:installer.dir.permissions.traversable",
+      "kind": "protects",
+      "dst": "source_file:pkg/platform/linux/filesystem.go",
+      "confidence": 1,
+      "class": "information",
+      "weight": 0.3
+    },
+    {
+      "src": "source_file:pkg/platform/linux/filesystem.go",
+      "kind": "implements",
+      "dst": "invariant:installer.dir.permissions.traversable",
+      "confidence": 1,
+      "class": "structural",
+      "weight": 0.7
+    },
+    {
+      "src": "source_file:pkg/platform/linux/filesystem.go",
+      "kind": "partially_implements",
+      "dst": "invariant:installer.dir.permissions.traversable",
+      "confidence": 1,
+      "class": "structural",
+      "weight": 0.7,
+      "metadata": {
+        "source_file": "/home/dave/Documents/github.com/globulario/globular-installer/docs/awareness/invariants.yaml",
+        "trust_level": "declared",
+        "weight_reason": "protects.files backward compat"
+      }
+    },
+    {
+      "src": "invariant:installer.fetch.checksum.required",
+      "kind": "protects",
+      "dst": "source_file:pkg/installer/",
+      "confidence": 1,
+      "class": "information",
+      "weight": 0.3
+    },
+    {
+      "src": "source_file:pkg/installer/",
+      "kind": "implements",
+      "dst": "invariant:installer.fetch.checksum.required",
+      "confidence": 1,
+      "class": "structural",
+      "weight": 0.7
+    },
+    {
+      "src": "forbidden_fix:no.swallow.fetch.error",
+      "kind": "blocks_forbidden_action",
+      "dst": "invariant:installer.fetch.checksum.required",
+      "confidence": 1,
+      "class": "decision",
+      "weight": 1,
+      "metadata": {
+        "source_file": "/home/dave/Documents/github.com/globulario/globular-installer/docs/awareness/invariants.yaml",
+        "trust_level": "declared"
+      }
+    },
+    {
+      "src": "source_file:pkg/installer/",
+      "kind": "partially_implements",
+      "dst": "invariant:installer.fetch.checksum.required",
+      "confidence": 1,
+      "class": "structural",
+      "weight": 0.7,
+      "metadata": {
+        "source_file": "/home/dave/Documents/github.com/globulario/globular-installer/docs/awareness/invariants.yaml",
+        "trust_level": "declared",
+        "weight_reason": "protects.files backward compat"
+      }
+    },
+    {
+      "src": "invariant:installer.no.hardcoded.uid",
+      "kind": "protects",
+      "dst": "source_file:pkg/platform/linux/users.go",
+      "confidence": 1,
+      "class": "information",
+      "weight": 0.3
+    },
+    {
+      "src": "source_file:pkg/platform/linux/users.go",
+      "kind": "implements",
+      "dst": "invariant:installer.no.hardcoded.uid",
+      "confidence": 1,
+      "class": "structural",
+      "weight": 0.7
+    },
+    {
+      "src": "forbidden_fix:no.hardcoded.uid",
+      "kind": "blocks_forbidden_action",
+      "dst": "invariant:installer.no.hardcoded.uid",
+      "confidence": 1,
+      "class": "decision",
+      "weight": 1,
+      "metadata": {
+        "source_file": "/home/dave/Documents/github.com/globulario/globular-installer/docs/awareness/invariants.yaml",
+        "trust_level": "declared"
+      }
+    },
+    {
+      "src": "source_file:pkg/platform/linux/users.go",
+      "kind": "partially_implements",
+      "dst": "invariant:installer.no.hardcoded.uid",
+      "confidence": 1,
+      "class": "structural",
+      "weight": 0.7,
+      "metadata": {
+        "source_file": "/home/dave/Documents/github.com/globulario/globular-installer/docs/awareness/invariants.yaml",
+        "trust_level": "declared",
+        "weight_reason": "protects.files backward compat"
+      }
+    },
+    {
+      "src": "invariant:installer.spec.validated.before.plan",
+      "kind": "protects",
+      "dst": "source_file:pkg/installer/spec/",
+      "confidence": 1,
+      "class": "information",
+      "weight": 0.3
+    },
+    {
+      "src": "source_file:pkg/installer/spec/",
+      "kind": "implements",
+      "dst": "invariant:installer.spec.validated.before.plan",
+      "confidence": 1,
+      "class": "structural",
+      "weight": 0.7
+    },
+    {
+      "src": "invariant:installer.spec.validated.before.plan",
+      "kind": "protects",
+      "dst": "source_file:pkg/installer/",
+      "confidence": 1,
+      "class": "information",
+      "weight": 0.3
+    },
+    {
+      "src": "source_file:pkg/installer/",
+      "kind": "implements",
+      "dst": "invariant:installer.spec.validated.before.plan",
+      "confidence": 1,
+      "class": "structural",
+      "weight": 0.7
+    },
+    {
+      "src": "source_file:pkg/installer/spec/",
+      "kind": "partially_implements",
+      "dst": "invariant:installer.spec.validated.before.plan",
+      "confidence": 1,
+      "class": "structural",
+      "weight": 0.7,
+      "metadata": {
+        "source_file": "/home/dave/Documents/github.com/globulario/globular-installer/docs/awareness/invariants.yaml",
+        "trust_level": "declared",
+        "weight_reason": "protects.files backward compat"
+      }
+    },
+    {
+      "src": "source_file:pkg/installer/",
+      "kind": "partially_implements",
+      "dst": "invariant:installer.spec.validated.before.plan",
+      "confidence": 1,
+      "class": "structural",
+      "weight": 0.7,
+      "metadata": {
+        "source_file": "/home/dave/Documents/github.com/globulario/globular-installer/docs/awareness/invariants.yaml",
+        "trust_level": "declared",
+        "weight_reason": "protects.files backward compat"
+      }
+    }
+  ],
+  "invariants": [
+    {
+      "id": "installer.manifest.written.after.full.success",
+      "title": "The install manifest must be written only after all steps succeed",
+      "summary": "/var/lib/globular/install-manifest.json is the record of a successful install.\nIt must be written only after every step in the plan has applied successfully.\nWriting a partial manifest (written mid-plan or after a failed step) is\nworse than no manifest: subsequent runs see it as complete and skip steps\nthat were never applied.\n",
+      "severity": "critical",
+      "status": "active"
+    },
+    {
+      "id": "installer.root.required",
+      "title": "All OS-mutating operations require root; no silent fallback to user-level",
+      "summary": "The installer writes to /usr/lib/, /var/lib/, /etc/systemd/system/, and\n/etc/hosts — all requiring root. RequireRootStep must run as the first\nstep in any mutating plan. There must be no code path that silently\ncontinues with degraded behaviour when not running as root.\n",
+      "severity": "critical",
+      "status": "active"
+    },
+    {
+      "id": "installer.dir.permissions.traversable",
+      "title": "/var/lib/globular directories must be world-traversable (0755), not 0750",
+      "summary": "The globular user and the root user are not the only principals that need\nto traverse /var/lib/globular. The TLS cert paths and socket paths must be\nreachable by service processes running under different users. Directories\nset to 0750 break cert loading for non-globular service accounts.\nThis invariant is enforced in filesystem.go and tested by install-day0.sh.\n",
+      "severity": "error",
+      "status": "active"
+    },
+    {
+      "id": "installer.spec.validated.before.plan",
+      "title": "Install specs must be validated before plan construction begins",
+      "summary": "SpecPlanBuilder accepts a parsed spec and constructs the step plan. If the\nspec is structurally invalid (unknown step type, missing required param,\nversion field absent), the plan builder may silently skip the bad step or\npanic mid-install. Validation must reject the spec before any steps are\nconstructed or executed.\n",
+      "severity": "error",
+      "status": "active"
+    },
+    {
+      "id": "installer.check.before.apply",
+      "title": "Every step must Check before Apply; Apply is skipped if Check passes",
+      "summary": "Every installer step implements the Check/Apply pattern. Check() returns\nwhether the desired state is already in place. If Check passes, Apply is\nskipped. This makes the installer idempotent: running it twice on a\ncorrectly installed system is a no-op.\nAn AI agent must not add Apply logic that bypasses Check, and must not\nweaken Check to always return false (which forces redundant re-application).\n",
+      "severity": "critical",
+      "status": "active"
+    },
+    {
+      "id": "installer.binary.replace.atomic",
+      "title": "Binary files must be replaced atomically via temp-file rename",
+      "summary": "When installing or upgrading a binary at /usr/lib/globular/bin/, the write\nmust use a temp file in the same directory followed by an atomic rename.\nDirect overwrite of a running binary causes SIGBUS or text-file-busy errors\nand leaves a partially-written binary on failure.\n",
+      "severity": "critical",
+      "status": "active"
+    },
+    {
+      "id": "installer.purge.explicit.flag.only",
+      "title": "Destructive purge (deleting /var/lib/globular) requires an explicit --purge flag",
+      "summary": "The uninstall command has two modes: soft uninstall (removes binaries and units,\npreserves /var/lib/globular) and purge (deletes all state). Purge must only\nexecute when --purge is explicitly set. Running uninstall without --purge must\nnever delete cluster state, PKI, or the manifest.\nAn AI agent must not add logic that purges state unconditionally on uninstall.\n",
+      "severity": "critical",
+      "status": "active"
+    },
+    {
+      "id": "installer.daemon.reload.before.start",
+      "title": "systemctl daemon-reload must be called after every unit file write before start/restart",
+      "summary": "After writing or modifying a systemd unit file in /etc/systemd/system/,\ndaemon-reload must be called before starting or restarting the service.\nStarting with a stale unit means systemd runs the old unit definition,\nsilently ignoring the new one.\n",
+      "severity": "error",
+      "status": "active"
+    },
+    {
+      "id": "installer.fetch.checksum.required",
+      "title": "Network-fetched files must be checksum-verified before use",
+      "summary": "FetchFileStep downloads files over HTTP/HTTPS. Without a checksum check,\na man-in-the-middle attack, CDN corruption, or a redirect to a wrong URL\ncan install a tampered binary with no error. Any FetchFileStep that installs\nan executable or config file must specify an expected SHA-256 and verify it\nbefore moving the file into place.\nCurrent gap: FetchFileStep has no signature verification (medium risk, candidate).\n",
+      "severity": "error",
+      "status": "active"
+    },
+    {
+      "id": "installer.no.hardcoded.uid",
+      "title": "Never hardcode a UID or GID; always resolve by name",
+      "summary": "UIDs and GIDs are assigned by the OS and vary between distributions and\ninstallations. Hardcoding UID 999 for the globular user (or any other UID)\nwill collide with an existing system account on some machines.\nAlways use user.Lookup(\"globular\") and group.Lookup(\"globular\") to resolve.\n",
+      "severity": "error",
+      "status": "active"
+    }
+  ],
+  "failure_modes": [
+    {
+      "id": "fm.uid.collision",
+      "title": "Hardcoded UID for globular user collides with existing system account",
+      "summary": "If the installer creates the globular user with a hardcoded UID (e.g., 999),\nit collides with an existing system user on distributions that assign UIDs\ndifferently. The user creation fails or worse, silently reuses the wrong\naccount. Files owned by the colliding UID gain unintended access to\nglobular service data.\n",
+      "symptoms": [
+        "adduser fails with UID already in use",
+        "globular user created but maps to a different username (avahi, nobody, etc.)",
+        "service data files readable by unexpected users"
+      ],
+      "root_cause": "If the installer creates the globular user with a hardcoded UID (e.g., 999),\nit collides with an existing system user on distributions that assign UIDs\ndifferently. The user creation fails or worse, silently reuses the wrong\naccount. Files owned by the colliding UID gain unintended access to\nglobular service data.\n"
+    },
+    {
+      "id": "fm.spec.stale.at.release",
+      "title": "Embedded specs out of sync with packaged services — make check-specs not run",
+      "summary": "The installer embeds YAML specs from internal/specs/. These specs are\ngenerated from the services package manifests via make sync-specs. If\ncheck-specs is not run in CI before release, the embedded specs can be\nstale: wrong binary paths, wrong port assignments, or missing new services.\nThe installer applies the stale spec without error; services start on the\nwrong port or not at all.\n",
+      "symptoms": [
+        "installed services report wrong port in globular service discovery",
+        "new services added to packages/ not present in installer spec",
+        "make check-specs fails post-release with diff between expected and actual"
+      ],
+      "root_cause": "The installer embeds YAML specs from internal/specs/. These specs are\ngenerated from the services package manifests via make sync-specs. If\ncheck-specs is not run in CI before release, the embedded specs can be\nstale: wrong binary paths, wrong port assignments, or missing new services.\nThe installer applies the stale spec without error; services start on the\nwrong port or not at all.\n"
+    },
+    {
+      "id": "fm.partial.install.no.manifest",
+      "title": "Plan fails mid-way; files written but manifest never persisted",
+      "summary": "The install plan applies steps sequentially. If a step fails after earlier\nsteps have already written binaries, unit files, or directories, the manifest\nis never written (it is only written on full success). On the next run, the\ninstaller sees no manifest and re-applies all steps from scratch. This is\nusually safe — but if the failed step left a partially-written file or a\nhalf-configured service, the re-run may overwrite or conflict with it.\n",
+      "symptoms": [
+        "installer exits with error but /usr/lib/globular/bin/ contains some binaries",
+        "systemd units are present but service is not enabled or running",
+        "/var/lib/globular/install-manifest.json does not exist after a reported failure",
+        "second run re-applies all steps, some of which conflict with partial state"
+      ],
+      "root_cause": "The install plan applies steps sequentially. If a step fails after earlier\nsteps have already written binaries, unit files, or directories, the manifest\nis never written (it is only written on full success). On the next run, the\ninstaller sees no manifest and re-applies all steps from scratch. This is\nusually safe — but if the failed step left a partially-written file or a\nhalf-configured service, the re-run may overwrite or conflict with it.\n"
+    },
+    {
+      "id": "fm.binary.overwrite.sigbus",
+      "title": "Binary replaced non-atomically while service is running — SIGBUS or corruption",
+      "summary": "If a running service binary is overwritten in place (open + write) rather\nthan via temp-file rename, the running process's memory-mapped pages\nbecome inconsistent with the on-disk file. This causes SIGBUS when the OS\ntries to page in code from the new file content, or leaves the binary in a\npartially-written state if the write is interrupted.\n",
+      "symptoms": [
+        "service crashes with SIGBUS immediately after an upgrade",
+        "binary at /usr/lib/globular/bin/ has file size = 0 or is truncated",
+        "journalctl shows text file busy error during install"
+      ],
+      "root_cause": "If a running service binary is overwritten in place (open + write) rather\nthan via temp-file rename, the running process's memory-mapped pages\nbecome inconsistent with the on-disk file. This causes SIGBUS when the OS\ntries to page in code from the new file content, or leaves the binary in a\npartially-written state if the write is interrupted.\n"
+    },
+    {
+      "id": "fm.stale.unit.on.start",
+      "title": "Service started with old unit definition because daemon-reload was skipped",
+      "summary": "When a unit file is written to /etc/systemd/system/ and systemctl start\nis called without an intervening daemon-reload, systemd uses the previously\nloaded definition. The new unit file is on disk but ignored until the next\ndaemon-reload. The service may start on the wrong port, with wrong\nenvironment variables, or with outdated ExecStart arguments.\n",
+      "symptoms": [
+        "service starts successfully but uses wrong port or binary path",
+        "systemctl status shows unit definition differs from /etc/systemd/system/ file",
+        "changes to unit file have no effect until manual daemon-reload"
+      ],
+      "root_cause": "When a unit file is written to /etc/systemd/system/ and systemctl start\nis called without an intervening daemon-reload, systemd uses the previously\nloaded definition. The new unit file is on disk but ignored until the next\ndaemon-reload. The service may start on the wrong port, with wrong\nenvironment variables, or with outdated ExecStart arguments.\n"
+    },
+    {
+      "id": "fm.fetch.tampered.binary",
+      "title": "Network-fetched binary installed without checksum verification",
+      "summary": "FetchFileStep downloads a file over HTTP/HTTPS and moves it into place\nwithout verifying a SHA-256 or signature. A MITM attack, CDN cache poisoning,\nor a simple URL redirect can cause a tampered or wrong-version binary to\nbe installed as a Globular service binary. The installer reports success.\n",
+      "symptoms": [
+        "service starts but behaves unexpectedly or crashes immediately",
+        "binary hash does not match the expected release artifact",
+        "no checksum error in installer output (verification was never done)"
+      ],
+      "root_cause": "FetchFileStep downloads a file over HTTP/HTTPS and moves it into place\nwithout verifying a SHA-256 or signature. A MITM attack, CDN cache poisoning,\nor a simple URL redirect can cause a tampered or wrong-version binary to\nbe installed as a Globular service binary. The installer reports success.\n"
+    },
+    {
+      "id": "fm.purge.on.soft.uninstall",
+      "title": "/var/lib/globular deleted during uninstall without explicit --purge",
+      "summary": "If the uninstall command deletes /var/lib/globular unconditionally (without\nchecking --purge), all cluster state is destroyed: PKI keys, etcd data\nreferences, ScyllaDB config, service configs, and the install manifest.\nThis is unrecoverable without a full re-bootstrap from scratch.\n",
+      "symptoms": [
+        "/var/lib/globular is empty or missing after uninstall",
+        "PKI certs and private keys are gone",
+        "etcd cannot start (data directory missing)",
+        "re-install required to recover"
+      ],
+      "root_cause": "If the uninstall command deletes /var/lib/globular unconditionally (without\nchecking --purge), all cluster state is destroyed: PKI keys, etcd data\nreferences, ScyllaDB config, service configs, and the install manifest.\nThis is unrecoverable without a full re-bootstrap from scratch.\n"
+    }
+  ],
+  "builds": [
+    {
+      "id": "build-1779061317",
+      "repo_root": "/home/dave/Documents/github.com/globulario/globular-installer",
+      "git_commit": "55989d2a97b100305502628898584ecb6cdb2aa6",
+      "created_at": 1779061317,
+      "stats": {
+        "nodes": 37,
+        "edges": 73,
+        "invariants": 10,
+        "failure_modes": 7
+      },
+      "collector_health": [
+        {
+          "collector_id": "metrics",
+          "source_tier": "knowledge_base",
+          "status": "ok",
+          "nodes_emitted": 0,
+          "priority": "P0"
+        }
+      ]
+    }
+  ]
+}
