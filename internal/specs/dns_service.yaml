@@ -90,8 +90,6 @@ steps:
           ExecStartPre=/bin/sh -c 'for i in $(seq 1 90); do ss -lnt | grep -q ":9042 " && exit 0; sleep 1; done; echo "scylla 9042 not ready after 90s"; ss -lnt 2>&1; systemctl status scylla-server.service --no-pager -l 2>&1 | tail -5; exit 1'
           AmbientCapabilities=CAP_NET_BIND_SERVICE
           ExecStart={{.Prefix}}/bin/dns_server
-          Type=notify
-          WatchdogSec=60
           Restart=always
           RestartSec=2
           LimitNOFILE=524288
