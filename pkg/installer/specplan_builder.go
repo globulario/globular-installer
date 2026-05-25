@@ -257,6 +257,8 @@ func buildStep(ctx *Context, ss spec.StepSpec) (Step, error) {
 		step := NewRunScriptStep(script, timeout)
 		step.Required = getBoolParam(ss.Params, "required", false)
 		return step, nil
+	case "etcd_join":
+		return &EtcdJoinStep{BootstrapEtcd: ctx.BootstrapEtcd}, nil
 	case "noop":
 		name := ss.ID
 		if name == "" {

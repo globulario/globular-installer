@@ -66,6 +66,7 @@ func runCommand(prog, cmd string, args []string) int {
 	verbose := fs.Bool("verbose", false, "enable verbose logging")
 	version := fs.String("version", "", "globular version being installed")
 	skipStart := fs.Bool("skip-start", false, "install unit files and enable services but do not start them (defers start to caller)")
+	bootstrapEtcd := fs.String("bootstrap-etcd", "", "etcd endpoint of the bootstrap node for Day-1 cluster join (e.g. https://10.0.0.63:2379; empty = Day-0 skip)")
 	help := fs.Bool("help", false, "show help")
 	helpShort := fs.Bool("h", false, "show help")
 
@@ -100,6 +101,7 @@ func runCommand(prog, cmd string, args []string) int {
 		Verbose:          *verbose,
 		Purge:            *purge,
 		SkipStart:        *skipStart,
+		BootstrapEtcd:    *bootstrapEtcd,
 	}
 
 	// If a package path is provided as a positional argument and no spec or staging
@@ -239,6 +241,8 @@ func printCommandUsage(w io.Writer, prog, cmd string) {
 	fmt.Fprintln(w, "  --verbose                print verbose logs")
 	fmt.Fprintln(w, "  --version string         globular version metadata")
 	fmt.Fprintln(w, "  --purge                  remove config/state dirs when uninstalling")
+	fmt.Fprintln(w, "  --skip-start             install and enable services but defer start to caller")
+	fmt.Fprintln(w, "  --bootstrap-etcd string  etcd endpoint of bootstrap node for Day-1 cluster join")
 	fmt.Fprintln(w, "  --help, -h               show this help")
 
 	fmt.Fprintln(w)

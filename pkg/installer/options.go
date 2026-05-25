@@ -24,6 +24,10 @@ type Options struct {
 	// but the service started by the join script at a controlled point (e.g.
 	// after writing a config file the service needs, like etcd.yaml).
 	SkipStart bool
+	// BootstrapEtcd is the etcd endpoint of the founding cluster node, used by
+	// the etcd_join spec step to perform the Day-1 cluster join protocol.
+	// Empty string means Day-0 (single-node bootstrap) — the etcd_join step is skipped.
+	BootstrapEtcd string
 }
 
 func (o Options) Normalized() Options {
@@ -38,5 +42,6 @@ func (o Options) Normalized() Options {
 	o.StagingDir = strings.TrimSpace(o.StagingDir)
 	o.SpecPath = strings.TrimSpace(o.SpecPath)
 	o.SpecInline = strings.TrimSpace(o.SpecInline)
+	o.BootstrapEtcd = strings.TrimSpace(o.BootstrapEtcd)
 	return o
 }
