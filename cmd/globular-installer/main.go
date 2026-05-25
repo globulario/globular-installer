@@ -10,7 +10,7 @@ import (
 	"github.com/globulario/globular-installer/pkg/installer"
 )
 
-var availableCommands = []string{"install", "doctor", "status", "uninstall"}
+var availableCommands = []string{"install", "fetch", "doctor", "status", "uninstall"}
 
 func main() {
 	os.Exit(run(os.Args))
@@ -36,6 +36,8 @@ func run(args []string) int {
 	switch cmd {
 	case "install", "doctor", "status", "uninstall":
 		return runCommand(prog, cmd, args[2:])
+	case "fetch":
+		return runFetch(prog, args[2:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q\n", cmd)
 		usageWithName(os.Stderr, prog)
@@ -142,6 +144,59 @@ func runCommand(prog, cmd string, args []string) int {
 	}
 
 	return 0
+}
+
+func runFetch(prog string, args []string) int {
+	fs := flag.NewFlagSet("fetch", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	gateway := fs.String("gateway", "", "gateway base URL (e.g. https://10.0.0.63:8443)")
+	caCert := fs.String("ca-cert", "", "path to CA certificate for TLS verification")
+	dest := fs.String("dest", "/var/lib/globular/packages", "destination directory for downloaded packages")
+	verbose := fs.Bool("verbose", false, "print each file downloaded")
+	help := fs.Bool("help", false, "show help")
+	helpShort := fs.Bool("h", false, "show help")
+
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		printFetchUsage(os.Stderr, prog)
+		return 2
+	}
+	if *help || *helpShort {
+		printFetchUsage(os.Stdout, prog)
+		return 0
+	}
+	if strings.TrimSpace(*gateway) == "" {
+		fmt.Fprintln(os.Stderr, "error: --gateway is required")
+		printFetchUsage(os.Stderr, prog)
+		return 2
+	}
+
+	log := func(msg string) {
+		if *verbose {
+			fmt.Println(msg)
+		}
+	}
+
+	files, err := installer.FetchPackagesFromGateway(*gateway, *caCert, *dest, log)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(os.Stdout, "fetched %d package(s) to %s\n", len(files), *dest)
+	return 0
+}
+
+func printFetchUsage(w io.Writer, prog string) {
+	fmt.Fprintf(w, "usage: %s fetch [flags]\n\n", prog)
+	fmt.Fprintln(w, "Flags:")
+	fmt.Fprintln(w, "  --gateway string   gateway base URL (required, e.g. https://10.0.0.63:8443)")
+	fmt.Fprintln(w, "  --ca-cert string   path to CA certificate for TLS verification")
+	fmt.Fprintln(w, "  --dest string      destination directory (default: /var/lib/globular/packages)")
+	fmt.Fprintln(w, "  --verbose          print each file downloaded")
+	fmt.Fprintln(w, "  --help, -h         show this help")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Example:")
+	fmt.Fprintf(w, "  %s fetch --gateway https://10.0.0.63:8443 --ca-cert /var/lib/globular/pki/ca.crt\n", prog)
 }
 
 func usageWithName(w io.Writer, prog string) {
