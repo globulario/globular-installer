@@ -72,6 +72,65 @@ func FetchPackagesFromGateway(gatewayURL, caCertPath, destDir string, log func(s
 	return result, nil
 }
 
+// FetchWorkflowsFromGateway downloads all workflow YAML files listed at
+// ${gatewayURL}/join/workflows/ into destDir.  Files already present are
+// skipped (idempotent).
+func FetchWorkflowsFromGateway(gatewayURL, caCertPath, destDir string, log func(string)) ([]string, error) {
+	if log == nil {
+		log = func(string) {}
+	}
+	client, err := newGatewayHTTPClient(caCertPath)
+	if err != nil {
+		return nil, fmt.Errorf("build HTTP client: %w", err)
+	}
+
+	listURL := strings.TrimRight(gatewayURL, "/") + "/join/workflows/"
+	log("listing workflows from " + listURL)
+	resp, err := client.Get(listURL)
+	if err != nil {
+		return nil, fmt.Errorf("list workflows: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("list workflows: HTTP %d from %s", resp.StatusCode, listURL)
+	}
+
+	var names []string
+	if err := json.NewDecoder(resp.Body).Decode(&names); err != nil {
+		return nil, fmt.Errorf("decode workflow list: %w", err)
+	}
+	if len(names) == 0 {
+		log("gateway returned empty workflow list")
+		return nil, nil
+	}
+
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		return nil, fmt.Errorf("create dest dir %s: %w", destDir, err)
+	}
+
+	var result []string
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		dest := filepath.Join(destDir, name)
+		if _, err := os.Stat(dest); err == nil {
+			log("  " + name + " already present — skip")
+			result = append(result, dest)
+			continue
+		}
+		fileURL := strings.TrimRight(gatewayURL, "/") + "/join/workflows/" + name
+		log("  downloading " + name + "...")
+		if err := gatewayDownloadFile(client, fileURL, dest); err != nil {
+			return nil, fmt.Errorf("download %s: %w", name, err)
+		}
+		log("  " + name + " done")
+		result = append(result, dest)
+	}
+	return result, nil
+}
+
 func newGatewayHTTPClient(caCertPath string) (*http.Client, error) {
 	tlsCfg := &tls.Config{}
 	if caCertPath != "" {

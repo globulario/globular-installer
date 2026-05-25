@@ -152,6 +152,7 @@ func runFetch(prog string, args []string) int {
 	gateway := fs.String("gateway", "", "gateway base URL (e.g. https://10.0.0.63:8443)")
 	caCert := fs.String("ca-cert", "", "path to CA certificate for TLS verification")
 	dest := fs.String("dest", "/var/lib/globular/packages", "destination directory for downloaded packages")
+	workflowsDir := fs.String("workflows-dir", "", "destination directory for workflow definitions (skipped if empty)")
 	verbose := fs.Bool("verbose", false, "print each file downloaded")
 	help := fs.Bool("help", false, "show help")
 	helpShort := fs.Bool("h", false, "show help")
@@ -171,17 +172,30 @@ func runFetch(prog string, args []string) int {
 		return 2
 	}
 
-	log := func(msg string) {
+	logFn := func(msg string) {
 		if *verbose {
 			fmt.Println(msg)
 		}
 	}
 
-	files, err := installer.FetchPackagesFromGateway(*gateway, *caCert, *dest, log)
+	total := 0
+
+	if wdir := strings.TrimSpace(*workflowsDir); wdir != "" {
+		files, err := installer.FetchWorkflowsFromGateway(*gateway, *caCert, wdir, logFn)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error fetching workflows: %v\n", err)
+			return 1
+		}
+		total += len(files)
+		fmt.Fprintf(os.Stdout, "fetched %d workflow(s) to %s\n", len(files), wdir)
+	}
+
+	files, err := installer.FetchPackagesFromGateway(*gateway, *caCert, *dest, logFn)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "error fetching packages: %v\n", err)
 		return 1
 	}
+	total += len(files)
 	fmt.Fprintf(os.Stdout, "fetched %d package(s) to %s\n", len(files), *dest)
 	return 0
 }
@@ -189,14 +203,15 @@ func runFetch(prog string, args []string) int {
 func printFetchUsage(w io.Writer, prog string) {
 	fmt.Fprintf(w, "usage: %s fetch [flags]\n\n", prog)
 	fmt.Fprintln(w, "Flags:")
-	fmt.Fprintln(w, "  --gateway string   gateway base URL (required, e.g. https://10.0.0.63:8443)")
-	fmt.Fprintln(w, "  --ca-cert string   path to CA certificate for TLS verification")
-	fmt.Fprintln(w, "  --dest string      destination directory (default: /var/lib/globular/packages)")
-	fmt.Fprintln(w, "  --verbose          print each file downloaded")
-	fmt.Fprintln(w, "  --help, -h         show this help")
+	fmt.Fprintln(w, "  --gateway string        gateway base URL (required, e.g. https://10.0.0.63:8443)")
+	fmt.Fprintln(w, "  --ca-cert string        path to CA certificate for TLS verification")
+	fmt.Fprintln(w, "  --dest string           destination for packages (default: /var/lib/globular/packages)")
+	fmt.Fprintln(w, "  --workflows-dir string  destination for workflow YAMLs (skipped if empty)")
+	fmt.Fprintln(w, "  --verbose               print each file downloaded")
+	fmt.Fprintln(w, "  --help, -h              show this help")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Example:")
-	fmt.Fprintf(w, "  %s fetch --gateway https://10.0.0.63:8443 --ca-cert /var/lib/globular/pki/ca.crt\n", prog)
+	fmt.Fprintf(w, "  %s fetch --gateway https://10.0.0.63:8443 --ca-cert /var/lib/globular/pki/ca.crt --workflows-dir /var/lib/globular/workflows\n", prog)
 }
 
 func usageWithName(w io.Writer, prog string) {
