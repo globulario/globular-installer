@@ -68,6 +68,12 @@ func (s *StartServicesStep) Apply(ctx *Context) error {
 	if ctx == nil {
 		return fmt.Errorf("nil context")
 	}
+	if ctx.SkipStart {
+		if ctx.Logger != nil {
+			ctx.Logger.Infof("skip-start: skipping start_services step (unit files installed, service start deferred to caller)")
+		}
+		return nil
+	}
 	if ctx.Platform == nil {
 		return fmt.Errorf("nil platform")
 	}

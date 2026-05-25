@@ -63,6 +63,7 @@ func runCommand(prog, cmd string, args []string) int {
 	nonInteractive := fs.Bool("non-interactive", false, "run without prompts")
 	verbose := fs.Bool("verbose", false, "enable verbose logging")
 	version := fs.String("version", "", "globular version being installed")
+	skipStart := fs.Bool("skip-start", false, "install unit files and enable services but do not start them (defers start to caller)")
 	help := fs.Bool("help", false, "show help")
 	helpShort := fs.Bool("h", false, "show help")
 
@@ -96,6 +97,7 @@ func runCommand(prog, cmd string, args []string) int {
 		NonInteractive:   *nonInteractive,
 		Verbose:          *verbose,
 		Purge:            *purge,
+		SkipStart:        *skipStart,
 	}
 
 	// If a package path is provided as a positional argument and no spec or staging

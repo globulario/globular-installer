@@ -19,6 +19,11 @@ type Options struct {
 	SpecPath         string
 	SpecInline       string
 	Purge            bool
+	// SkipStart suppresses start_services and health_checks steps.
+	// Use during Day-1 join when you want the unit file installed and enabled
+	// but the service started by the join script at a controlled point (e.g.
+	// after writing a config file the service needs, like etcd.yaml).
+	SkipStart bool
 }
 
 func (o Options) Normalized() Options {

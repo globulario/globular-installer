@@ -55,6 +55,7 @@ type Context struct {
 	ManifestPath   string
 	Purge          bool
 	Ports          *PortAllocator
+	SkipStart      bool
 }
 
 func (c *Context) PlatformBackend() platform.Platform {
@@ -254,6 +255,7 @@ func NewContext(opts Options) (*Context, error) {
 		Manifest:       m,
 		ManifestPath:   mpath,
 		Purge:          opts.Purge,
+		SkipStart:      opts.SkipStart,
 	}
 
 	if logger != nil {
