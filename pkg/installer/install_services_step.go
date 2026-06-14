@@ -117,5 +117,54 @@ func (s *InstallServicesStep) Apply(ctx *Context) error {
 }
 
 func (s *InstallServicesStep) unitsToInstall(ctx *Context) []platform.FileSpec {
-	return s.Units
+	out := make([]platform.FileSpec, len(s.Units))
+	for i, u := range s.Units {
+		out[i] = u
+		out[i].Data = normalizeWorkingDirectory(u.Data)
+	}
+	return out
 }
+
+// normalizeWorkingDirectory rewrites bare WorkingDirectory= lines that
+// target /var/lib/globular/ so they use the optional '-' prefix. systemd
+// evaluates WorkingDirectory before ExecStartPre, so a missing dir causes
+// status=200/CHDIR. The '-' prefix makes it optional.
+//
+// This must match the node-agent's normalizeUnitWorkingDirectory (in
+// golang/systemdutil/working_directory.go) so that the Day-0 installer
+// and the reconciler produce identical unit files. A mismatch causes
+// permanent unit_file_drift findings.
+func normalizeWorkingDirectory(content []byte) []byte {
+	const stateRoot = "/var/lib/globular/"
+	lines := bytes.Split(content, []byte{'\n'})
+	changed := false
+	for i, line := range lines {
+		trimmed := bytes.TrimLeft(line, " \t")
+		if len(trimmed) == 0 || trimmed[0] == '#' || trimmed[0] == ';' {
+			continue
+		}
+		key := []byte("WorkingDirectory=")
+		if !bytes.HasPrefix(trimmed, key) {
+			continue
+		}
+		val := bytes.TrimPrefix(trimmed, key)
+		if len(val) > 0 && val[0] == '-' {
+			continue
+		}
+		if !bytes.HasPrefix(val, []byte(stateRoot)) {
+			continue
+		}
+		leadLen := len(line) - len(trimmed)
+		newLine := make([]byte, 0, leadLen+len("WorkingDirectory=-")+len(val))
+		newLine = append(newLine, line[:leadLen]...)
+		newLine = append(newLine, []byte("WorkingDirectory=-")...)
+		newLine = append(newLine, val...)
+		lines[i] = newLine
+		changed = true
+	}
+	if !changed {
+		return content
+	}
+	return bytes.Join(lines, []byte{'\n'})
+}
+

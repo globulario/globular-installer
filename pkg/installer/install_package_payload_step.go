@@ -387,6 +387,12 @@ func collectServiceUnitSpecs(systemdDir, destRoot string, ctx *Context) ([]platf
 			}
 			expandedData = []byte(expanded)
 		}
+		// Normalize WorkingDirectory= lines so the installer produces
+		// the same unit content as the node-agent's service.install_payload
+		// action. Without this, Day-0 installs produce a bare WD while
+		// reconciler re-installs add the '-' prefix, causing permanent
+		// unit_file_drift.
+		expandedData = normalizeWorkingDirectory(expandedData)
 		specs = append(specs, platform.FileSpec{
 			Path:   filepath.Join(destRoot, name),
 			Data:   expandedData,
