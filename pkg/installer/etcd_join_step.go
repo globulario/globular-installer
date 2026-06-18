@@ -197,6 +197,11 @@ func (s *EtcdJoinStep) Apply(ctx *Context) error {
 	// [5.4] Write etcd.yaml with initial-cluster-state: existing.
 	// INVARIANT: initial-cluster-state MUST be "existing" for Day-1 joins.
 	// Writing "new" on a joining node forks the etcd cluster and destroys quorum.
+	// INVARIANT: initial-cluster-token below is the fixed bootstrap constant
+	// "globular-etcd-cluster" — it MUST stay in sync with services'
+	// config.EtcdClusterToken. Do NOT derive it from cluster_id: the token is
+	// bootstrap-immutable, so a derived value forks joining members onto a
+	// separate cluster the moment cluster_id differs from the bootstrap value.
 	logf("[5.4] Writing %s (initial-cluster-state: existing)...", yamlPath)
 	etcdDataDir := filepath.Join(ctx.StateDir, "etcd")
 	etcdYAML := fmt.Sprintf(`name: %q
