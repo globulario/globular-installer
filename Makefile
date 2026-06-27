@@ -13,8 +13,12 @@ BUNDLE_BINS ?= gateway xds
 INFRA_SPEC_DIR ?= $(CURDIR)/../packages/specs
 SERVICE_SPEC_DIR ?= $(CURDIR)/../services/generated/specs
 SPEC_DEST_DIR ?= $(CURDIR)/internal/specs
+# registry.yaml is the single AUTHOR of package kind. check-specs verifies the
+# installer's synced spec kinds directly against it (not only byte-identity to the
+# intermediate source specs) — see services repo docs/design/package-classification-single-source.md.
+REGISTRY ?= $(CURDIR)/../packages/registry.yaml
 
-.PHONY: all build test fmt tidy clean ensure-cache bin bundle bundle-stage sync-specs check-specs
+.PHONY: all build test fmt tidy clean ensure-cache bin bundle bundle-stage sync-specs check-specs check-spec-kinds
 
 all: build
 
@@ -102,3 +106,26 @@ check-specs:
 		exit 1; \
 	fi; \
 	echo "check-specs: all installer specs are up to date"
+
+# check-spec-kinds verifies the installer's embedded spec kinds directly against
+# registry.yaml — the single AUTHOR of package kind (services repo
+# docs/design/package-classification-single-source.md). This is a direct author check,
+# independent of check-specs' byte-identity-to-source check, so a wrong kind can't ride
+# in even if the intermediate source spec drifted. SKIPs when registry.yaml is absent
+# (sibling packages repo not checked out).
+check-spec-kinds:
+	@if [ -f "$(REGISTRY)" ]; then \
+		kdrift=0; \
+		for dest in "$(SPEC_DEST_DIR)"/*_service.yaml; do \
+			[ -f "$$dest" ] || continue; \
+			n=$$(basename "$$dest" | sed 's/_service\.yaml$$//' | tr '_' '-'); \
+			ik=$$(grep -E '^[[:space:]]{2}kind:' "$$dest" | head -1 | sed 's/.*kind:[[:space:]]*//' | tr -d '[:space:]'); \
+			[ -z "$$ik" ] && continue; \
+			rk=$$(python3 -c "import yaml; d=yaml.safe_load(open('$(REGISTRY)')); ps=d.get('packages',d) if isinstance(d,dict) else d; m=[p for p in ps if isinstance(p,dict) and p.get('name')=='$$n']; print(m[0].get('kind','') if m else '')" 2>/dev/null); \
+			if [ -n "$$rk" ] && [ "$$ik" != "$$rk" ]; then echo "KIND-DRIFT: $$n installer=$$ik registry=$$rk" >&2; kdrift=$$(( $$kdrift + 1 )); fi; \
+		done; \
+		if [ $$kdrift -gt 0 ]; then echo "ERROR: $$kdrift installer spec kind(s) disagree with registry.yaml (the single author)." >&2; exit 1; fi; \
+		echo "check-spec-kinds: installer spec kinds agree with registry.yaml"; \
+	else \
+		echo "check-spec-kinds: SKIP (registry.yaml not at $(REGISTRY))"; \
+	fi
