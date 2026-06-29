@@ -1,0 +1,30 @@
+id: installer.install_writes_are_atomic
+level: contract
+title: Installed binaries and payload files are written atomically
+intent: |
+  Installer writes that place binaries or package payload files under the target
+  prefix must avoid in-place partial writes. The write path must stage content
+  safely and move it into place only after the complete file is available.
+agent_guidance: |
+  Do not replace atomic write behavior with direct overwrite. If you add a new
+  install step that writes executable payload, use the same safe file placement
+  path as existing binary and package payload installs.
+bad_smells:
+  - executable overwritten in place
+  - partial payload left at final path after failure
+  - temp file created on a different filesystem from the final path
+activation_triggers:
+  - install files
+  - package payload
+  - binary install
+expressed_by:
+  - pkg/installer/install_files_step.go
+  - pkg/installer/install_package_payload_step.go
+  - pkg/platform/linux/filesystem.go
+related_invariants:
+  - installer.binary.replace.atomic
+status: active
+required_tests:
+  - pkg/platform/linux/filesystem_test.go:TestInstallFiles_ServiceUnitWritesSidecar
+  - pkg/installer/install_package_payload_step_test.go:TestInstallPackagePayloadInstallsFiles
+  - pkg/installer/stage_package_step_test.go:TestStagePackageSuccess
