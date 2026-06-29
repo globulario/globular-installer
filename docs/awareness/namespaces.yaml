@@ -1,0 +1,10 @@
+namespaces:
+  - id: globular.installer
+    label: Globular Installer
+    owns:
+      - cmd
+      - internal
+      - pkg
+      - scripts
+      - tests
+    description: Day-0 and package installer authority for filesystem, systemd, package payloads, embedded specs, and bootstrap scripts.
