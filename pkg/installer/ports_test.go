@@ -14,7 +14,7 @@ func TestPortAllocatorReservesUniqueAndSkipsInUse(t *testing.T) {
 	}
 	defer ln.Close()
 
-	pa, err := NewPortAllocator(base, base+2)
+	pa, err := NewPortAllocator(base, base+3)
 	if err != nil {
 		t.Fatalf("allocator init: %v", err)
 	}

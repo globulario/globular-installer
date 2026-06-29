@@ -24,6 +24,10 @@ invariants:
               - pkg/installer/
       forbidden_fixes:
           - no.apply.without.check
+      required_tests:
+          - TestInstallFilesStep_Check_FreshNode
+          - TestInstallPackagePayloadCheckConverges
+          - TestStartServicesStepCheckOKWhenActiveAndUnchanged
 
     - id: installer.manifest.written.after.full.success
       title: The install manifest must be written only after all steps succeed
@@ -42,6 +46,9 @@ invariants:
               - pkg/installer/
       forbidden_fixes:
           - no.manifest.on.partial.success
+      required_tests:
+          - TestStagePackageSuccess
+          - TestBuildInstallPlanWithDerivedDefaultSpec
 
     - id: installer.binary.replace.atomic
       title: Binary files must be replaced atomically via temp-file rename
@@ -59,6 +66,10 @@ invariants:
               - pkg/platform/linux/filesystem.go
       forbidden_fixes:
           - no.overwrite.binary.in.place
+      required_tests:
+          - TestInstallFiles_ServiceUnitWritesSidecar
+          - TestInstallPackagePayloadInstallsFiles
+          - TestStagePackageSuccess
 
     - id: installer.root.required
       title: All OS-mutating operations require root; no silent fallback to user-level
@@ -75,6 +86,9 @@ invariants:
               - pkg/installer/
       forbidden_fixes:
           - no.skip.root.check
+      required_tests:
+          - TestBuildInstallPlanWithDerivedDefaultSpec
+          - TestBuildUninstallPlanFromEnvoySpec
 
     - id: installer.purge.explicit.flag.only
       title: Destructive purge (deleting /var/lib/globular) requires an explicit --purge flag
@@ -93,10 +107,13 @@ invariants:
               - pkg/installer/
       forbidden_fixes:
           - no.purge.without.flag
+      required_tests:
+          - TestRunUninstallHelp
+          - TestBuildUninstallPlanFromEnvoySpec
 
     - id: installer.daemon.reload.before.start
       title: systemctl daemon-reload must be called after every unit file write before start/restart
-      severity: error
+      severity: high
       status: active
       # origin: { type: principle, confidence: high }
       summary: |
@@ -110,10 +127,14 @@ invariants:
               - pkg/installer/
       forbidden_fixes:
           - no.start.without.daemon.reload
+      required_tests:
+          - TestEnableServicesStep
+          - TestUninstallFilesDoesNotReload
+          - TestStartServicesStepDryRunNoRestartWhenActive
 
     - id: installer.dir.permissions.traversable
       title: /var/lib/globular directories must be world-traversable (0755), not 0750
-      severity: error
+      severity: high
       status: active
       # origin: { type: inferred_from_code, confidence: high }
       summary: |
@@ -125,10 +146,14 @@ invariants:
       protects:
           files:
               - pkg/platform/linux/filesystem.go
+      required_tests:
+          - TestEnsureDirs_SharedRootStays0755
+          - TestEnsureDirs_PrivateSubdir0750Preserved
+          - TestEnsureDirs_RepeatedInstallPreserves0755
 
     - id: installer.fetch.checksum.required
       title: Network-fetched files must be checksum-verified before use
-      severity: error
+      severity: high
       status: active
       # origin: { type: principle, confidence: high }
       summary: |
@@ -143,10 +168,13 @@ invariants:
               - pkg/installer/
       forbidden_fixes:
           - no.swallow.fetch.error
+      required_tests:
+          - TestStagePackageRejectsTraversal
+          - TestStagePackagePlatformMismatch
 
     - id: installer.no.hardcoded.uid
       title: Never hardcode a UID or GID; always resolve by name
-      severity: error
+      severity: high
       status: active
       # origin: { type: principle, confidence: high }
       summary: |
@@ -159,10 +187,13 @@ invariants:
               - pkg/platform/linux/users.go
       forbidden_fixes:
           - no.hardcoded.uid
+      required_tests:
+          - TestEnsureDirs_SharedRootStays0755
+          - TestEnsureDirs_PrivateSubdir0750Preserved
 
     - id: installer.spec.validated.before.plan
       title: Install specs must be validated before plan construction begins
-      severity: error
+      severity: high
       status: active
       # origin: { type: inferred_from_code, confidence: medium, status: candidate }
       summary: |
@@ -175,3 +206,7 @@ invariants:
           files:
               - pkg/installer/spec/
               - pkg/installer/
+      required_tests:
+          - TestLoadInlineWithModeHandlesMissingKeys
+          - TestBuildInstallPlanWithDerivedDefaultSpec
+          - TestRbacSpecIncludesPayloadBeforeService

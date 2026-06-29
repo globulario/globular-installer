@@ -1,0 +1,22 @@
+files:
+  - cmd/globular-installer/main.go
+  - pkg/installer/
+  - pkg/installer/manifest/manifest.go
+  - pkg/installer/spec/
+  - pkg/installer/specplan_builder.go
+  - pkg/installer/runner.go
+  - pkg/installer/install_binaries_step.go
+  - pkg/installer/install_files_step.go
+  - pkg/installer/install_package_payload_step.go
+  - pkg/installer/install_services_step.go
+  - pkg/installer/start_services_step.go
+  - pkg/installer/stop_services_step.go
+  - pkg/installer/uninstall_files_step.go
+  - pkg/installer/uninstall_services_step.go
+  - pkg/platform/linux/filesystem.go
+  - pkg/platform/linux/systemd.go
+  - pkg/platform/linux/users.go
+  - scripts/install-day0.sh
+  - scripts/uninstall-day0.sh
+  - scripts/clean-node.sh
+  - scripts/force-cleanup.sh

@@ -94,7 +94,7 @@ func TestRbacSpecIncludesPayloadBeforeService(t *testing.T) {
 		}
 		return -1
 	}
-	payloadIdx := find("install-rbac-binary")
+	payloadIdx := find("install-rbac-payload")
 	configIdx := find("ensure-rbac-config")
 	serviceIdx := find("install-rbac-service")
 	if payloadIdx == -1 || serviceIdx == -1 || configIdx == -1 {

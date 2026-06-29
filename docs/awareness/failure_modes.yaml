@@ -45,7 +45,7 @@ failure_modes:
 
     - id: fm.stale.unit.on.start
       title: Service started with old unit definition because daemon-reload was skipped
-      severity: error
+      severity: high
       # origin: { type: principle, confidence: high }
       root_cause: |
           When a unit file is written to /etc/systemd/system/ and systemctl start
@@ -101,7 +101,7 @@ failure_modes:
 
     - id: fm.uid.collision
       title: Hardcoded UID for globular user collides with existing system account
-      severity: error
+      severity: high
       # origin: { type: principle, confidence: high }
       root_cause: |
           If the installer creates the globular user with a hardcoded UID (e.g., 999),
@@ -118,7 +118,7 @@ failure_modes:
 
     - id: fm.spec.stale.at.release
       title: Embedded specs out of sync with packaged services — make check-specs not run
-      severity: error
+      severity: high
       # origin: { type: inferred_from_code, confidence: medium, status: candidate }
       root_cause: |
           The installer embeds YAML specs from internal/specs/. These specs are
