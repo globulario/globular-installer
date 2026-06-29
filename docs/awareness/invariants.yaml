@@ -210,3 +210,27 @@ invariants:
           - TestLoadInlineWithModeHandlesMissingKeys
           - TestBuildInstallPlanWithDerivedDefaultSpec
           - TestRbacSpecIncludesPayloadBeforeService
+
+    - id: installer.service.config.ports.allocator_owned
+      title: Generated service config ports must be allocator-owned and in range
+      severity: high
+      status: active
+      # origin: { type: inferred_from_code, confidence: high }
+      summary: |
+          EnsureServiceConfigStep generates or repairs JSON service configs from
+          each binary's --describe output. A config whose Address port is already
+          inside the installer-managed range must be preserved. Missing, malformed,
+          or out-of-range ports must be repaired through the shared PortAllocator,
+          never by hardcoded per-service literals, so generated configs do not
+          collide or drift across repeated installs.
+      protects:
+          files:
+              - pkg/installer/ensure_service_config_step.go
+              - pkg/installer/ports.go
+      forbidden_fixes:
+          - no.hardcoded.service.config.port
+      required_tests:
+          - TestEnsureServiceConfig_ApplyWritesConfigInRange
+          - TestEnsureServiceConfig_CheckDetectsOutOfRange
+          - TestEnsureServiceConfig_ApplyKeepsExistingInRange
+          - TestPortAllocatorReservesUniqueAndSkipsInUse

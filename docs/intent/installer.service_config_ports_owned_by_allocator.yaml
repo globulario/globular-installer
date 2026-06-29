@@ -22,7 +22,7 @@ expressed_by:
   - pkg/installer/ensure_service_config_step.go
   - pkg/installer/ports.go
 related_invariants:
-  - installer.spec.validated.before.plan
+  - installer.service.config.ports.allocator_owned
 status: active
 required_tests:
   - pkg/installer/ensure_service_config_step_test.go:TestEnsureServiceConfig_ApplyWritesConfigInRange
