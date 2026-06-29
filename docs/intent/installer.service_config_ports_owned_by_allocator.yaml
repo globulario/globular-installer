@@ -1,0 +1,31 @@
+id: installer.service_config_ports_owned_by_allocator
+level: contract
+title: Generated service config ports are owned by the installer allocator
+intent: |
+  EnsureServiceConfigStep must preserve an existing service config when its
+  address port is already inside the installer-managed range. Missing,
+  malformed, or out-of-range ports must be repaired through the shared port
+  allocator so generated configs do not collide.
+agent_guidance: |
+  Do not hardcode service config ports in the step. Keep all generated or
+  repaired ports inside the allocator range, and preserve valid existing config
+  values instead of rewriting them unnecessarily.
+bad_smells:
+  - fixed service config port literal
+  - valid in-range config rewritten on every run
+  - out-of-range address accepted as converged
+activation_triggers:
+  - service config
+  - port allocator
+  - --describe
+expressed_by:
+  - pkg/installer/ensure_service_config_step.go
+  - pkg/installer/ports.go
+related_invariants:
+  - installer.spec.validated.before.plan
+status: active
+required_tests:
+  - pkg/installer/ensure_service_config_step_test.go:TestEnsureServiceConfig_ApplyWritesConfigInRange
+  - pkg/installer/ensure_service_config_step_test.go:TestEnsureServiceConfig_CheckDetectsOutOfRange
+  - pkg/installer/ensure_service_config_step_test.go:TestEnsureServiceConfig_ApplyKeepsExistingInRange
+  - pkg/installer/ports_test.go:TestPortAllocatorReservesUniqueAndSkipsInUse

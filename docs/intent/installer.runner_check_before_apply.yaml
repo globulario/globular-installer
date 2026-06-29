@@ -1,0 +1,30 @@
+id: installer.runner_check_before_apply
+level: contract
+title: Installer steps check current state before applying mutations
+intent: |
+  The runner must call Check for every step before Apply. Apply may run only
+  when the runner is in apply mode, the step reports StatusNeedsApply, and the
+  context is not dry-run. After Apply, the runner must re-check convergence and
+  fail the plan if the step still needs apply.
+agent_guidance: |
+  Preserve the Check/Apply ordering when changing runner control flow. Do not
+  add step execution paths that mutate state without a preceding Check result,
+  and do not treat a non-converged Apply as success.
+bad_smells:
+  - Apply called before Check
+  - dry-run applies a mutating step
+  - Apply success accepted without a convergence re-check
+activation_triggers:
+  - runner
+  - step execution
+  - dry-run
+expressed_by:
+  - pkg/installer/runner.go
+  - pkg/installer/step.go
+related_invariants:
+  - installer.check.before.apply
+status: active
+required_tests:
+  - pkg/installer/install_files_step_test.go:TestInstallFilesStep_Check_FreshNode
+  - pkg/installer/install_package_payload_step_test.go:TestInstallPackagePayloadCheckConverges
+  - pkg/installer/start_services_step_test.go:TestStartServicesStepCheckOKWhenActiveAndUnchanged

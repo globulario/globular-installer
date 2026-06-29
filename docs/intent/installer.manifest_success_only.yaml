@@ -1,0 +1,29 @@
+id: installer.manifest_success_only
+level: contract
+title: The install manifest represents a fully successful install only
+intent: |
+  The install manifest is a success receipt. It must be written only after the
+  install plan has completed successfully, because future runs use it as proof
+  that installed files and services reached their intended state.
+agent_guidance: |
+  If you change manifest writing or plan completion behavior, keep manifest
+  persistence after full plan success. Never write a manifest for a partial or
+  failed install.
+bad_smells:
+  - manifest written before all install steps complete
+  - failed plan leaves a success manifest
+  - manifest used to skip steps that never ran
+activation_triggers:
+  - install manifest
+  - plan success
+  - stage package
+expressed_by:
+  - pkg/installer/manifest/manifest.go
+  - pkg/installer/stage_package_step.go
+  - pkg/installer/specplan_builder.go
+related_invariants:
+  - installer.manifest.written.after.full.success
+status: active
+required_tests:
+  - pkg/installer/stage_package_step_test.go:TestStagePackageSuccess
+  - pkg/installer/package_derive_test.go:TestBuildInstallPlanWithDerivedDefaultSpec

@@ -1,0 +1,29 @@
+id: installer.purge_requires_explicit_flag
+level: contract
+title: Purge is destructive and requires explicit operator intent
+intent: |
+  Uninstall without purge must remove installed units and binaries while
+  preserving cluster state. Deleting state under the Globular state directory is
+  permitted only when the operator explicitly selected purge mode.
+agent_guidance: |
+  Treat purge as a separate destructive path. Do not merge soft uninstall and
+  purge behavior, and do not infer purge from unrelated failures or cleanup
+  attempts.
+bad_smells:
+  - uninstall deletes state without purge
+  - cleanup error triggers implicit purge
+  - --purge help text no longer makes destruction explicit
+activation_triggers:
+  - uninstall
+  - purge
+  - state directory
+expressed_by:
+  - cmd/globular-installer/main.go
+  - pkg/installer/specplan_builder.go
+  - pkg/installer/uninstall_files_step.go
+related_invariants:
+  - installer.purge.explicit.flag.only
+status: active
+required_tests:
+  - cmd/globular-installer/main_test.go:TestRunUninstallHelp
+  - pkg/installer/specplan_builder_test.go:TestBuildUninstallPlanFromEnvoySpec

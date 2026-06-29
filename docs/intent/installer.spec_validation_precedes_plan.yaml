@@ -1,0 +1,30 @@
+id: installer.spec_validation_precedes_plan
+level: contract
+title: Specs are validated before installer plans are built
+intent: |
+  A parsed install spec must pass structural validation before BuildInstallPlan
+  constructs steps. Unknown step types, missing required parameters, or invalid
+  package/service definitions must fail before any executable plan is returned.
+agent_guidance: |
+  Keep validation ahead of plan construction. Do not silently skip invalid spec
+  entries, and do not turn spec validation failures into best-effort warnings on
+  mutating install paths.
+bad_smells:
+  - invalid spec produces a partial plan
+  - unknown step type ignored
+  - required parameter defaulted silently when mutation depends on it
+activation_triggers:
+  - spec load
+  - plan builder
+  - embedded specs
+expressed_by:
+  - pkg/installer/spec/load.go
+  - pkg/installer/spec/model.go
+  - pkg/installer/specplan_builder.go
+related_invariants:
+  - installer.spec.validated.before.plan
+status: active
+required_tests:
+  - pkg/installer/spec/load_test.go:TestLoadInlineWithModeHandlesMissingKeys
+  - pkg/installer/package_derive_test.go:TestBuildInstallPlanWithDerivedDefaultSpec
+  - pkg/installer/specplan_builder_test.go:TestRbacSpecIncludesPayloadBeforeService
