@@ -370,11 +370,16 @@ echo "[bootstrap-dns] Node IP: $NODE_IP"
 echo "[bootstrap-dns] Waiting for ScyllaDB to accept writes..."
 _SCYLLA_READY=0
 for _si in $(seq 1 60); do
-    if cqlsh "${NODE_IP}" 9042 --ssl \
-        --ssl-ca-certs "${STATE_DIR}/pki/ca.crt" \
-        --ssl-certfile "${STATE_DIR}/pki/issued/services/service.crt" \
-        --ssl-keyfile  "${STATE_DIR}/pki/issued/services/service.key" \
-        -e "SELECT now() FROM system.local;" >/dev/null 2>&1; then
+    # Plain cqlsh over the native transport. cqlsh has NO --ssl-ca-certs /
+    # --ssl-certfile / --ssl-keyfile options (SSL is configured via cqlshrc),
+    # so the previous invocation errored ("no such option") on every iteration
+    # and always burned the full 60s. A CREATE/DROP KEYSPACE round-trip proves
+    # write readiness (not just reads), mirroring install-day0's working probe.
+    if cqlsh "${NODE_IP}" 9042 <<'CQL' &>/dev/null
+CREATE KEYSPACE IF NOT EXISTS globular_dns_probe WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};
+DROP KEYSPACE IF EXISTS globular_dns_probe;
+CQL
+    then
         _SCYLLA_READY=1
         echo "[bootstrap-dns] ✓ ScyllaDB ready (after ${_si}s)"
         break

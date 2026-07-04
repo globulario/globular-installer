@@ -45,7 +45,7 @@ failure_modes:
 
     - id: fm.stale.unit.on.start
       title: Service started with old unit definition because daemon-reload was skipped
-      severity: error
+      severity: high
       # origin: { type: principle, confidence: high }
       root_cause: |
           When a unit file is written to /etc/systemd/system/ and systemctl start
@@ -101,7 +101,7 @@ failure_modes:
 
     - id: fm.uid.collision
       title: Hardcoded UID for globular user collides with existing system account
-      severity: error
+      severity: high
       # origin: { type: principle, confidence: high }
       root_cause: |
           If the installer creates the globular user with a hardcoded UID (e.g., 999),
@@ -118,15 +118,16 @@ failure_modes:
 
     - id: fm.spec.stale.at.release
       title: Embedded specs out of sync with packaged services — make check-specs not run
-      severity: error
+      severity: high
       # origin: { type: inferred_from_code, confidence: medium, status: candidate }
       root_cause: |
-          The installer embeds YAML specs from internal/specs/. These specs are
-          generated from the services package manifests via make sync-specs. If
-          check-specs is not run in CI before release, the embedded specs can be
-          stale: wrong binary paths, wrong port assignments, or missing new services.
-          The installer applies the stale spec without error; services start on the
-          wrong port or not at all.
+          The installer embeds YAML specs from internal/packagecatalog/specs/. These specs are
+          regenerated from the registry-backed package metadata tree
+          (packages/metadata/<name>/specs/) via make sync-specs. If sync/check is
+          skipped before release, or if obsolete specs are left in internal/packagecatalog/specs/,
+          the embedded specs can be stale: wrong binary paths, wrong port
+          assignments, or packages that no longer exist. The installer applies the
+          stale spec without error; services start on the wrong port or not at all.
       symptoms:
           - installed services report wrong port in globular service discovery
           - new services added to packages/ not present in installer spec

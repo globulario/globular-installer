@@ -1,0 +1,7 @@
+{
+  "schema": "globular.packagecatalog.mirror/v1",
+  "source": "packages/registry.yaml",
+  "mirror_dir": "globular-installer/internal/packagecatalog/specs",
+  "registry_sha256": "e399f1892c175aaba56900937c8325f64b69a683b31d6fd80b9ff216ba0ef05b",
+  "package_count": 45
+}

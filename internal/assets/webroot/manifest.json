@@ -1,0 +1,11 @@
+{
+  "schema": "globular.webroot.mirror/v1",
+  "source": "services/webroot",
+  "mirror_dir": "globular-installer/internal/assets/webroot",
+  "source_sha256": "faa799a7d94f2b0b0e83a3d9ee642aeb77eb10c4c819d5f13f44d10f325e58ee",
+  "files": {
+    "index.html": "6a6a0a2396b156a516c0cb7c5775a9511bec72134c2b3f42cb8584758afe8b51",
+    "logo.png": "41eef97a44e26b3ab509dde30b6a6155807dd436c7b69abb3493c8455af331ec",
+    "style.css": "ae3066ca0df026fd3c7c9e0acff55494099cae6313205e481f4d9e77d960ccc5"
+  }
+}

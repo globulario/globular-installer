@@ -29,6 +29,9 @@ func (s *HealthChecksStep) Check(ctx *Context) (StepStatus, error) {
 	if ctx == nil {
 		return StatusUnknown, fmt.Errorf("nil context")
 	}
+	if ctx.SkipStart {
+		return StatusSkipped, nil
+	}
 	if ctx.DryRun {
 		// In dry-run we do not require real services to be running.
 		return StatusSkipped, nil

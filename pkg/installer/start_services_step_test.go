@@ -11,6 +11,17 @@ import (
 	"github.com/globulario/globular-installer/pkg/platform"
 )
 
+func TestStartServicesStepCheckSkippedWhenStartDeferred(t *testing.T) {
+	step := &StartServicesStep{Services: []string{"globular-minio.service"}}
+	status, err := step.Check(&Context{SkipStart: true})
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if status != StatusSkipped {
+		t.Fatalf("expected StatusSkipped when SkipStart defers service start, got %v", status)
+	}
+}
+
 func TestStartServicesStepAutoHealsPortClash(t *testing.T) {
 	tmp := t.TempDir()
 	clashPort := 61001

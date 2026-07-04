@@ -16,7 +16,7 @@ authorities:
       - which OS packages to install
       - which users/groups to create
       - which directories and files to ensure
-    source: YAML spec files (--spec flag or internal/specs/*.yaml embedded assets)
+    source: YAML spec files (--spec flag or internal/packagecatalog/specs/*.yaml embedded mirror)
     must_not_infer:
       - desired state from the current filesystem (filesystem = installed state, not desired)
       - desired state from a running service's reported version

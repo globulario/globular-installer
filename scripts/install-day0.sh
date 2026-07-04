@@ -25,8 +25,9 @@ INSTALLER_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 STATE_DIR="/var/lib/globular"
 PKG_DIR="$INSTALLER_ROOT/internal/assets/packages"
 
-# Respect INSTALLER_BIN if already set by a parent script (e.g. install.sh in the
-# release tarball places globular-installer at the tarball root, not in bin/).
+# Respect INSTALLER_BIN if already set by a parent wrapper. services/install.sh
+# is the release-tarball entrypoint; this script remains the Day-0 execution
+# authority and may run from either an extracted release bundle or the source tree.
 # Fall back to the dev/build layout, then PATH.
 if [[ -z "${INSTALLER_BIN:-}" ]] || [[ ! -x "${INSTALLER_BIN}" ]]; then
   INSTALLER_BIN="$INSTALLER_ROOT/bin/globular-installer"
@@ -945,8 +946,9 @@ install_list "${DATA_LAYER_PKGS[@]}"
 
 log_step "MinIO Bucket Setup"
 if [[ -x "$SCRIPT_DIR/setup-minio.sh" ]]; then
-  # Resolve webroot: bundled assets (webroot/ next to scripts/) take priority
-  # over an empty STATE_DIR/webroot. Pass inline to the subprocess — no export.
+  # Resolve webroot: authored release webroot bundled in the tarball takes
+  # priority. The source-tree installer may fall back to the generated mirror
+  # under internal/assets/webroot. Pass inline to the subprocess — no export.
   _BUNDLED_WEBROOT="$(dirname "$SCRIPT_DIR")/webroot"
   if [[ -d "$_BUNDLED_WEBROOT" ]]; then
     log_substep "Using bundled welcome page assets: $_BUNDLED_WEBROOT"
@@ -1668,7 +1670,9 @@ log_success "Day-0 join token provisioned"
 # ensures clean connectivity now that everything is stable.
 log_step "Final Service Stabilization"
 
-# Ensure webroot exists for the gateway welcome page.
+# Ensure webroot exists for the gateway welcome page. In release mode the
+# tarball-bundled webroot is authoritative; in source-tree mode only the
+# generated fallback mirror may be used here.
 if [[ -d "${SCRIPT_DIR}/../webroot" ]]; then
   mkdir -p /var/lib/globular/webroot
   cp -r "${SCRIPT_DIR}/../webroot/"* /var/lib/globular/webroot/ 2>/dev/null || true

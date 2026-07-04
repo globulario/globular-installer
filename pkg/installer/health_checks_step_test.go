@@ -48,6 +48,17 @@ func (p *healthPlatform) InstallFiles(ctx context.Context, files []platform.File
 }
 func (p *healthPlatform) ServiceManager() platform.ServiceManager { return p.sm }
 
+func TestHealthChecksCheckSkippedWhenStartDeferred(t *testing.T) {
+	step := &HealthChecksStep{Services: []string{"globular-minio.service"}}
+	status, err := step.Check(&Context{SkipStart: true})
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if status != StatusSkipped {
+		t.Fatalf("expected StatusSkipped when SkipStart defers health checks, got %v", status)
+	}
+}
+
 func TestHealthChecksWaitsUntilActive(t *testing.T) {
 	sm := &flappingServiceManager{}
 	ctx := &Context{Platform: &healthPlatform{sm: sm}}

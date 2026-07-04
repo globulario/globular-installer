@@ -26,7 +26,7 @@ type EnsureServiceConfigStep struct {
 
 	// Optional overrides:
 	Domain      string // if non-empty, overwrite JSON "Domain"
-	AddressHost string // default "localhost"; sets host part of Address
+	AddressHost string // default "auto"; sets host part of Address
 	Owner       string // default "globular"
 	Group       string // default "globular"
 	Mode        uint32 // default 0644
@@ -155,7 +155,10 @@ func (s *EnsureServiceConfigStep) Apply(ctx *Context) error {
 				return nil
 			}
 
-			host := hostFromAddress(existing["Address"], s.AddressHost)
+			host, err := hostFromAddress(existing["Address"], s.addressHostOrDefault())
+			if err != nil {
+				return fmt.Errorf("resolve address host for %s: %w", cfgPath, err)
+			}
 			existing["Address"] = fmt.Sprintf("%s:%d", host, newPort)
 			existing["Port"] = newPort
 			if s.Domain != "" {
@@ -175,7 +178,10 @@ func (s *EnsureServiceConfigStep) Apply(ctx *Context) error {
 		return nil
 	}
 
-	host := resolveAddressHost(s.AddressHost)
+	host, err := resolveAddressHost(s.addressHostOrDefault())
+	if err != nil {
+		return fmt.Errorf("resolve address host for %s: %w", cfgPath, err)
+	}
 	desc["Address"] = fmt.Sprintf("%s:%d", host, port)
 	desc["Port"] = port
 	if s.Domain != "" {
@@ -190,6 +196,13 @@ func (s *EnsureServiceConfigStep) ServiceNameOrExec() string {
 		return s.ServiceName
 	}
 	return s.Exec
+}
+
+func (s *EnsureServiceConfigStep) addressHostOrDefault() string {
+	if strings.TrimSpace(s.AddressHost) == "" {
+		return "auto"
+	}
+	return s.AddressHost
 }
 
 func (s *EnsureServiceConfigStep) describe(ctx *Context) (map[string]any, error) {
@@ -391,37 +404,33 @@ func detectPrimaryIP() (string, error) {
 
 // resolveAddressHost resolves the address host value, handling "auto" detection.
 // If host is "auto", it detects the primary network interface IP.
-// If host is empty or any other value, it returns as-is or defaults to localhost.
-func resolveAddressHost(host string) string {
+// Empty or undetectable values are errors because the installer must not
+// synthesize loopback identities for remotely reachable services.
+func resolveAddressHost(host string) (string, error) {
 	host = strings.TrimSpace(host)
 
-	// Handle "auto" - detect primary IP
 	if host == "auto" {
 		if ip, err := detectPrimaryIP(); err == nil {
-			return ip
+			return ip, nil
 		}
-		// Fallback to localhost if detection fails
-		return "127.0.0.1"
+		return "", fmt.Errorf("auto address host detection failed")
 	}
 
-	// If empty, default to localhost
 	if host == "" {
-		return "localhost"
+		return "", fmt.Errorf("address host is empty")
 	}
 
-	// Otherwise use as-is
-	return host
+	return host, nil
 }
 
-func hostFromAddress(addrVal any, fallback string) string {
+func hostFromAddress(addrVal any, fallback string) (string, error) {
 	addr, _ := addrVal.(string)
 	if h, _, err := net.SplitHostPort(strings.TrimSpace(addr)); err == nil && h != "" {
-		return h
+		return h, nil
 	}
 	if idx := strings.LastIndex(addr, ":"); idx > 0 {
-		return addr[:idx]
+		return addr[:idx], nil
 	}
-	// Resolve fallback to handle "auto"
 	return resolveAddressHost(fallback)
 }
 

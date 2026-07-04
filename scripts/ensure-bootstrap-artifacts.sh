@@ -91,7 +91,6 @@ CORE_PACKAGES=(
   "resource_*_linux_amd64.tgz"
   "rbac_*_linux_amd64.tgz"
   "authentication_*_linux_amd64.tgz"
-  "discovery_*_linux_amd64.tgz"
   "dns_*_linux_amd64.tgz"
   "repository_*_linux_amd64.tgz"
   # ── Operations ─────────────────────────────────────────────────────
@@ -135,6 +134,7 @@ CORE_PACKAGES=(
   "restic_*_linux_amd64.tgz"
   "rclone_*_linux_amd64.tgz"
   "claude_*_linux_amd64.tgz"
+  "codex_*_linux_amd64.tgz"
   # ── Alerting ───────────────────────────────────────────────────────
   "alertmanager_*_linux_amd64.tgz"
 )

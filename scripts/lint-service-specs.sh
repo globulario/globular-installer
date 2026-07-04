@@ -6,7 +6,7 @@ set -euo pipefail
 #
 # Usage: bash scripts/lint-service-specs.sh [specs-dir]
 
-SPECS_DIR="${1:-internal/specs}"
+SPECS_DIR="${1:-internal/packagecatalog/specs}"
 
 [[ -d "$SPECS_DIR" ]] || { echo "FAIL: specs dir not found: $SPECS_DIR" >&2; exit 1; }
 

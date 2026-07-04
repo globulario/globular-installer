@@ -199,7 +199,7 @@ func buildStep(ctx *Context, ss spec.StepSpec) (Step, error) {
 			ServiceName:         getStringParam(ss.Params, "service_name", ""),
 			Exec:                getStringParam(ss.Params, "exec", ""),
 			Domain:              getStringParam(ss.Params, "domain", ""),
-			AddressHost:         getStringParam(ss.Params, "address_host", "localhost"),
+			AddressHost:         getStringParam(ss.Params, "address_host", "auto"),
 			Owner:               getStringParam(ss.Params, "owner", "globular"),
 			Group:               getStringParam(ss.Params, "group", "globular"),
 			RewriteIfOutOfRange: getBoolParam(ss.Params, "rewrite_if_out_of_range", true),

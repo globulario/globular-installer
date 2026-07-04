@@ -96,7 +96,7 @@ invariants:
 
     - id: installer.daemon.reload.before.start
       title: systemctl daemon-reload must be called after every unit file write before start/restart
-      severity: error
+      severity: high
       status: active
       # origin: { type: principle, confidence: high }
       summary: |
@@ -113,7 +113,7 @@ invariants:
 
     - id: installer.dir.permissions.traversable
       title: /var/lib/globular directories must be world-traversable (0755), not 0750
-      severity: error
+      severity: high
       status: active
       # origin: { type: inferred_from_code, confidence: high }
       summary: |
@@ -128,7 +128,7 @@ invariants:
 
     - id: installer.fetch.checksum.required
       title: Network-fetched files must be checksum-verified before use
-      severity: error
+      severity: high
       status: active
       # origin: { type: principle, confidence: high }
       summary: |
@@ -146,7 +146,7 @@ invariants:
 
     - id: installer.no.hardcoded.uid
       title: Never hardcode a UID or GID; always resolve by name
-      severity: error
+      severity: high
       status: active
       # origin: { type: principle, confidence: high }
       summary: |
@@ -162,7 +162,7 @@ invariants:
 
     - id: installer.spec.validated.before.plan
       title: Install specs must be validated before plan construction begins
-      severity: error
+      severity: high
       status: active
       # origin: { type: inferred_from_code, confidence: medium, status: candidate }
       summary: |

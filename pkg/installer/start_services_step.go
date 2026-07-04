@@ -34,6 +34,9 @@ func (s *StartServicesStep) Check(ctx *Context) (StepStatus, error) {
 	if ctx == nil {
 		return StatusUnknown, fmt.Errorf("nil context")
 	}
+	if ctx.SkipStart {
+		return StatusSkipped, nil
+	}
 	if ctx.Platform == nil {
 		return StatusUnknown, fmt.Errorf("nil platform")
 	}

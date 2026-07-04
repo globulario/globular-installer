@@ -68,9 +68,9 @@ func (s *RunScriptStep) Apply(ctx *Context) error {
 		return nil
 	}
 
-	nodeIP := "127.0.0.1"
-	if ip, ok := ctx.TemplateVars["NodeIP"]; ok && ip != "" {
-		nodeIP = ip
+	nodeIP, ok := ctx.TemplateVars["NodeIP"]
+	if !ok || nodeIP == "" {
+		return fmt.Errorf("script %s requires a detected NodeIP", s.Script)
 	}
 
 	// Determine component name from the staged package manifest.

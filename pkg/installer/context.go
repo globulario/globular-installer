@@ -177,9 +177,9 @@ func NewContext(opts Options) (*Context, error) {
 		}
 	}
 
-	nodeIP := "127.0.0.1"
-	if ip, err := detectPrimaryIP(); err == nil {
-		nodeIP = ip
+	nodeIP, err := detectPrimaryIP()
+	if err != nil {
+		return nil, fmt.Errorf("detect primary IP: %w", err)
 	}
 
 	templateVars := map[string]string{
@@ -274,9 +274,9 @@ func (c *Context) LoadSpec(strict bool) (*spec.InstallSpec, error) {
 		return c.Spec, nil
 	}
 	if c.TemplateVars == nil {
-		nodeIP := "127.0.0.1"
-		if ip, err := detectPrimaryIP(); err == nil {
-			nodeIP = ip
+		nodeIP, err := detectPrimaryIP()
+		if err != nil {
+			return nil, fmt.Errorf("detect primary IP: %w", err)
 		}
 		c.TemplateVars = map[string]string{
 			"Prefix":            c.Prefix,

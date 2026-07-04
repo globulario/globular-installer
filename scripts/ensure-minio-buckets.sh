@@ -133,8 +133,9 @@ else
 fi
 
 # Locate webroot assets directory.
-# In the release tarball the assets live at the top-level webroot/ (next to scripts/).
-# In the source tree they live at internal/assets/webroot/.
+# Authority: services/webroot owns the authored release webroot content.
+# Release bundles carry that authored tree at top-level webroot/. The installer
+# source tree may only use internal/assets/webroot/ as a generated fallback mirror.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALLER_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 if [[ -d "${INSTALLER_ROOT}/webroot" ]]; then
