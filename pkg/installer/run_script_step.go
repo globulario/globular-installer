@@ -93,6 +93,14 @@ func (s *RunScriptStep) Apply(ctx *Context) error {
 		"CONFIG_DIR="+ctx.ConfigDir,
 		"NODE_IP="+nodeIP,
 	)
+	// Extra caller-supplied env (e.g. SCYLLA_INSTALL_INTENT=fresh-join on a Day-1
+	// join). Appended last so it takes precedence over the standard variables.
+	for k, v := range ctx.ScriptEnv {
+		if k == "" {
+			continue
+		}
+		cmd.Env = append(cmd.Env, k+"="+v)
+	}
 	cmd.Dir = filepath.Dir(scriptPath)
 
 	output, err := cmd.CombinedOutput()

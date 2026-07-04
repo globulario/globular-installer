@@ -57,6 +57,9 @@ type Context struct {
 	Ports          *PortAllocator
 	SkipStart      bool
 	BootstrapEtcd  string
+	// ScriptEnv holds extra environment variables appended to run_script steps
+	// (see Options.ScriptEnv).
+	ScriptEnv map[string]string
 }
 
 func (c *Context) PlatformBackend() platform.Platform {
@@ -258,6 +261,7 @@ func NewContext(opts Options) (*Context, error) {
 		Purge:          opts.Purge,
 		SkipStart:      opts.SkipStart,
 		BootstrapEtcd:  opts.BootstrapEtcd,
+		ScriptEnv:      opts.ScriptEnv,
 	}
 
 	if logger != nil {
