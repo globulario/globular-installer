@@ -193,6 +193,24 @@ func (s *InstallPackagePayloadStep) Apply(ctx *Context) error {
 		}
 	}
 
+	// Deploy the service's generated authorization policy vocabulary. This is
+	// first-class governance material, not an optional sidecar: without it the
+	// node cannot map the service's gRPC methods to the fine-grained actions its
+	// roles grant, and every role-based call is denied after the bootstrap gate
+	// closes (policy_version=unknown, role_binding_denied). It is deployed
+	// unconditionally when the package ships policy/, mirroring the convergence
+	// installer (node_agent artifact.go). Invariant:
+	// rbac.enforced_service_requires_packaged_policy_vocabulary.
+	srcPolicy := filepath.Join(ctx.StagingDir, "policy")
+	if info, err := os.Stat(srcPolicy); err == nil && info.IsDir() {
+		policyDest := filepath.Join("/var/lib/globular/policy/services", svcName)
+		policySpecs, err := collectFileSpecs(srcPolicy, policyDest, 0o644)
+		if err != nil {
+			return fmt.Errorf("collect policy: %w", err)
+		}
+		files = append(files, policySpecs...)
+	}
+
 	if len(files) > 0 {
 		if err := ctx.Platform.InstallFiles(context.Background(), files); err != nil {
 			return fmt.Errorf("install files: %w", err)
