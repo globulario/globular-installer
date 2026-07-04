@@ -28,6 +28,12 @@ type Options struct {
 	// the etcd_join spec step to perform the Day-1 cluster join protocol.
 	// Empty string means Day-0 (single-node bootstrap) — the etcd_join step is skipped.
 	BootstrapEtcd string
+	// ScriptEnv holds extra environment variables passed to run_script steps
+	// (e.g. SCYLLA_INSTALL_INTENT=fresh-join on a Day-1 join so the ScyllaDB
+	// post-install activates its fresh-join branch instead of the fail-safe
+	// "preserve" default). Entries are appended after the standard variables so
+	// a caller can override a default if needed. Nil is fine (no extra env).
+	ScriptEnv map[string]string
 }
 
 func (o Options) Normalized() Options {
